@@ -1,0 +1,13 @@
+version: "3.9"
+
+services:
+  treta:
+    build: .
+    container_name: treta-core
+    volumes:
+      - ../../data:/data
+      - ../../config:/config
+    environment:
+      - TRETA_ENV=local
+    stdin_open: true
+    tty: true
