@@ -5,6 +5,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from core.events import Event
 from core.bus import event_bus
 
+
 class Handler(BaseHTTPRequestHandler):
     state_machine = None
 
@@ -18,12 +19,17 @@ class Handler(BaseHTTPRequestHandler):
         if self.path != "/state":
             return self._send(404, {"ok": False, "error": "not_found"})
 
+        print("GET /state called")
+
+        state_machine = self.state_machine or getattr(self.server, "state_machine", None)
+        if state_machine is None:
+            return self._send(503, {"ok": False, "error": "state_machine_unavailable"})
         self.log_message("GET /state requested")
 
         if self.state_machine is None:
             return self._send(503, {"error": "state_machine_unavailable"})
 
-        return self._send(200, {"state": self.state_machine.state})
+        return self._send(200, {"state": state_machine.state})
 
     def do_POST(self):
         if self.path != "/event":
@@ -46,10 +52,12 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             return self._send(400, {"ok": False, "error": str(e)})
 
+
 def start_http_server(host="0.0.0.0", port=7777, state_machine=None):
     # Thread daemon: se muere si se muere el proceso principal (bien para dev)
     Handler.state_machine = state_machine
     server = HTTPServer((host, port), Handler)
+    server.state_machine = state_machine
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     return server
