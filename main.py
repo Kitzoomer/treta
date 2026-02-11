@@ -2,6 +2,7 @@ import time
 from core.state_machine import StateMachine, State
 from core.storage import Storage
 from core.events import Event
+from core.ipc_http import start_http_server
 
 
 def main():
@@ -12,6 +13,11 @@ def main():
 
     sm = StateMachine(initial_state=last_state)
     print(f"🧠 Restored state: {sm.state}")
+    print("[BOOT] Starting HTTP server")
+    try:
+        start_http_server(state_machine=sm)
+    except TypeError:
+        start_http_server()
 
     try:
         while True:
