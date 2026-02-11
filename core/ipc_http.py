@@ -17,10 +17,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/state":
-            if self.state_machine is None:
+            sm = self.state_machine
+            if sm is None:
                 return self._send(503, {"error": "state_machine_unavailable"})
 
-            return self._send(200, {"state": self.state_machine.state})
+            return self._send(200, {"state": str(sm.state)})
 
         return self._send(404, {"error": "not_found"})
 
