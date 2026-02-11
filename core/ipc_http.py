@@ -18,6 +18,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path != "/state":
             return self._send(404, {"ok": False, "error": "not_found"})
 
+        self.log_message("GET /state requested")
+
         if self.state_machine is None:
             return self._send(503, {"error": "state_machine_unavailable"})
 
