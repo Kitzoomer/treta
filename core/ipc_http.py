@@ -16,20 +16,13 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(body).encode("utf-8"))
 
     def do_GET(self):
-        if self.path != "/state":
-            return self._send(404, {"ok": False, "error": "not_found"})
+        if self.path == "/state":
+            if self.state_machine is None:
+                return self._send(503, {"error": "state_machine_unavailable"})
 
-        print("GET /state called")
+            return self._send(200, {"state": self.state_machine.state})
 
-        state_machine = self.state_machine or getattr(self.server, "state_machine", None)
-        if state_machine is None:
-            return self._send(503, {"ok": False, "error": "state_machine_unavailable"})
-        self.log_message("GET /state requested")
-
-        if self.state_machine is None:
-            return self._send(503, {"error": "state_machine_unavailable"})
-
-        return self._send(200, {"state": state_machine.state})
+        return self._send(404, {"error": "not_found"})
 
     def do_POST(self):
         if self.path != "/event":
@@ -57,7 +50,6 @@ def start_http_server(host="0.0.0.0", port=7777, state_machine=None):
     # Thread daemon: se muere si se muere el proceso principal (bien para dev)
     Handler.state_machine = state_machine
     server = HTTPServer((host, port), Handler)
-    server.state_machine = state_machine
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     return server
