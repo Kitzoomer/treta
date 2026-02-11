@@ -24,6 +24,10 @@ class Handler(BaseHTTPRequestHandler):
         state_machine = self.state_machine or getattr(self.server, "state_machine", None)
         if state_machine is None:
             return self._send(503, {"ok": False, "error": "state_machine_unavailable"})
+        self.log_message("GET /state requested")
+
+        if self.state_machine is None:
+            return self._send(503, {"error": "state_machine_unavailable"})
 
         return self._send(200, {"state": state_machine.state})
 
