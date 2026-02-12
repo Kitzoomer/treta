@@ -1,9 +1,12 @@
 from core.state_machine import StateMachine, State
 from core.events import Event
+from core.control import Control
+
 
 class Dispatcher:
-    def __init__(self, state_machine: StateMachine):
+    def __init__(self, state_machine: StateMachine, control: Control | None = None):
         self.sm = state_machine
+        self.control = control or Control()
 
     def handle(self, event: Event):
         print(f"[DISPATCH] {event.type} from {event.source}")
@@ -22,3 +25,12 @@ class Dispatcher:
 
         elif event.type == "ErrorOccurred":
             self.sm.transition(State.ERROR)
+
+        elif event.type in {
+            "DailyBriefRequested",
+            "OpportunityScanRequested",
+            "EmailTriageRequested",
+        }:
+            actions = self.control.consume(event)
+            for action in actions:
+                print(f"[ACTION] {action.type} payload={action.payload}")
