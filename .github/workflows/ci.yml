@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Compile Python files
+        run: |
+          python -m py_compile \
+            core/*.py \
+            main.py \
+            inject_event.py \
+            interfaces/keyboard/keyboard_input.py \
+            interfaces/openclaw/openclaw.py \
+            openclaw/openclaw.py
+
+      - name: Run tests (or smoke check)
+        run: |
+          if [ -d tests ]; then
+            python -m unittest discover -s tests -p 'test*.py'
+          else
+            python -c "from core.events import Event; print(Event(type='SmokeCheck', payload={}).type)"
+          fi
