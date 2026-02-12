@@ -25,5 +25,29 @@ class ControlSmokeTest(unittest.TestCase):
                 self.assertEqual(first, second)
 
 
+    def test_evaluate_opportunity_event_returns_structured_decision(self):
+        control = Control()
+        event = Event(
+            type="EvaluateOpportunity",
+            payload={
+                "money": 8,
+                "growth": 6,
+                "energy": 3,
+                "health": 2,
+                "relationships": 5,
+                "risk": 2,
+            },
+            source="test",
+        )
+
+        actions = control.consume(event)
+
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0].type, "OpportunityEvaluated")
+        self.assertIn("score", actions[0].payload)
+        self.assertIn("decision", actions[0].payload)
+        self.assertIn("reasoning", actions[0].payload)
+
+
 if __name__ == "__main__":
     unittest.main()
