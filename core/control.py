@@ -22,6 +22,8 @@ class Control:
     ):
         self.decision_engine = decision_engine or DecisionEngine()
         self.autonomy_controller = autonomy_controller or AutonomyController()
+    def __init__(self, decision_engine: DecisionEngine | None = None):
+        self.decision_engine = decision_engine or DecisionEngine()
 
     def evaluate_opportunity(self, opportunity: Dict[str, Any]) -> Dict[str, Any]:
         return self.decision_engine.evaluate(opportunity)
