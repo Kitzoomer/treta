@@ -1,6 +1,7 @@
 from core.state_machine import StateMachine, State
 from core.events import Event
 from core.control import Control
+from core.bus import event_bus
 
 
 class Dispatcher:
@@ -35,3 +36,4 @@ class Dispatcher:
             actions = self.control.consume(event)
             for action in actions:
                 print(f"[ACTION] {action.type} payload={action.payload}")
+                event_bus.push(Event(type=action.type, payload=action.payload, source="control"))
