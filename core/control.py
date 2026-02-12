@@ -3,6 +3,7 @@ from typing import Any, Dict, List
 
 from core.events import Event
 from core.decision_engine import DecisionEngine
+from core.autonomy_controller import AutonomyController
 
 
 @dataclass(frozen=True)
@@ -14,6 +15,13 @@ class Action:
 class Control:
     """Deterministic event -> action mapper (stub-only)."""
 
+    def __init__(
+        self,
+        decision_engine: DecisionEngine | None = None,
+        autonomy_controller: AutonomyController | None = None,
+    ):
+        self.decision_engine = decision_engine or DecisionEngine()
+        self.autonomy_controller = autonomy_controller or AutonomyController()
     def __init__(self, decision_engine: DecisionEngine | None = None):
         self.decision_engine = decision_engine or DecisionEngine()
 
@@ -37,5 +45,9 @@ class Control:
             result = self.evaluate_opportunity(event.payload)
             print(f"[DECISION] score={result['score']:.2f} decision={result['decision']}")
             return [Action(type="OpportunityEvaluated", payload=result)]
+
+        if event.type == "OpportunityEvaluated":
+            emitted = self.autonomy_controller.handle_evaluated_opportunity(event.payload)
+            return [Action(type=e.type, payload=e.payload) for e in emitted]
 
         return []
