@@ -30,6 +30,8 @@ class Dispatcher:
             "DailyBriefRequested",
             "OpportunityScanRequested",
             "EmailTriageRequested",
+            "EvaluateOpportunity",
+            "OpportunityEvaluated",
         }:
             actions = self.control.consume(event)
             for action in actions:
