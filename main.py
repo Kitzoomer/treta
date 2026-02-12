@@ -3,6 +3,8 @@ from core.state_machine import StateMachine, State
 from core.storage import Storage
 from core.events import Event
 from core.ipc_http import start_http_server
+from core.bus import event_bus
+from core.dispatcher import Dispatcher
 
 
 def main():
@@ -12,6 +14,7 @@ def main():
     last_state = storage.get_state("last_state") or State.IDLE
 
     sm = StateMachine(initial_state=last_state)
+    dispatcher = Dispatcher(state_machine=sm)
     print(f"🧠 Restored state: {sm.state}")
     print("[BOOT] Starting HTTP server")
     try:
@@ -21,17 +24,22 @@ def main():
 
     try:
         while True:
+            event = event_bus.pop(timeout=0.2)
+            if event is not None:
+                dispatcher.handle(event)
+                continue
+
             # Loop principal (siempre activa)
             time.sleep(5)
 
             # Evento dummy (por ahora)
-            event = Event(
+            heartbeat = Event(
                 type="Heartbeat",
                 payload={"state": sm.state},
                 source="core"
             )
 
-            print(f"[EVENT] {event.type} | state={sm.state}")
+            print(f"[EVENT] {heartbeat.type} | state={sm.state}")
 
             # Persistimos estado
             storage.set_state("last_state", sm.state)
