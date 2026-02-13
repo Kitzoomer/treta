@@ -32,6 +32,7 @@ class Dispatcher:
             "OpportunityScanRequested",
             "EmailTriageRequested",
             "EvaluateOpportunity",
+            "GumroadStatsRequested",
         }:
             actions = self.control.consume(event)
             for action in actions:
