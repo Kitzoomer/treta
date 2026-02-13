@@ -5,6 +5,8 @@ from core.events import Event
 from core.ipc_http import start_http_server
 from core.bus import event_bus
 from core.dispatcher import Dispatcher
+from core.control import Control
+from core.opportunity_store import OpportunityStore
 
 
 def main():
@@ -14,11 +16,13 @@ def main():
     last_state = storage.get_state("last_state") or State.IDLE
 
     sm = StateMachine(initial_state=last_state)
-    dispatcher = Dispatcher(state_machine=sm)
+    opportunity_store = OpportunityStore()
+    control = Control(opportunity_store=opportunity_store)
+    dispatcher = Dispatcher(state_machine=sm, control=control)
     print(f"🧠 Restored state: {sm.state}")
     print("[BOOT] Starting HTTP server")
     try:
-        start_http_server(state_machine=sm)
+        start_http_server(state_machine=sm, opportunity_store=opportunity_store)
     except TypeError:
         start_http_server()
 
