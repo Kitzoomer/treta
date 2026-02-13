@@ -37,6 +37,7 @@ class Dispatcher:
             "ActionPlanGenerated",
             "ConfirmAction",
             "RejectAction",
+            "ListPendingConfirmations",
         }:
             actions = self.control.consume(event)
             for action in actions:

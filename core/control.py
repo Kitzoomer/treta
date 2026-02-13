@@ -74,22 +74,41 @@ class Control:
             return [Action(type="ActionPlanGenerated", payload=plan)]
 
         if event.type == "ActionPlanGenerated":
-            queued_plan = self.confirmation_queue.add(event.payload)
-            return [Action(type="AwaitingConfirmation", payload=queued_plan)]
+            plan_id = self.confirmation_queue.add(event.payload)
+            return [
+                Action(
+                    type="AwaitingConfirmation",
+                    payload={"plan_id": plan_id, "plan": event.payload},
+                )
+            ]
+
+        if event.type == "ListPendingConfirmations":
+            pending = self.confirmation_queue.list_pending()
+            return [Action(type="PendingConfirmationsListed", payload={"items": pending})]
 
         if event.type == "ConfirmAction":
             plan_id = str(event.payload.get("plan_id", ""))
             approved = self.confirmation_queue.approve(plan_id)
             if approved is None:
                 return []
-            return [Action(type="ActionConfirmed", payload=approved)]
+            return [
+                Action(
+                    type="ActionConfirmed",
+                    payload={"plan_id": approved["id"], "plan": approved["plan"]},
+                )
+            ]
 
         if event.type == "RejectAction":
             plan_id = str(event.payload.get("plan_id", ""))
             rejected = self.confirmation_queue.reject(plan_id)
             if rejected is None:
                 return []
-            return [Action(type="ActionRejected", payload=rejected)]
+            return [
+                Action(
+                    type="ActionRejected",
+                    payload={"plan_id": rejected["id"], "plan": rejected["plan"]},
+                )
+            ]
 
         if event.type == "EvaluateOpportunity":
             result = self.evaluate_opportunity(event.payload)
