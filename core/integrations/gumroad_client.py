@@ -106,6 +106,10 @@ class GumroadClient:
     def _empty_revenue_payload() -> dict[str, Any]:
         return {"total_revenue": 0.0, "currency": "USD", "sales_count": 0}
 
+    @staticmethod
+    def _empty_balance_payload() -> dict[str, Any]:
+        return {"balance": 0.0, "currency": "USD"}
+
     def get_products(self) -> dict[str, list[dict[str, Any]]]:
         """Fetch products from Gumroad API."""
         payload = self._safe_get("/v2/products")
@@ -161,3 +165,27 @@ class GumroadClient:
             "currency": "USD",
             "sales_count": len(sales),
         }
+
+    def get_balance(self) -> dict[str, Any]:
+        """Fetch current Gumroad balance."""
+        payload = self._safe_get("/v2/balance")
+        if not payload:
+            return self._empty_balance_payload()
+
+        if isinstance(payload.get("balance"), dict):
+            return payload["balance"]
+
+        raw_balance = payload.get("balance")
+        if raw_balance is None:
+            raw_balance = payload.get("amount")
+
+        try:
+            balance_value = float(raw_balance)
+        except (TypeError, ValueError):
+            balance_value = 0.0
+
+        currency = payload.get("currency")
+        if not isinstance(currency, str) or not currency:
+            currency = "USD"
+
+        return {"balance": balance_value, "currency": currency}
