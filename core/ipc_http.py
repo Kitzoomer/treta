@@ -81,7 +81,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, {"error": "not_found"})
 
     def do_POST(self):
-        if self.path not in {"/event", "/opportunities/evaluate", "/opportunities/dismiss"}:
+        if self.path not in {"/event", "/opportunities/evaluate", "/opportunities/dismiss", "/scan/infoproduct"}:
             return self._send(404, {"ok": False, "error": "not_found"})
 
         length = int(self.headers.get("Content-Length", "0"))
@@ -99,6 +99,16 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(400, {"ok": False, "error": "missing_type"})
 
                 event_bus.push(Event(type=ev_type, payload=payload, source=source))
+                return self._send(200, {"ok": True})
+
+            if self.path == "/scan/infoproduct":
+                event_bus.push(
+                    Event(
+                        type="RunInfoproductScan",
+                        payload={},
+                        source="http",
+                    )
+                )
                 return self._send(200, {"ok": True})
 
             event_id = str(data.get("id", "")).strip()

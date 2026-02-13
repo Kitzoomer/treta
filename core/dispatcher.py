@@ -30,6 +30,7 @@ class Dispatcher:
         elif event.type in {
             "DailyBriefRequested",
             "OpportunityScanRequested",
+            "RunInfoproductScan",
             "EmailTriageRequested",
             "EvaluateOpportunity",
             "OpportunityDetected",

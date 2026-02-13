@@ -7,6 +7,8 @@ from core.integrations.gumroad_client import GumroadClient
 from core.action_planner import ActionPlanner
 from core.confirmation_queue import ConfirmationQueue
 from core.opportunity_store import OpportunityStore
+from core.bus import event_bus
+from core.opportunity_sources.infoproduct_signals import InfoproductSignals
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,11 @@ class Control:
         if event.type == "OpportunityScanRequested":
             print("[CONTROL] OpportunityScanRequested -> would run opportunity scan (stub)")
             return [Action(type="RunOpportunityScan", payload={"dry_run": True})]
+
+        if event.type == "RunInfoproductScan":
+            scanner = InfoproductSignals()
+            scanner.emit_signals(event_bus)
+            return []
 
         if event.type == "EmailTriageRequested":
             print("[CONTROL] EmailTriageRequested -> would triage inbox in dry-run mode (stub)")
