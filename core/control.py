@@ -1,16 +1,17 @@
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Dict, List
 
 from core.events import Event
 from core.decision_engine import DecisionEngine
 from core.integrations.gumroad_client import GumroadClient
 from core.action_planner import ActionPlanner
+from core.confirmation_queue import ConfirmationQueue
 
 
 @dataclass(frozen=True)
 class Action:
     type: str
-    payload: Dict[str, Any]
+    payload: Dict[str, object]
 
 
 class Control:
@@ -21,12 +22,14 @@ class Control:
         decision_engine: DecisionEngine | None = None,
         gumroad_client: GumroadClient | None = None,
         action_planner: ActionPlanner | None = None,
+        confirmation_queue: ConfirmationQueue | None = None,
     ):
         self.decision_engine = decision_engine or DecisionEngine()
         self.gumroad_client = gumroad_client
         self.action_planner = action_planner or ActionPlanner()
+        self.confirmation_queue = confirmation_queue or ConfirmationQueue()
 
-    def evaluate_opportunity(self, opportunity: Dict[str, Any]) -> Dict[str, Any]:
+    def evaluate_opportunity(self, opportunity: Dict[str, object]) -> Dict[str, object]:
         return self.decision_engine.evaluate(opportunity)
 
     def consume(self, event: Event) -> List[Action]:
@@ -41,7 +44,6 @@ class Control:
         if event.type == "EmailTriageRequested":
             print("[CONTROL] EmailTriageRequested -> would triage inbox in dry-run mode (stub)")
             return [Action(type="RunEmailTriage", payload={"dry_run": True})]
-
 
         if event.type == "GumroadStatsRequested":
             if self.gumroad_client is None:
@@ -67,10 +69,27 @@ class Control:
                 )
             ]
 
-
         if event.type == "ActionApproved":
             plan = self.action_planner.plan(event.payload)
             return [Action(type="ActionPlanGenerated", payload=plan)]
+
+        if event.type == "ActionPlanGenerated":
+            queued_plan = self.confirmation_queue.add(event.payload)
+            return [Action(type="AwaitingConfirmation", payload=queued_plan)]
+
+        if event.type == "ConfirmAction":
+            plan_id = str(event.payload.get("plan_id", ""))
+            approved = self.confirmation_queue.approve(plan_id)
+            if approved is None:
+                return []
+            return [Action(type="ActionConfirmed", payload=approved)]
+
+        if event.type == "RejectAction":
+            plan_id = str(event.payload.get("plan_id", ""))
+            rejected = self.confirmation_queue.reject(plan_id)
+            if rejected is None:
+                return []
+            return [Action(type="ActionRejected", payload=rejected)]
 
         if event.type == "EvaluateOpportunity":
             result = self.evaluate_opportunity(event.payload)
