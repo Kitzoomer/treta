@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 from core.events import Event
 from core.decision_engine import DecisionEngine
 from core.integrations.gumroad_client import GumroadClient
+from core.action_planner import ActionPlanner
 
 
 @dataclass(frozen=True)
@@ -19,9 +20,11 @@ class Control:
         self,
         decision_engine: DecisionEngine | None = None,
         gumroad_client: GumroadClient | None = None,
+        action_planner: ActionPlanner | None = None,
     ):
         self.decision_engine = decision_engine or DecisionEngine()
         self.gumroad_client = gumroad_client
+        self.action_planner = action_planner or ActionPlanner()
 
     def evaluate_opportunity(self, opportunity: Dict[str, Any]) -> Dict[str, Any]:
         return self.decision_engine.evaluate(opportunity)
@@ -63,6 +66,11 @@ class Control:
                     },
                 )
             ]
+
+
+        if event.type == "ActionApproved":
+            plan = self.action_planner.plan(event.payload)
+            return [Action(type="ActionPlanGenerated", payload=plan)]
 
         if event.type == "EvaluateOpportunity":
             result = self.evaluate_opportunity(event.payload)

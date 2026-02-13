@@ -50,6 +50,29 @@ class ControlSmokeTest(unittest.TestCase):
         self.assertIn("reasoning", actions[0].payload)
 
 
+
+
+    def test_action_approved_generates_action_plan(self):
+        control = Control()
+        event = Event(type="ActionApproved", payload={"type": "top_product"}, source="test")
+
+        actions = control.consume(event)
+
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0].type, "ActionPlanGenerated")
+        self.assertEqual(
+            actions[0].payload,
+            {
+                "action": "optimize",
+                "steps": [
+                    "Add upsell",
+                    "Improve landing page copy",
+                    "Collect testimonials",
+                ],
+                "priority": 9,
+            },
+        )
+
     def test_gumroad_stats_requested_returns_structured_payload(self):
         gumroad_client = Mock()
         gumroad_client.get_products.return_value = {"products": [{"id": "p1"}]}
