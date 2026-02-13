@@ -7,6 +7,7 @@ from core.bus import event_bus
 from core.dispatcher import Dispatcher
 from core.control import Control
 from core.opportunity_store import OpportunityStore
+from core.scheduler import DailyScheduler
 
 
 def main():
@@ -21,6 +22,8 @@ def main():
     dispatcher = Dispatcher(state_machine=sm, control=control)
     print(f"🧠 Restored state: {sm.state}")
     print("[BOOT] Starting HTTP server")
+    scheduler = DailyScheduler()
+    scheduler.start(event_bus)
     try:
         start_http_server(state_machine=sm, opportunity_store=opportunity_store)
     except TypeError:
@@ -50,6 +53,8 @@ def main():
 
     except KeyboardInterrupt:
         print("🛑 Treta Core stopped by user")
+    finally:
+        scheduler.stop()
         storage.set_state("last_state", sm.state)
 
 
