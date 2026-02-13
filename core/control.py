@@ -6,6 +6,7 @@ from core.decision_engine import DecisionEngine
 from core.integrations.gumroad_client import GumroadClient
 from core.action_planner import ActionPlanner
 from core.confirmation_queue import ConfirmationQueue
+from core.opportunity_store import OpportunityStore
 
 
 @dataclass(frozen=True)
@@ -23,11 +24,13 @@ class Control:
         gumroad_client: GumroadClient | None = None,
         action_planner: ActionPlanner | None = None,
         confirmation_queue: ConfirmationQueue | None = None,
+        opportunity_store: OpportunityStore | None = None,
     ):
         self.decision_engine = decision_engine or DecisionEngine()
         self.gumroad_client = gumroad_client
         self.action_planner = action_planner or ActionPlanner()
         self.confirmation_queue = confirmation_queue or ConfirmationQueue()
+        self.opportunity_store = opportunity_store or OpportunityStore()
 
     def evaluate_opportunity(self, opportunity: Dict[str, object]) -> Dict[str, object]:
         return self.decision_engine.evaluate(opportunity)
@@ -109,6 +112,47 @@ class Control:
                     payload={"plan_id": rejected["id"], "plan": rejected["plan"]},
                 )
             ]
+
+
+        if event.type == "OpportunityDetected":
+            created = self.opportunity_store.add(
+                item_id=str(event.payload.get("id", "")).strip() or None,
+                source=str(event.payload.get("source", "unknown")),
+                title=str(event.payload.get("title", "")),
+                summary=str(event.payload.get("summary", "")),
+                opportunity=dict(event.payload.get("opportunity", {})),
+            )
+            return []
+
+        if event.type == "ListOpportunities":
+            status = event.payload.get("status")
+            items = self.opportunity_store.list(status=str(status) if status else None)
+            return [Action(type="OpportunitiesListed", payload={"items": items})]
+
+        if event.type == "EvaluateOpportunityById":
+            item_id = str(event.payload.get("id", ""))
+            target = self.opportunity_store.get(item_id)
+            if target is None:
+                return []
+
+            result = self.evaluate_opportunity(target["opportunity"])
+            updated = self.opportunity_store.set_decision(item_id, result)
+            if updated is None:
+                return []
+
+            return [
+                Action(
+                    type="OpportunityEvaluated",
+                    payload={"id": item_id, "decision": result, "item": updated},
+                )
+            ]
+
+        if event.type == "OpportunityDismissed":
+            item_id = str(event.payload.get("id", ""))
+            updated = self.opportunity_store.set_status(item_id, "dismissed")
+            if updated is None:
+                return []
+            return []
 
         if event.type == "EvaluateOpportunity":
             result = self.evaluate_opportunity(event.payload)

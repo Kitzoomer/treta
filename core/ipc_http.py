@@ -2,6 +2,7 @@ import json
 import threading
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs, urlparse
 
 from core.events import Event
 from core.bus import event_bus
@@ -9,6 +10,7 @@ from core.bus import event_bus
 
 class Handler(BaseHTTPRequestHandler):
     state_machine = None
+    opportunity_store = None
     ui_dir = Path(__file__).resolve().parent.parent / "ui"
 
     def _send(self, code: int, body: dict):
@@ -36,23 +38,25 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(file_path.read_bytes())
 
     def do_GET(self):
-        if self.path == "/":
+        parsed = urlparse(self.path)
+
+        if parsed.path == "/":
             return self._send_static("index.html")
 
-        if self.path == "/app.js":
+        if parsed.path == "/app.js":
             return self._send_static("app.js")
 
-        if self.path == "/style.css":
+        if parsed.path == "/style.css":
             return self._send_static("style.css")
 
-        if self.path == "/state":
+        if parsed.path == "/state":
             sm = self.state_machine
             if sm is None:
                 return self._send(503, {"error": "state_machine_unavailable"})
 
             return self._send(200, {"state": str(sm.state)})
 
-        if self.path == "/events":
+        if parsed.path == "/events":
             events = [
                 {
                     "type": event.type,
@@ -65,10 +69,19 @@ class Handler(BaseHTTPRequestHandler):
             ]
             return self._send(200, {"events": events})
 
+        if parsed.path == "/opportunities":
+            if self.opportunity_store is None:
+                return self._send(503, {"error": "opportunity_store_unavailable"})
+
+            query = parse_qs(parsed.query)
+            status = query.get("status", [None])[0]
+            items = self.opportunity_store.list(status=status)
+            return self._send(200, {"items": items})
+
         return self._send(404, {"error": "not_found"})
 
     def do_POST(self):
-        if self.path != "/event":
+        if self.path not in {"/event", "/opportunities/evaluate", "/opportunities/dismiss"}:
             return self._send(404, {"ok": False, "error": "not_found"})
 
         length = int(self.headers.get("Content-Length", "0"))
@@ -76,22 +89,51 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             data = json.loads(raw)
-            ev_type = data.get("type")
-            payload = data.get("payload", {})
-            source = data.get("source", "openclaw")
 
-            if not ev_type:
-                return self._send(400, {"ok": False, "error": "missing_type"})
+            if self.path == "/event":
+                ev_type = data.get("type")
+                payload = data.get("payload", {})
+                source = data.get("source", "openclaw")
 
-            event_bus.push(Event(type=ev_type, payload=payload, source=source))
-            return self._send(200, {"ok": True})
+                if not ev_type:
+                    return self._send(400, {"ok": False, "error": "missing_type"})
+
+                event_bus.push(Event(type=ev_type, payload=payload, source=source))
+                return self._send(200, {"ok": True})
+
+            event_id = str(data.get("id", "")).strip()
+            if not event_id:
+                return self._send(400, {"ok": False, "error": "missing_id"})
+
+            if self.path == "/opportunities/evaluate":
+                event_bus.push(
+                    Event(
+                        type="EvaluateOpportunityById",
+                        payload={"id": event_id},
+                        source="http",
+                    )
+                )
+                return self._send(200, {"ok": True})
+
+            if self.path == "/opportunities/dismiss":
+                event_bus.push(
+                    Event(
+                        type="OpportunityDismissed",
+                        payload={"id": event_id},
+                        source="http",
+                    )
+                )
+                return self._send(200, {"ok": True})
+
+            return self._send(404, {"ok": False, "error": "not_found"})
         except Exception as e:
             return self._send(400, {"ok": False, "error": str(e)})
 
 
-def start_http_server(host="0.0.0.0", port=7777, state_machine=None):
+def start_http_server(host="0.0.0.0", port=7777, state_machine=None, opportunity_store=None):
     # Thread daemon: se muere si se muere el proceso principal (bien para dev)
     Handler.state_machine = state_machine
+    Handler.opportunity_store = opportunity_store
     server = HTTPServer((host, port), Handler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()

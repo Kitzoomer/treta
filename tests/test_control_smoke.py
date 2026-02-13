@@ -100,5 +100,67 @@ class ControlSmokeTest(unittest.TestCase):
         gumroad_client.get_balance.assert_called_once_with()
 
 
+    def test_opportunity_store_flow_detect_list_evaluate_and_dismiss(self):
+        control = Control()
+
+        first_payload = {
+            "id": "opp-1",
+            "source": "scanner",
+            "title": "Opportunity A",
+            "summary": "First summary",
+            "opportunity": {
+                "money": 8,
+                "growth": 7,
+                "energy": 2,
+                "health": 3,
+                "relationships": 6,
+                "risk": 2,
+            },
+        }
+        second_payload = {
+            "id": "opp-2",
+            "source": "scanner",
+            "title": "Opportunity B",
+            "summary": "Second summary",
+            "opportunity": {
+                "money": 3,
+                "growth": 4,
+                "energy": 7,
+                "health": 2,
+                "relationships": 3,
+                "risk": 6,
+            },
+        }
+
+        control.consume(Event(type="OpportunityDetected", payload=first_payload, source="test"))
+        control.consume(Event(type="OpportunityDetected", payload=second_payload, source="test"))
+
+        listed = control.consume(Event(type="ListOpportunities", payload={}, source="test"))
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(listed[0].type, "OpportunitiesListed")
+        items = listed[0].payload["items"]
+        self.assertEqual(len(items), 2)
+        self.assertEqual(items[0]["status"], "new")
+        self.assertEqual(items[1]["status"], "new")
+
+        evaluated = control.consume(
+            Event(type="EvaluateOpportunityById", payload={"id": "opp-1"}, source="test")
+        )
+        self.assertEqual(len(evaluated), 1)
+        self.assertEqual(evaluated[0].type, "OpportunityEvaluated")
+        self.assertEqual(evaluated[0].payload["item"]["status"], "evaluated")
+        self.assertIn("score", evaluated[0].payload["decision"])
+        self.assertIn("decision", evaluated[0].payload["decision"])
+
+        control.consume(Event(type="OpportunityDismissed", payload={"id": "opp-2"}, source="test"))
+
+        final_listed = control.consume(Event(type="ListOpportunities", payload={}, source="test"))
+        final_items = {item["id"]: item for item in final_listed[0].payload["items"]}
+        self.assertEqual(final_items["opp-1"]["status"], "evaluated")
+        self.assertIsNotNone(final_items["opp-1"]["decision"])
+        self.assertEqual(final_items["opp-2"]["status"], "dismissed")
+        self.assertIsNone(final_items["opp-2"]["decision"])
+
+
 if __name__ == "__main__":
     unittest.main()
