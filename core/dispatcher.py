@@ -34,6 +34,9 @@ class Dispatcher:
             "EvaluateOpportunity",
             "GumroadStatsRequested",
             "ActionApproved",
+            "ActionPlanGenerated",
+            "ConfirmAction",
+            "RejectAction",
         }:
             actions = self.control.consume(event)
             for action in actions:
