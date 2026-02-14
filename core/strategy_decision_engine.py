@@ -1,0 +1,124 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any, Dict, List
+
+from core.performance_engine import PerformanceEngine
+from core.product_launch_store import ProductLaunchStore
+
+
+class StrategyDecisionEngine:
+    """Deterministic strategic decisions derived from launch performance."""
+
+    def __init__(self, product_launch_store: ProductLaunchStore):
+        self._product_launch_store = product_launch_store
+        self._performance_engine = PerformanceEngine(product_launch_store=product_launch_store)
+
+    def _utcnow(self) -> datetime:
+        return datetime.now(timezone.utc)
+
+    def _parse_datetime(self, value: str | None) -> datetime | None:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+
+    def _days_since_launch(self, created_at: str | None) -> int:
+        created_at_dt = self._parse_datetime(created_at)
+        if created_at_dt is None:
+            return 0
+        if created_at_dt.tzinfo is None:
+            created_at_dt = created_at_dt.replace(tzinfo=timezone.utc)
+        delta = self._utcnow() - created_at_dt.astimezone(timezone.utc)
+        return max(int(delta.total_seconds() // 86400), 0)
+
+    def decide(self) -> Dict[str, Any]:
+        launches = self._product_launch_store.list()
+
+        actions: List[Dict[str, str]] = []
+        risk_flags: List[str] = []
+
+        for launch in sorted(launches, key=lambda item: str(item.get("id", ""))):
+            launch_id = str(launch.get("id") or "")
+            metrics = launch.get("metrics", {})
+            sales = int(metrics.get("sales", 0) or 0)
+            revenue = float(metrics.get("revenue", 0.0) or 0.0)
+            revenue_per_sale = (revenue / sales) if sales > 0 else 0.0
+            days_since_launch = self._days_since_launch(launch.get("created_at"))
+
+            if sales >= 5:
+                actions.append(
+                    {
+                        "type": "scale",
+                        "target_id": launch_id,
+                        "reasoning": f"Launch has {sales} sales, which meets the scale threshold.",
+                    }
+                )
+
+            if sales == 0 and days_since_launch > 7:
+                actions.append(
+                    {
+                        "type": "review",
+                        "target_id": launch_id,
+                        "reasoning": f"Launch has 0 sales after {days_since_launch} days.",
+                    }
+                )
+                if "stalled_launch" not in risk_flags:
+                    risk_flags.append("stalled_launch")
+
+            if revenue_per_sale > 40 and sales < 3:
+                actions.append(
+                    {
+                        "type": "price_test",
+                        "target_id": launch_id,
+                        "reasoning": (
+                            f"Revenue per sale is {revenue_per_sale:.2f} with only {sales} total sales."
+                        ),
+                    }
+                )
+                if "low_volume_high_ticket" not in risk_flags:
+                    risk_flags.append("low_volume_high_ticket")
+
+        has_active_launch = any(str(item.get("status", "")) == "active" for item in launches)
+        if not has_active_launch:
+            actions.append(
+                {
+                    "type": "new_product",
+                    "target_id": "portfolio",
+                    "reasoning": "No active launches were found.",
+                }
+            )
+            if "no_active_launches" not in risk_flags:
+                risk_flags.append("no_active_launches")
+
+        primary_focus = "stabilize"
+        if any(action["type"] == "scale" for action in actions):
+            primary_focus = "growth"
+        elif any(action["type"] == "review" for action in actions):
+            primary_focus = "stabilize"
+        elif any(action["type"] == "price_test" for action in actions):
+            primary_focus = "optimization"
+        elif any(action["type"] == "new_product" for action in actions):
+            primary_focus = "pipeline"
+
+        priority_level = "low"
+        if any(action["type"] in {"scale", "review"} for action in actions):
+            priority_level = "high"
+        elif actions:
+            priority_level = "medium"
+
+        confidence = 10 if actions else 8
+
+        return {
+            "priority_level": priority_level,
+            "primary_focus": primary_focus,
+            "actions": actions,
+            "risk_flags": risk_flags,
+            "confidence": confidence,
+            "context": {
+                "total_sales": self._performance_engine.total_sales(),
+                "total_revenue": self._performance_engine.total_revenue(),
+            },
+        }
