@@ -14,6 +14,7 @@ from core.product_proposal_store import ProductProposalStore
 from core.product_builder import ProductBuilder
 from core.product_plan_store import ProductPlanStore
 from core.execution_engine import ExecutionEngine
+from core.product_launch_store import ProductLaunchStore
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,7 @@ class Control:
         product_builder: ProductBuilder | None = None,
         product_plan_store: ProductPlanStore | None = None,
         execution_engine: ExecutionEngine | None = None,
+        product_launch_store: ProductLaunchStore | None = None,
     ):
         self.decision_engine = decision_engine or DecisionEngine()
         self.gumroad_client = gumroad_client
@@ -48,6 +50,9 @@ class Control:
         self.product_builder = product_builder or ProductBuilder()
         self.product_plan_store = product_plan_store or ProductPlanStore()
         self.execution_engine = execution_engine or ExecutionEngine()
+        self.product_launch_store = product_launch_store or ProductLaunchStore(
+            proposal_store=self.product_proposal_store,
+        )
 
     def evaluate_opportunity(self, opportunity: Dict[str, object]) -> Dict[str, object]:
         return self.decision_engine.evaluate(opportunity)
@@ -180,12 +185,48 @@ class Control:
                 proposal_id=proposal_id,
                 new_status=proposal_transitions[event.type],
             )
-            return [
+            actions = [
                 Action(
                     type="ProductProposalStatusChanged",
                     payload={"proposal_id": updated["id"], "status": updated["status"], "proposal": updated},
                 )
             ]
+            if updated["status"] == "launched":
+                launch = self.product_launch_store.add_from_proposal(updated["id"])
+                launch = self.product_launch_store.mark_launched(launch["id"])
+                actions.append(
+                    Action(
+                        type="ProductLaunched",
+                        payload={
+                            "launch_id": launch["id"],
+                            "proposal_id": updated["id"],
+                        },
+                    )
+                )
+            return actions
+
+        if event.type == "ListProductLaunchesRequested":
+            items = self.product_launch_store.list()
+            return [Action(type="ProductLaunchesListed", payload={"items": items})]
+
+        if event.type == "GetProductLaunchRequested":
+            launch_id = str(event.payload.get("launch_id", "")).strip()
+            launch = self.product_launch_store.get(launch_id)
+            if launch is None:
+                return []
+            return [Action(type="ProductLaunchReturned", payload={"launch": launch})]
+
+        if event.type == "AddProductLaunchSale":
+            launch_id = str(event.payload.get("launch_id", "")).strip()
+            amount = float(event.payload.get("amount", 0))
+            updated = self.product_launch_store.add_sale(launch_id, amount)
+            return [Action(type="ProductLaunchUpdated", payload={"launch": updated})]
+
+        if event.type == "TransitionProductLaunchStatus":
+            launch_id = str(event.payload.get("launch_id", "")).strip()
+            status = str(event.payload.get("status", "")).strip()
+            updated = self.product_launch_store.transition_status(launch_id, status)
+            return [Action(type="ProductLaunchUpdated", payload={"launch": updated})]
 
         if event.type == "BuildProductPlanRequested":
             proposal_id = str(event.payload.get("proposal_id", ""))

@@ -10,6 +10,7 @@ from core.opportunity_store import OpportunityStore
 from core.scheduler import DailyScheduler
 from core.product_proposal_store import ProductProposalStore
 from core.product_plan_store import ProductPlanStore
+from core.product_launch_store import ProductLaunchStore
 
 
 def main():
@@ -22,10 +23,12 @@ def main():
     opportunity_store = OpportunityStore()
     product_proposal_store = ProductProposalStore()
     product_plan_store = ProductPlanStore()
+    product_launch_store = ProductLaunchStore(proposal_store=product_proposal_store)
     control = Control(
         opportunity_store=opportunity_store,
         product_proposal_store=product_proposal_store,
         product_plan_store=product_plan_store,
+        product_launch_store=product_launch_store,
     )
     dispatcher = Dispatcher(state_machine=sm, control=control)
     print(f"🧠 Restored state: {sm.state}")
@@ -38,6 +41,7 @@ def main():
             opportunity_store=opportunity_store,
             product_proposal_store=product_proposal_store,
             product_plan_store=product_plan_store,
+            product_launch_store=product_launch_store,
             control=control,
         )
     except TypeError:

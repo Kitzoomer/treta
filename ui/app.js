@@ -6,6 +6,7 @@ const eventsListEl = document.getElementById("events-list");
 const opportunitiesListEl = document.getElementById("opportunities-list");
 const productProposalsListEl = document.getElementById("product-proposals-list");
 const productPlansListEl = document.getElementById("product-plans-list");
+const productLaunchesListEl = document.getElementById("product-launches-list");
 const simulateButton = document.getElementById("simulate-opportunity");
 
 function renderEvents(events) {
@@ -80,6 +81,28 @@ function renderProductProposals(items) {
 }
 
 
+
+function renderProductLaunches(items) {
+  productLaunchesListEl.innerHTML = "";
+  const recent = [...items].slice(0, 5);
+
+  if (!recent.length) {
+    const empty = document.createElement("li");
+    empty.textContent = "No product launches yet.";
+    productLaunchesListEl.appendChild(empty);
+    return;
+  }
+
+  for (const item of recent) {
+    const li = document.createElement("li");
+    const name = item.product_name || item.proposal_id || item.id;
+    const status = item.status || "draft";
+    const metrics = item.metrics || {};
+    li.innerHTML = `${name} · <span class="status-badge status-${status}">${status}</span> · sales=${metrics.sales ?? 0} · revenue=${metrics.revenue ?? 0}`;
+    productLaunchesListEl.appendChild(li);
+  }
+}
+
 function renderProductPlans(items) {
   productPlansListEl.innerHTML = "";
   const recent = [...items].slice(0, 5);
@@ -100,12 +123,13 @@ function renderProductPlans(items) {
 }
 
 async function refresh() {
-  const [stateResponse, eventsResponse, opportunitiesResponse, proposalsResponse, plansResponse] = await Promise.all([
+  const [stateResponse, eventsResponse, opportunitiesResponse, proposalsResponse, plansResponse, launchesResponse] = await Promise.all([
     fetch("/state"),
     fetch("/events"),
     fetch("/opportunities"),
     fetch("/product_proposals"),
     fetch("/product_plans"),
+    fetch("/product_launches"),
   ]);
 
   const stateData = await stateResponse.json();
@@ -113,12 +137,14 @@ async function refresh() {
   const opportunitiesData = await opportunitiesResponse.json();
   const proposalsData = await proposalsResponse.json();
   const plansData = await plansResponse.json();
+  const launchesData = await launchesResponse.json();
 
   stateEl.textContent = stateData.state ?? "unknown";
   renderEvents(eventsData.events || []);
   renderOpportunities(opportunitiesData.items || []);
   renderProductProposals(proposalsData.items || []);
   renderProductPlans(plansData.items || []);
+  renderProductLaunches(launchesData.items || []);
 }
 
 async function simulateOpportunity() {
