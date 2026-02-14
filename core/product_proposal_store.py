@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from collections import deque
 from copy import deepcopy
+import json
+import os
+from pathlib import Path
 from typing import Any, Dict, List
 
 
@@ -11,12 +14,30 @@ ProductProposal = Dict[str, Any]
 class ProductProposalStore:
     """In-memory bounded store for product proposals."""
 
-    def __init__(self, capacity: int = 50):
-        self._items: deque[ProductProposal] = deque(maxlen=capacity)
+    _DEFAULT_DATA_DIR = "./.treta_data"
+
+    def __init__(self, capacity: int = 50, path: Path | None = None):
+        data_dir = Path(os.getenv("TRETA_DATA_DIR", self._DEFAULT_DATA_DIR))
+        self._path = path or data_dir / "product_proposals.json"
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._items: deque[ProductProposal] = deque(self._load_items(), maxlen=capacity)
+
+    def _load_items(self) -> List[ProductProposal]:
+        if not self._path.exists():
+            return []
+        loaded = json.loads(self._path.read_text(encoding="utf-8"))
+        if not isinstance(loaded, list):
+            return []
+        return [dict(item) for item in loaded if isinstance(item, dict)]
+
+    def _save(self) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.write_text(json.dumps(list(self._items), indent=2), encoding="utf-8")
 
     def add(self, proposal: Dict[str, Any]) -> ProductProposal:
         item = dict(proposal)
         self._items.append(item)
+        self._save()
         return deepcopy(item)
 
     def list(self) -> List[ProductProposal]:
