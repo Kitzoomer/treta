@@ -1,4 +1,8 @@
+import os
+import shutil
+import tempfile
 import unittest
+from pathlib import Path
 
 from core.control import Control
 from core.dispatcher import Dispatcher
@@ -9,6 +13,29 @@ from core.bus import event_bus
 
 
 class InfoproductSignalsTest(unittest.TestCase):
+    def setUp(self):
+        self._temp_dir = tempfile.TemporaryDirectory()
+        self._data_dir = Path(self._temp_dir.name)
+
+        self._original_data_dir = os.environ.get("TRETA_DATA_DIR")
+        os.environ["TRETA_DATA_DIR"] = str(self._data_dir)
+        self._clear_data_dir()
+
+    def tearDown(self):
+        if self._original_data_dir is None:
+            os.environ.pop("TRETA_DATA_DIR", None)
+        else:
+            os.environ["TRETA_DATA_DIR"] = self._original_data_dir
+        self._temp_dir.cleanup()
+
+    def _clear_data_dir(self):
+        self._data_dir.mkdir(parents=True, exist_ok=True)
+        for child in self._data_dir.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+
     def test_run_infoproduct_scan_populates_opportunity_store(self):
         while event_bus.pop(timeout=0.001) is not None:
             pass

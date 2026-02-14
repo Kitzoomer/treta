@@ -1,3 +1,7 @@
+import os
+from pathlib import Path
+import shutil
+import tempfile
 import unittest
 from unittest.mock import Mock
 
@@ -6,6 +10,29 @@ from core.events import Event
 
 
 class ControlSmokeTest(unittest.TestCase):
+    def setUp(self):
+        self._temp_dir = tempfile.TemporaryDirectory()
+        self._data_dir = Path(self._temp_dir.name)
+
+        self._original_data_dir = os.environ.get("TRETA_DATA_DIR")
+        os.environ["TRETA_DATA_DIR"] = str(self._data_dir)
+        self._clear_data_dir()
+
+    def tearDown(self):
+        if self._original_data_dir is None:
+            os.environ.pop("TRETA_DATA_DIR", None)
+        else:
+            os.environ["TRETA_DATA_DIR"] = self._original_data_dir
+        self._temp_dir.cleanup()
+
+    def _clear_data_dir(self):
+        self._data_dir.mkdir(parents=True, exist_ok=True)
+        for child in self._data_dir.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+
     def test_deterministic_mapping_for_requested_events(self):
         control = Control()
 
@@ -24,7 +51,6 @@ class ControlSmokeTest(unittest.TestCase):
                 self.assertEqual(first, expected)
                 self.assertEqual(second, expected)
                 self.assertEqual(first, second)
-
 
     def test_evaluate_opportunity_event_returns_structured_decision(self):
         control = Control()
@@ -48,9 +74,6 @@ class ControlSmokeTest(unittest.TestCase):
         self.assertIn("score", actions[0].payload)
         self.assertIn("decision", actions[0].payload)
         self.assertIn("reasoning", actions[0].payload)
-
-
-
 
     def test_action_approved_generates_action_plan(self):
         control = Control()
@@ -98,7 +121,6 @@ class ControlSmokeTest(unittest.TestCase):
         gumroad_client.get_products.assert_called_once_with()
         gumroad_client.get_sales.assert_called_once_with()
         gumroad_client.get_balance.assert_called_once_with()
-
 
     def test_opportunity_store_flow_detect_list_evaluate_and_dismiss(self):
         control = Control()
