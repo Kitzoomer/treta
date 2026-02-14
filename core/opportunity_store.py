@@ -4,6 +4,7 @@ from collections import deque
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, List
 import uuid
@@ -15,8 +16,12 @@ Opportunity = Dict[str, Any]
 class OpportunityStore:
     """In-memory bounded store for opportunities."""
 
+    _DEFAULT_DATA_DIR = "./.treta_data"
+
     def __init__(self, capacity: int = 50, path: Path | None = None):
-        self._path = path or Path("/data/opportunities.json")
+        data_dir = Path(os.getenv("TRETA_DATA_DIR", self._DEFAULT_DATA_DIR))
+        self._path = path or data_dir / "opportunities.json"
+        self._path.parent.mkdir(parents=True, exist_ok=True)
         self._items: deque[Opportunity] = deque(self._load_items(), maxlen=capacity)
 
     def _load_items(self) -> List[Opportunity]:

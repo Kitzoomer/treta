@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 from copy import deepcopy
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -13,8 +14,12 @@ ProductProposal = Dict[str, Any]
 class ProductProposalStore:
     """In-memory bounded store for product proposals."""
 
+    _DEFAULT_DATA_DIR = "./.treta_data"
+
     def __init__(self, capacity: int = 50, path: Path | None = None):
-        self._path = path or Path("/data/product_proposals.json")
+        data_dir = Path(os.getenv("TRETA_DATA_DIR", self._DEFAULT_DATA_DIR))
+        self._path = path or data_dir / "product_proposals.json"
+        self._path.parent.mkdir(parents=True, exist_ok=True)
         self._items: deque[ProductProposal] = deque(self._load_items(), maxlen=capacity)
 
     def _load_items(self) -> List[ProductProposal]:

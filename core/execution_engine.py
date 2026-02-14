@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -8,8 +9,12 @@ from typing import Any, Dict, List
 class ExecutionEngine:
     """Build a deterministic execution package from a stored proposal."""
 
+    _DEFAULT_DATA_DIR = "./.treta_data"
+
     def __init__(self, path: Path | None = None):
-        self._path = path or Path("/data/executions.json")
+        data_dir = Path(os.getenv("TRETA_DATA_DIR", self._DEFAULT_DATA_DIR))
+        self._path = path or data_dir / "executions.json"
+        self._path.parent.mkdir(parents=True, exist_ok=True)
         self._history: List[Dict[str, Any]] = self._load_history()
 
     def _load_history(self) -> List[Dict[str, Any]]:
