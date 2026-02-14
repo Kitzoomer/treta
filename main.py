@@ -38,6 +38,7 @@ def main():
             opportunity_store=opportunity_store,
             product_proposal_store=product_proposal_store,
             product_plan_store=product_plan_store,
+            control=control,
         )
     except TypeError:
         start_http_server()

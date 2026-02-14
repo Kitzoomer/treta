@@ -13,6 +13,7 @@ from core.product_engine import ProductEngine
 from core.product_proposal_store import ProductProposalStore
 from core.product_builder import ProductBuilder
 from core.product_plan_store import ProductPlanStore
+from core.execution_engine import ExecutionEngine
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,7 @@ class Control:
         product_proposal_store: ProductProposalStore | None = None,
         product_builder: ProductBuilder | None = None,
         product_plan_store: ProductPlanStore | None = None,
+        execution_engine: ExecutionEngine | None = None,
     ):
         self.decision_engine = decision_engine or DecisionEngine()
         self.gumroad_client = gumroad_client
@@ -45,6 +47,7 @@ class Control:
         self.product_proposal_store = product_proposal_store or ProductProposalStore()
         self.product_builder = product_builder or ProductBuilder()
         self.product_plan_store = product_plan_store or ProductPlanStore()
+        self.execution_engine = execution_engine or ExecutionEngine()
 
     def evaluate_opportunity(self, opportunity: Dict[str, object]) -> Dict[str, object]:
         return self.decision_engine.evaluate(opportunity)
@@ -203,6 +206,24 @@ class Control:
             if plan is None:
                 return []
             return [Action(type="ProductPlanReturned", payload={"plan": plan})]
+
+        if event.type == "ExecuteProductPlanRequested":
+            proposal_id = str(event.payload.get("proposal_id", ""))
+            proposal = self.product_proposal_store.get(proposal_id)
+            if proposal is None:
+                return []
+
+            execution_package = self.execution_engine.generate_execution_package(proposal)
+            print(f"[EXECUTION] proposal_id={proposal_id}")
+            return [
+                Action(
+                    type="ProductPlanExecuted",
+                    payload={
+                        "proposal_id": proposal_id,
+                        "execution_package": execution_package,
+                    },
+                )
+            ]
 
         if event.type == "ListOpportunities":
             status = event.payload.get("status")
