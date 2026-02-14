@@ -11,6 +11,8 @@ from core.bus import event_bus
 from core.opportunity_sources.infoproduct_signals import InfoproductSignals
 from core.product_engine import ProductEngine
 from core.product_proposal_store import ProductProposalStore
+from core.product_builder import ProductBuilder
+from core.product_plan_store import ProductPlanStore
 
 
 @dataclass(frozen=True)
@@ -31,6 +33,8 @@ class Control:
         opportunity_store: OpportunityStore | None = None,
         product_engine: ProductEngine | None = None,
         product_proposal_store: ProductProposalStore | None = None,
+        product_builder: ProductBuilder | None = None,
+        product_plan_store: ProductPlanStore | None = None,
     ):
         self.decision_engine = decision_engine or DecisionEngine()
         self.gumroad_client = gumroad_client
@@ -39,6 +43,8 @@ class Control:
         self.opportunity_store = opportunity_store or OpportunityStore()
         self.product_engine = product_engine or ProductEngine()
         self.product_proposal_store = product_proposal_store or ProductProposalStore()
+        self.product_builder = product_builder or ProductBuilder()
+        self.product_plan_store = product_plan_store or ProductPlanStore()
 
     def evaluate_opportunity(self, opportunity: Dict[str, object]) -> Dict[str, object]:
         return self.decision_engine.evaluate(opportunity)
@@ -154,6 +160,49 @@ class Control:
             if item is None:
                 return []
             return [Action(type="ProductProposalFetched", payload={"item": item})]
+
+        if event.type == "BuildProductPlanRequested":
+            proposal_id = str(event.payload.get("proposal_id", ""))
+            proposal = self.product_proposal_store.get(proposal_id)
+            if proposal is None:
+                return []
+
+            existing = self.product_plan_store.get_by_proposal_id(proposal_id)
+            if existing is not None:
+                return [
+                    Action(
+                        type="ProductPlanBuilt",
+                        payload={
+                            "plan_id": existing["plan_id"],
+                            "proposal_id": proposal_id,
+                            "plan": existing,
+                        },
+                    )
+                ]
+
+            plan = self.product_builder.build(proposal)
+            stored = self.product_plan_store.add(plan)
+            return [
+                Action(
+                    type="ProductPlanBuilt",
+                    payload={
+                        "plan_id": stored["plan_id"],
+                        "proposal_id": stored["proposal_id"],
+                        "plan": stored,
+                    },
+                )
+            ]
+
+        if event.type == "ListProductPlansRequested":
+            items = self.product_plan_store.list()
+            return [Action(type="ProductPlansListed", payload={"items": items})]
+
+        if event.type == "GetProductPlanRequested":
+            plan_id = str(event.payload.get("plan_id", ""))
+            plan = self.product_plan_store.get(plan_id)
+            if plan is None:
+                return []
+            return [Action(type="ProductPlanReturned", payload={"plan": plan})]
 
         if event.type == "ListOpportunities":
             status = event.payload.get("status")

@@ -5,6 +5,7 @@ const lastReasoningEl = document.getElementById("last-reasoning");
 const eventsListEl = document.getElementById("events-list");
 const opportunitiesListEl = document.getElementById("opportunities-list");
 const productProposalsListEl = document.getElementById("product-proposals-list");
+const productPlansListEl = document.getElementById("product-plans-list");
 const simulateButton = document.getElementById("simulate-opportunity");
 
 function renderEvents(events) {
@@ -77,23 +78,46 @@ function renderProductProposals(items) {
   }
 }
 
+
+function renderProductPlans(items) {
+  productPlansListEl.innerHTML = "";
+  const recent = [...items].slice(0, 5);
+
+  if (!recent.length) {
+    const empty = document.createElement("li");
+    empty.textContent = "No product plans built yet.";
+    productPlansListEl.appendChild(empty);
+    return;
+  }
+
+  for (const item of recent) {
+    const li = document.createElement("li");
+    const outlinePreview = (item.outline || []).slice(0, 3).join(" | ");
+    li.textContent = `${item.product_name} · ${item.format} · ${item.price_suggestion} · ${outlinePreview}`;
+    productPlansListEl.appendChild(li);
+  }
+}
+
 async function refresh() {
-  const [stateResponse, eventsResponse, opportunitiesResponse, proposalsResponse] = await Promise.all([
+  const [stateResponse, eventsResponse, opportunitiesResponse, proposalsResponse, plansResponse] = await Promise.all([
     fetch("/state"),
     fetch("/events"),
     fetch("/opportunities"),
     fetch("/product_proposals"),
+    fetch("/product_plans"),
   ]);
 
   const stateData = await stateResponse.json();
   const eventsData = await eventsResponse.json();
   const opportunitiesData = await opportunitiesResponse.json();
   const proposalsData = await proposalsResponse.json();
+  const plansData = await plansResponse.json();
 
   stateEl.textContent = stateData.state ?? "unknown";
   renderEvents(eventsData.events || []);
   renderOpportunities(opportunitiesData.items || []);
   renderProductProposals(proposalsData.items || []);
+  renderProductPlans(plansData.items || []);
 }
 
 async function simulateOpportunity() {
