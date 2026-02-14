@@ -18,6 +18,7 @@ class Handler(BaseHTTPRequestHandler):
     control = None
     strategy_engine = None
     strategy_decision_engine = None
+    strategy_action_execution_layer = None
     ui_dir = Path(__file__).resolve().parent.parent / "ui"
 
     def _send(self, code: int, body: dict):
@@ -114,6 +115,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(503, {"error": "strategy_decision_engine_unavailable"})
             return self._send(200, self.strategy_decision_engine.decide())
 
+        if parsed.path == "/strategy/pending_actions":
+            if self.strategy_action_execution_layer is None:
+                return self._send(503, {"error": "strategy_action_execution_layer_unavailable"})
+            items = self.strategy_action_execution_layer.list_pending_actions()
+            return self._send(200, {"items": items})
+
         if parsed.path.startswith("/product_launches/"):
             if self.product_launch_store is None:
                 return self._send(503, {"error": "product_launch_store_unavailable"})
@@ -176,6 +183,14 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/product_launches/") and self.path.endswith("/status"):
             launch_status_id = self.path[len("/product_launches/"):-len("/status")]
 
+        strategy_execute_id = None
+        if self.path.startswith("/strategy/execute_action/"):
+            strategy_execute_id = self.path[len("/strategy/execute_action/"):]
+
+        strategy_reject_id = None
+        if self.path.startswith("/strategy/reject_action/"):
+            strategy_reject_id = self.path[len("/strategy/reject_action/"):]
+
         allowed_paths = {
             "/event",
             "/opportunities/evaluate",
@@ -184,7 +199,7 @@ class Handler(BaseHTTPRequestHandler):
             "/product_plans/build",
             "/product_proposals/execute",
         }
-        if self.path not in allowed_paths and transition_event_type is None and launch_sale_id is None and launch_status_id is None:
+        if self.path not in allowed_paths and transition_event_type is None and launch_sale_id is None and launch_status_id is None and strategy_execute_id is None and strategy_reject_id is None:
             return self._send(404, {"ok": False, "error": "not_found"})
 
         length = int(self.headers.get("Content-Length", "0"))
@@ -289,6 +304,24 @@ class Handler(BaseHTTPRequestHandler):
                 updated = self.product_launch_store.transition_status(launch_id, status)
                 return self._send(200, updated)
 
+            if strategy_execute_id is not None:
+                if self.strategy_action_execution_layer is None:
+                    return self._send(503, {"ok": False, "error": "strategy_action_execution_layer_unavailable"})
+                action_id = str(strategy_execute_id).strip()
+                if not action_id:
+                    return self._send(400, {"ok": False, "error": "missing_id"})
+                updated = self.strategy_action_execution_layer.execute_action(action_id)
+                return self._send(200, updated)
+
+            if strategy_reject_id is not None:
+                if self.strategy_action_execution_layer is None:
+                    return self._send(503, {"ok": False, "error": "strategy_action_execution_layer_unavailable"})
+                action_id = str(strategy_reject_id).strip()
+                if not action_id:
+                    return self._send(400, {"ok": False, "error": "missing_id"})
+                updated = self.strategy_action_execution_layer.reject_action(action_id)
+                return self._send(200, updated)
+
             event_id = str(data.get("id", "")).strip()
             if not event_id:
                 return self._send(400, {"ok": False, "error": "missing_id"})
@@ -330,6 +363,7 @@ def start_http_server(
     control=None,
     strategy_engine=None,
     strategy_decision_engine=None,
+    strategy_action_execution_layer=None,
 ):
     # Thread daemon: se muere si se muere el proceso principal (bien para dev)
     Handler.state_machine = state_machine
@@ -341,6 +375,7 @@ def start_http_server(
     Handler.control = control
     Handler.strategy_engine = strategy_engine
     Handler.strategy_decision_engine = strategy_decision_engine
+    Handler.strategy_action_execution_layer = strategy_action_execution_layer
     server = HTTPServer((host, port), Handler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()

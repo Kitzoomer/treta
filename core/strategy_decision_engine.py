@@ -5,14 +5,20 @@ from typing import Any, Dict, List
 
 from core.performance_engine import PerformanceEngine
 from core.product_launch_store import ProductLaunchStore
+from core.strategy_action_execution_layer import StrategyActionExecutionLayer
 
 
 class StrategyDecisionEngine:
     """Deterministic strategic decisions derived from launch performance."""
 
-    def __init__(self, product_launch_store: ProductLaunchStore):
+    def __init__(
+        self,
+        product_launch_store: ProductLaunchStore,
+        strategy_action_execution_layer: StrategyActionExecutionLayer | None = None,
+    ):
         self._product_launch_store = product_launch_store
         self._performance_engine = PerformanceEngine(product_launch_store=product_launch_store)
+        self._strategy_action_execution_layer = strategy_action_execution_layer
 
     def _utcnow(self) -> datetime:
         return datetime.now(timezone.utc)
@@ -108,6 +114,9 @@ class StrategyDecisionEngine:
             priority_level = "high"
         elif actions:
             priority_level = "medium"
+
+        if self._strategy_action_execution_layer is not None:
+            self._strategy_action_execution_layer.register_pending_actions(actions)
 
         confidence = 10 if actions else 8
 

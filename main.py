@@ -14,6 +14,8 @@ from core.product_launch_store import ProductLaunchStore
 from core.performance_engine import PerformanceEngine
 from core.strategy_engine import StrategyEngine
 from core.strategy_decision_engine import StrategyDecisionEngine
+from core.strategy_action_store import StrategyActionStore
+from core.strategy_action_execution_layer import StrategyActionExecutionLayer
 
 
 def main():
@@ -29,7 +31,12 @@ def main():
     product_launch_store = ProductLaunchStore(proposal_store=product_proposal_store)
     performance_engine = PerformanceEngine(product_launch_store=product_launch_store)
     strategy_engine = StrategyEngine(product_launch_store=product_launch_store)
-    strategy_decision_engine = StrategyDecisionEngine(product_launch_store=product_launch_store)
+    strategy_action_store = StrategyActionStore()
+    strategy_action_execution_layer = StrategyActionExecutionLayer(strategy_action_store=strategy_action_store)
+    strategy_decision_engine = StrategyDecisionEngine(
+        product_launch_store=product_launch_store,
+        strategy_action_execution_layer=strategy_action_execution_layer,
+    )
     control = Control(
         opportunity_store=opportunity_store,
         product_proposal_store=product_proposal_store,
@@ -52,6 +59,7 @@ def main():
             control=control,
             strategy_engine=strategy_engine,
             strategy_decision_engine=strategy_decision_engine,
+            strategy_action_execution_layer=strategy_action_execution_layer,
         )
     except TypeError:
         start_http_server()
