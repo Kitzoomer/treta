@@ -42,3 +42,20 @@ button {
   color: #f8fafc;
   cursor: pointer;
 }
+
+.status-badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: lowercase;
+}
+
+.status-draft { background: #64748b; color: #f8fafc; }
+.status-approved { background: #2563eb; color: #eff6ff; }
+.status-building { background: #ea580c; color: #fff7ed; }
+.status-ready_to_launch { background: #7c3aed; color: #f5f3ff; }
+.status-launched { background: #16a34a; color: #f0fdf4; }
+.status-rejected { background: #dc2626; color: #fef2f2; }
+.status-archived { background: #334155; color: #e2e8f0; }

@@ -73,7 +73,8 @@ function renderProductProposals(items) {
 
   for (const item of recent) {
     const li = document.createElement("li");
-    li.textContent = `${item.product_name} · €${item.price_suggestion} · ${item.target_audience} · confidence=${item.confidence} · ${item.reasoning}`;
+    const status = item.status || "draft";
+    li.innerHTML = `${item.product_name} · €${item.price_suggestion} · ${item.target_audience} · <span class="status-badge status-${status}">${status}</span> · confidence=${item.confidence} · ${item.reasoning}`;
     productProposalsListEl.appendChild(li);
   }
 }

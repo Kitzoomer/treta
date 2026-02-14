@@ -179,9 +179,13 @@ class ProductEngine:
         midpoint_price = round((best_theme["price_min"] + best_theme["price_max"]) / 2)
         confidence = min(10, 5 + max(best_matches, 1))
 
+        now = datetime.now(timezone.utc).isoformat()
+
         return {
             "id": uuid.uuid4().hex,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": now,
+            "updated_at": now,
+            "status": "draft",
             "source_opportunity_id": str(opportunity.get("id", "")),
             "product_name": best_theme["product_name"],
             "product_type": best_theme["product_type"],

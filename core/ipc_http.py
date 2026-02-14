@@ -116,14 +116,33 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, {"error": "not_found"})
 
     def do_POST(self):
-        if self.path not in {
+        proposal_transition_paths = {
+            "/approve": "ApproveProposal",
+            "/reject": "RejectProposal",
+            "/start_build": "StartBuildingProposal",
+            "/ready": "MarkReadyToLaunch",
+            "/launch": "MarkProposalLaunched",
+            "/archive": "ArchiveProposal",
+        }
+
+        transition_event_type = None
+        transition_proposal_id = None
+        for suffix, event_type in proposal_transition_paths.items():
+            marker = f"/product_proposals/"
+            if self.path.startswith(marker) and self.path.endswith(suffix):
+                transition_proposal_id = self.path[len(marker):-len(suffix)]
+                transition_event_type = event_type
+                break
+
+        allowed_paths = {
             "/event",
             "/opportunities/evaluate",
             "/opportunities/dismiss",
             "/scan/infoproduct",
             "/product_plans/build",
             "/product_proposals/execute",
-        }:
+        }
+        if self.path not in allowed_paths and transition_event_type is None:
             return self._send(404, {"ok": False, "error": "not_found"})
 
         length = int(self.headers.get("Content-Length", "0"))
@@ -131,6 +150,27 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             data = json.loads(raw)
+
+            if transition_event_type is not None:
+                if self.control is None:
+                    return self._send(503, {"ok": False, "error": "control_unavailable"})
+                proposal_id = str(transition_proposal_id or "").strip()
+                if not proposal_id:
+                    return self._send(400, {"ok": False, "error": "missing_id"})
+
+                transition_event = Event(
+                    type=transition_event_type,
+                    payload={"proposal_id": proposal_id},
+                    source="http",
+                )
+                event_bus.push(transition_event)
+                actions = self.control.consume(transition_event)
+                for action in actions:
+                    event_bus.push(Event(type=action.type, payload=action.payload, source="control"))
+                    if action.type == "ProductProposalStatusChanged":
+                        return self._send(200, action.payload["proposal"])
+
+                return self._send(404, {"ok": False, "error": "proposal_not_found"})
 
             if self.path == "/event":
                 ev_type = data.get("type")

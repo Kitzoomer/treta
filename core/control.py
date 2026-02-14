@@ -164,6 +164,29 @@ class Control:
                 return []
             return [Action(type="ProductProposalFetched", payload={"item": item})]
 
+        proposal_transitions = {
+            "ApproveProposal": "approved",
+            "RejectProposal": "rejected",
+            "StartBuildingProposal": "building",
+            "MarkReadyToLaunch": "ready_to_launch",
+            "MarkProposalLaunched": "launched",
+            "ArchiveProposal": "archived",
+        }
+        if event.type in proposal_transitions:
+            proposal_id = str(event.payload.get("proposal_id", "")).strip()
+            if not proposal_id:
+                return []
+            updated = self.product_proposal_store.transition_status(
+                proposal_id=proposal_id,
+                new_status=proposal_transitions[event.type],
+            )
+            return [
+                Action(
+                    type="ProductProposalStatusChanged",
+                    payload={"proposal_id": updated["id"], "status": updated["status"], "proposal": updated},
+                )
+            ]
+
         if event.type == "BuildProductPlanRequested":
             proposal_id = str(event.payload.get("proposal_id", ""))
             proposal = self.product_proposal_store.get(proposal_id)
