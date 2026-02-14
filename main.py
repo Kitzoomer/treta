@@ -13,6 +13,7 @@ from core.product_plan_store import ProductPlanStore
 from core.product_launch_store import ProductLaunchStore
 from core.performance_engine import PerformanceEngine
 from core.strategy_engine import StrategyEngine
+from core.strategy_decision_engine import StrategyDecisionEngine
 
 
 def main():
@@ -28,6 +29,7 @@ def main():
     product_launch_store = ProductLaunchStore(proposal_store=product_proposal_store)
     performance_engine = PerformanceEngine(product_launch_store=product_launch_store)
     strategy_engine = StrategyEngine(product_launch_store=product_launch_store)
+    strategy_decision_engine = StrategyDecisionEngine(product_launch_store=product_launch_store)
     control = Control(
         opportunity_store=opportunity_store,
         product_proposal_store=product_proposal_store,
@@ -49,6 +51,7 @@ def main():
             performance_engine=performance_engine,
             control=control,
             strategy_engine=strategy_engine,
+            strategy_decision_engine=strategy_decision_engine,
         )
     except TypeError:
         start_http_server()
