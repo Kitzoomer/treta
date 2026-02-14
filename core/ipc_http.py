@@ -16,6 +16,7 @@ class Handler(BaseHTTPRequestHandler):
     product_launch_store = None
     performance_engine = None
     control = None
+    strategy_engine = None
     ui_dir = Path(__file__).resolve().parent.parent / "ui"
 
     def _send(self, code: int, body: dict):
@@ -101,6 +102,11 @@ class Handler(BaseHTTPRequestHandler):
             if self.performance_engine is None:
                 return self._send(503, {"error": "performance_engine_unavailable"})
             return self._send(200, self.performance_engine.generate_insights())
+
+        if parsed.path == "/strategy/recommendations":
+            if self.strategy_engine is None:
+                return self._send(503, {"error": "strategy_engine_unavailable"})
+            return self._send(200, self.strategy_engine.generate_recommendations())
 
         if parsed.path.startswith("/product_launches/"):
             if self.product_launch_store is None:
@@ -316,6 +322,7 @@ def start_http_server(
     product_launch_store=None,
     performance_engine=None,
     control=None,
+    strategy_engine=None,
 ):
     # Thread daemon: se muere si se muere el proceso principal (bien para dev)
     Handler.state_machine = state_machine
@@ -325,6 +332,7 @@ def start_http_server(
     Handler.product_launch_store = product_launch_store
     Handler.performance_engine = performance_engine
     Handler.control = control
+    Handler.strategy_engine = strategy_engine
     server = HTTPServer((host, port), Handler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
