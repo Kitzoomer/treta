@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections import deque
 from copy import deepcopy
 from datetime import datetime, timezone
+import json
+from pathlib import Path
 from typing import Any, Dict, List
 import uuid
 
@@ -13,8 +15,21 @@ Opportunity = Dict[str, Any]
 class OpportunityStore:
     """In-memory bounded store for opportunities."""
 
-    def __init__(self, capacity: int = 50):
-        self._items: deque[Opportunity] = deque(maxlen=capacity)
+    def __init__(self, capacity: int = 50, path: Path | None = None):
+        self._path = path or Path("/data/opportunities.json")
+        self._items: deque[Opportunity] = deque(self._load_items(), maxlen=capacity)
+
+    def _load_items(self) -> List[Opportunity]:
+        if not self._path.exists():
+            return []
+        loaded = json.loads(self._path.read_text(encoding="utf-8"))
+        if not isinstance(loaded, list):
+            return []
+        return [dict(item) for item in loaded if isinstance(item, dict)]
+
+    def _save(self) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.write_text(json.dumps(list(self._items), indent=2), encoding="utf-8")
 
     def add(
         self,
@@ -37,6 +52,7 @@ class OpportunityStore:
             "status": "new",
         }
         self._items.append(new_item)
+        self._save()
         return deepcopy(new_item)
 
     def list(self, status: str | None = None) -> List[Opportunity]:
@@ -56,6 +72,7 @@ class OpportunityStore:
             if item.get("id") == item_id:
                 item["decision"] = dict(decision)
                 item["status"] = "evaluated"
+                self._save()
                 return deepcopy(item)
         return None
 
@@ -63,5 +80,6 @@ class OpportunityStore:
         for item in self._items:
             if item.get("id") == item_id:
                 item["status"] = status
+                self._save()
                 return deepcopy(item)
         return None
