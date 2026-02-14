@@ -42,6 +42,7 @@ class Dispatcher:
             "BuildProductPlanRequested",
             "ListProductPlansRequested",
             "GetProductPlanRequested",
+            "ExecuteProductPlanRequested",
             "GumroadStatsRequested",
             "ActionApproved",
             "ActionPlanGenerated",

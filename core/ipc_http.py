@@ -13,6 +13,7 @@ class Handler(BaseHTTPRequestHandler):
     opportunity_store = None
     product_proposal_store = None
     product_plan_store = None
+    control = None
     ui_dir = Path(__file__).resolve().parent.parent / "ui"
 
     def _send(self, code: int, body: dict):
@@ -115,7 +116,14 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, {"error": "not_found"})
 
     def do_POST(self):
-        if self.path not in {"/event", "/opportunities/evaluate", "/opportunities/dismiss", "/scan/infoproduct", "/product_plans/build"}:
+        if self.path not in {
+            "/event",
+            "/opportunities/evaluate",
+            "/opportunities/dismiss",
+            "/scan/infoproduct",
+            "/product_plans/build",
+            "/product_proposals/execute",
+        }:
             return self._send(404, {"ok": False, "error": "not_found"})
 
         length = int(self.headers.get("Content-Length", "0"))
@@ -158,6 +166,27 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 return self._send(200, {"ok": True})
 
+            if self.path == "/product_proposals/execute":
+                proposal_id = str(data.get("id", "")).strip()
+                if not proposal_id:
+                    return self._send(400, {"ok": False, "error": "missing_id"})
+                if self.control is None:
+                    return self._send(503, {"ok": False, "error": "control_unavailable"})
+
+                execute_event = Event(
+                    type="ExecuteProductPlanRequested",
+                    payload={"proposal_id": proposal_id},
+                    source="http",
+                )
+                event_bus.push(execute_event)
+                actions = self.control.consume(execute_event)
+                for action in actions:
+                    event_bus.push(Event(type=action.type, payload=action.payload, source="control"))
+                    if action.type == "ProductPlanExecuted":
+                        return self._send(200, action.payload["execution_package"])
+
+                return self._send(404, {"ok": False, "error": "proposal_not_found"})
+
             event_id = str(data.get("id", "")).strip()
             if not event_id:
                 return self._send(400, {"ok": False, "error": "missing_id"})
@@ -194,12 +223,14 @@ def start_http_server(
     opportunity_store=None,
     product_proposal_store=None,
     product_plan_store=None,
+    control=None,
 ):
     # Thread daemon: se muere si se muere el proceso principal (bien para dev)
     Handler.state_machine = state_machine
     Handler.opportunity_store = opportunity_store
     Handler.product_proposal_store = product_proposal_store
     Handler.product_plan_store = product_plan_store
+    Handler.control = control
     server = HTTPServer((host, port), Handler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
