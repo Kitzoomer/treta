@@ -1,10 +1,36 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+import json
+import os
+from pathlib import Path
+from typing import Any, Dict, List
 
 
 class ExecutionEngine:
     """Build a deterministic execution package from a stored proposal."""
+
+    _DEFAULT_DATA_DIR = "./.treta_data"
+
+    def __init__(self, path: Path | None = None):
+        data_dir = Path(os.getenv("TRETA_DATA_DIR", self._DEFAULT_DATA_DIR))
+        self._path = path or data_dir / "executions.json"
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._history: List[Dict[str, Any]] = self._load_history()
+
+    def _load_history(self) -> List[Dict[str, Any]]:
+        if not self._path.exists():
+            return []
+        loaded = json.loads(self._path.read_text(encoding="utf-8"))
+        if not isinstance(loaded, list):
+            return []
+        return [dict(item) for item in loaded if isinstance(item, dict)]
+
+    def _save(self) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.write_text(json.dumps(self._history, indent=2), encoding="utf-8")
+
+    def list_history(self) -> List[Dict[str, Any]]:
+        return [dict(item) for item in self._history]
 
     def generate_execution_package(self, proposal: Dict[str, Any]) -> Dict[str, Any]:
         product_name = str(proposal.get("product_name", "Untitled Product")).strip() or "Untitled Product"
@@ -42,7 +68,7 @@ class ExecutionEngine:
             ]
         )
 
-        return {
+        execution_package = {
             "reddit_post": {
                 "title": reddit_title,
                 "body": reddit_body,
@@ -59,3 +85,8 @@ class ExecutionEngine:
                 "Promote to existing audience and track first-week conversion notes.",
             ],
         }
+
+        self._history.append({"proposal_id": str(proposal.get("id", "")), "execution_package": execution_package})
+        self._save()
+
+        return execution_package
