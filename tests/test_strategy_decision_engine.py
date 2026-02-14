@@ -3,11 +3,14 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
+from core.bus import event_bus
 from core.ipc_http import start_http_server
 from core.product_launch_store import ProductLaunchStore
 from core.product_proposal_store import ProductProposalStore
+from core.strategy_action_execution_layer import StrategyActionExecutionLayer
+from core.strategy_action_store import StrategyActionStore
 from core.strategy_decision_engine import StrategyDecisionEngine
 
 
@@ -100,6 +103,95 @@ class StrategyDecisionEngineTest(unittest.TestCase):
                 },
                 decision["actions"],
             )
+
+    def test_decide_creates_pending_strategy_actions(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            proposals, launches = self._stores(root)
+            action_store = StrategyActionStore(path=root / "strategy_actions.json")
+            action_execution_layer = StrategyActionExecutionLayer(strategy_action_store=action_store)
+
+            proposals.add({"id": "proposal-1", "product_name": "Growth Kit"})
+            launch = launches.add_from_proposal("proposal-1")
+            launches.transition_status(launch["id"], "active")
+            for _ in range(5):
+                launches.add_sale(launch["id"], 10)
+
+            engine = StrategyDecisionEngine(
+                product_launch_store=launches,
+                strategy_action_execution_layer=action_execution_layer,
+            )
+
+            engine.decide()
+            pending = action_execution_layer.list_pending_actions()
+
+            self.assertEqual(len(pending), 1)
+            self.assertEqual(pending[0]["type"], "scale")
+            self.assertEqual(pending[0]["status"], "pending_confirmation")
+
+    def test_strategy_action_endpoints(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            proposals, launches = self._stores(root)
+            action_store = StrategyActionStore(path=root / "strategy_actions.json")
+            action_execution_layer = StrategyActionExecutionLayer(strategy_action_store=action_store)
+
+            proposals.add({"id": "proposal-1", "product_name": "Growth Kit"})
+            launch = launches.add_from_proposal("proposal-1")
+            launches.transition_status(launch["id"], "active")
+            for _ in range(5):
+                launches.add_sale(launch["id"], 10)
+
+            engine = StrategyDecisionEngine(
+                product_launch_store=launches,
+                strategy_action_execution_layer=action_execution_layer,
+            )
+            engine.decide()
+
+            server = start_http_server(
+                host="127.0.0.1",
+                port=0,
+                strategy_decision_engine=engine,
+                strategy_action_execution_layer=action_execution_layer,
+            )
+            try:
+                port = server.server_port
+                with urlopen(f"http://127.0.0.1:{port}/strategy/pending_actions", timeout=2) as response:
+                    self.assertEqual(response.status, 200)
+                    pending_payload = json.loads(response.read().decode("utf-8"))
+
+                action_id = pending_payload["items"][0]["id"]
+                execute_request = Request(
+                    f"http://127.0.0.1:{port}/strategy/execute_action/{action_id}",
+                    data=b"{}",
+                    method="POST",
+                )
+                with urlopen(execute_request, timeout=2) as response:
+                    self.assertEqual(response.status, 200)
+                    executed = json.loads(response.read().decode("utf-8"))
+
+                reject_action = action_store.add(
+                    action_type="review",
+                    target_id="launch-x",
+                    reasoning="Manual review needed",
+                    status="pending_confirmation",
+                )
+                reject_request = Request(
+                    f"http://127.0.0.1:{port}/strategy/reject_action/{reject_action['id']}",
+                    data=b"{}",
+                    method="POST",
+                )
+                with urlopen(reject_request, timeout=2) as response:
+                    self.assertEqual(response.status, 200)
+                    rejected = json.loads(response.read().decode("utf-8"))
+            finally:
+                server.shutdown()
+                server.server_close()
+
+            self.assertEqual(executed["status"], "executed")
+            self.assertEqual(rejected["status"], "rejected")
+            recent_events = event_bus.recent(limit=1)
+            self.assertEqual(recent_events[-1].type, "StrategyActionExecuted")
 
     def test_strategy_decide_endpoint(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
