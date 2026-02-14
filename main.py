@@ -8,6 +8,7 @@ from core.dispatcher import Dispatcher
 from core.control import Control
 from core.opportunity_store import OpportunityStore
 from core.scheduler import DailyScheduler
+from core.product_proposal_store import ProductProposalStore
 
 
 def main():
@@ -18,14 +19,22 @@ def main():
 
     sm = StateMachine(initial_state=last_state)
     opportunity_store = OpportunityStore()
-    control = Control(opportunity_store=opportunity_store)
+    product_proposal_store = ProductProposalStore()
+    control = Control(
+        opportunity_store=opportunity_store,
+        product_proposal_store=product_proposal_store,
+    )
     dispatcher = Dispatcher(state_machine=sm, control=control)
     print(f"🧠 Restored state: {sm.state}")
     print("[BOOT] Starting HTTP server")
     scheduler = DailyScheduler()
     scheduler.start(event_bus)
     try:
-        start_http_server(state_machine=sm, opportunity_store=opportunity_store)
+        start_http_server(
+            state_machine=sm,
+            opportunity_store=opportunity_store,
+            product_proposal_store=product_proposal_store,
+        )
     except TypeError:
         start_http_server()
 

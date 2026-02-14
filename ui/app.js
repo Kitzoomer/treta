@@ -4,6 +4,7 @@ const lastScoreEl = document.getElementById("last-score");
 const lastReasoningEl = document.getElementById("last-reasoning");
 const eventsListEl = document.getElementById("events-list");
 const opportunitiesListEl = document.getElementById("opportunities-list");
+const productProposalsListEl = document.getElementById("product-proposals-list");
 const simulateButton = document.getElementById("simulate-opportunity");
 
 function renderEvents(events) {
@@ -58,20 +59,41 @@ function renderOpportunities(items) {
   }
 }
 
+function renderProductProposals(items) {
+  productProposalsListEl.innerHTML = "";
+  const recent = [...items].slice(0, 5);
+
+  if (!recent.length) {
+    const empty = document.createElement("li");
+    empty.textContent = "No product proposals generated yet.";
+    productProposalsListEl.appendChild(empty);
+    return;
+  }
+
+  for (const item of recent) {
+    const li = document.createElement("li");
+    li.textContent = `${item.product_name} · €${item.price_suggestion} · ${item.target_audience} · confidence=${item.confidence} · ${item.reasoning}`;
+    productProposalsListEl.appendChild(li);
+  }
+}
+
 async function refresh() {
-  const [stateResponse, eventsResponse, opportunitiesResponse] = await Promise.all([
+  const [stateResponse, eventsResponse, opportunitiesResponse, proposalsResponse] = await Promise.all([
     fetch("/state"),
     fetch("/events"),
     fetch("/opportunities"),
+    fetch("/product_proposals"),
   ]);
 
   const stateData = await stateResponse.json();
   const eventsData = await eventsResponse.json();
   const opportunitiesData = await opportunitiesResponse.json();
+  const proposalsData = await proposalsResponse.json();
 
   stateEl.textContent = stateData.state ?? "unknown";
   renderEvents(eventsData.events || []);
   renderOpportunities(opportunitiesData.items || []);
+  renderProductProposals(proposalsData.items || []);
 }
 
 async function simulateOpportunity() {

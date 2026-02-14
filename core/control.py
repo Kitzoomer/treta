@@ -9,6 +9,8 @@ from core.confirmation_queue import ConfirmationQueue
 from core.opportunity_store import OpportunityStore
 from core.bus import event_bus
 from core.opportunity_sources.infoproduct_signals import InfoproductSignals
+from core.product_engine import ProductEngine
+from core.product_proposal_store import ProductProposalStore
 
 
 @dataclass(frozen=True)
@@ -27,12 +29,16 @@ class Control:
         action_planner: ActionPlanner | None = None,
         confirmation_queue: ConfirmationQueue | None = None,
         opportunity_store: OpportunityStore | None = None,
+        product_engine: ProductEngine | None = None,
+        product_proposal_store: ProductProposalStore | None = None,
     ):
         self.decision_engine = decision_engine or DecisionEngine()
         self.gumroad_client = gumroad_client
         self.action_planner = action_planner or ActionPlanner()
         self.confirmation_queue = confirmation_queue or ConfirmationQueue()
         self.opportunity_store = opportunity_store or OpportunityStore()
+        self.product_engine = product_engine or ProductEngine()
+        self.product_proposal_store = product_proposal_store or ProductProposalStore()
 
     def evaluate_opportunity(self, opportunity: Dict[str, object]) -> Dict[str, object]:
         return self.decision_engine.evaluate(opportunity)
@@ -129,7 +135,25 @@ class Control:
                 summary=str(event.payload.get("summary", "")),
                 opportunity=dict(event.payload.get("opportunity", {})),
             )
-            return []
+            proposal = self.product_engine.generate(created)
+            self.product_proposal_store.add(proposal)
+            return [
+                Action(
+                    type="ProductProposalGenerated",
+                    payload={"proposal_id": proposal["id"], "proposal": proposal},
+                )
+            ]
+
+        if event.type == "ListProductProposals":
+            items = self.product_proposal_store.list()
+            return [Action(type="ProductProposalsListed", payload={"items": items})]
+
+        if event.type == "GetProductProposalById":
+            proposal_id = str(event.payload.get("id", ""))
+            item = self.product_proposal_store.get(proposal_id)
+            if item is None:
+                return []
+            return [Action(type="ProductProposalFetched", payload={"item": item})]
 
         if event.type == "ListOpportunities":
             status = event.payload.get("status")

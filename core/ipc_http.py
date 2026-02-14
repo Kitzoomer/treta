@@ -11,6 +11,7 @@ from core.bus import event_bus
 class Handler(BaseHTTPRequestHandler):
     state_machine = None
     opportunity_store = None
+    product_proposal_store = None
     ui_dir = Path(__file__).resolve().parent.parent / "ui"
 
     def _send(self, code: int, body: dict):
@@ -68,6 +69,23 @@ class Handler(BaseHTTPRequestHandler):
                 for event in event_bus.recent(limit=10)
             ]
             return self._send(200, {"events": events})
+
+        if parsed.path == "/product_proposals":
+            if self.product_proposal_store is None:
+                return self._send(503, {"error": "product_proposal_store_unavailable"})
+
+            items = self.product_proposal_store.list()[:10]
+            return self._send(200, {"items": items})
+
+        if parsed.path.startswith("/product_proposals/"):
+            if self.product_proposal_store is None:
+                return self._send(503, {"error": "product_proposal_store_unavailable"})
+
+            proposal_id = parsed.path.rsplit("/", 1)[-1]
+            item = self.product_proposal_store.get(proposal_id)
+            if item is None:
+                return self._send(404, {"error": "not_found"})
+            return self._send(200, item)
 
         if parsed.path == "/opportunities":
             if self.opportunity_store is None:
@@ -140,10 +158,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"ok": False, "error": str(e)})
 
 
-def start_http_server(host="0.0.0.0", port=7777, state_machine=None, opportunity_store=None):
+def start_http_server(
+    host="0.0.0.0",
+    port=7777,
+    state_machine=None,
+    opportunity_store=None,
+    product_proposal_store=None,
+):
     # Thread daemon: se muere si se muere el proceso principal (bien para dev)
     Handler.state_machine = state_machine
     Handler.opportunity_store = opportunity_store
+    Handler.product_proposal_store = product_proposal_store
     server = HTTPServer((host, port), Handler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()

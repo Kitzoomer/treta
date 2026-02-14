@@ -37,6 +37,8 @@ class Dispatcher:
             "ListOpportunities",
             "EvaluateOpportunityById",
             "OpportunityDismissed",
+            "ListProductProposals",
+            "GetProductProposalById",
             "GumroadStatsRequested",
             "ActionApproved",
             "ActionPlanGenerated",
