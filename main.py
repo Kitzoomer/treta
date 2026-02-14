@@ -9,6 +9,7 @@ from core.control import Control
 from core.opportunity_store import OpportunityStore
 from core.scheduler import DailyScheduler
 from core.product_proposal_store import ProductProposalStore
+from core.product_plan_store import ProductPlanStore
 
 
 def main():
@@ -20,9 +21,11 @@ def main():
     sm = StateMachine(initial_state=last_state)
     opportunity_store = OpportunityStore()
     product_proposal_store = ProductProposalStore()
+    product_plan_store = ProductPlanStore()
     control = Control(
         opportunity_store=opportunity_store,
         product_proposal_store=product_proposal_store,
+        product_plan_store=product_plan_store,
     )
     dispatcher = Dispatcher(state_machine=sm, control=control)
     print(f"🧠 Restored state: {sm.state}")
@@ -34,6 +37,7 @@ def main():
             state_machine=sm,
             opportunity_store=opportunity_store,
             product_proposal_store=product_proposal_store,
+            product_plan_store=product_plan_store,
         )
     except TypeError:
         start_http_server()

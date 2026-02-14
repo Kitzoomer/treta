@@ -12,6 +12,7 @@ class Handler(BaseHTTPRequestHandler):
     state_machine = None
     opportunity_store = None
     product_proposal_store = None
+    product_plan_store = None
     ui_dir = Path(__file__).resolve().parent.parent / "ui"
 
     def _send(self, code: int, body: dict):
@@ -87,6 +88,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(404, {"error": "not_found"})
             return self._send(200, item)
 
+        if parsed.path == "/product_plans":
+            if self.product_plan_store is None:
+                return self._send(503, {"error": "product_plan_store_unavailable"})
+            items = self.product_plan_store.list(limit=10)
+            return self._send(200, {"items": items})
+
+        if parsed.path.startswith("/product_plans/"):
+            if self.product_plan_store is None:
+                return self._send(503, {"error": "product_plan_store_unavailable"})
+            plan_id = parsed.path.rsplit("/", 1)[-1]
+            item = self.product_plan_store.get(plan_id)
+            if item is None:
+                return self._send(404, {"error": "not_found"})
+            return self._send(200, item)
+
         if parsed.path == "/opportunities":
             if self.opportunity_store is None:
                 return self._send(503, {"error": "opportunity_store_unavailable"})
@@ -99,7 +115,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, {"error": "not_found"})
 
     def do_POST(self):
-        if self.path not in {"/event", "/opportunities/evaluate", "/opportunities/dismiss", "/scan/infoproduct"}:
+        if self.path not in {"/event", "/opportunities/evaluate", "/opportunities/dismiss", "/scan/infoproduct", "/product_plans/build"}:
             return self._send(404, {"ok": False, "error": "not_found"})
 
         length = int(self.headers.get("Content-Length", "0"))
@@ -124,6 +140,19 @@ class Handler(BaseHTTPRequestHandler):
                     Event(
                         type="RunInfoproductScan",
                         payload={},
+                        source="http",
+                    )
+                )
+                return self._send(200, {"ok": True})
+
+            if self.path == "/product_plans/build":
+                proposal_id = str(data.get("proposal_id", "")).strip()
+                if not proposal_id:
+                    return self._send(400, {"ok": False, "error": "missing_proposal_id"})
+                event_bus.push(
+                    Event(
+                        type="BuildProductPlanRequested",
+                        payload={"proposal_id": proposal_id},
                         source="http",
                     )
                 )
@@ -164,11 +193,13 @@ def start_http_server(
     state_machine=None,
     opportunity_store=None,
     product_proposal_store=None,
+    product_plan_store=None,
 ):
     # Thread daemon: se muere si se muere el proceso principal (bien para dev)
     Handler.state_machine = state_machine
     Handler.opportunity_store = opportunity_store
     Handler.product_proposal_store = product_proposal_store
+    Handler.product_plan_store = product_plan_store
     server = HTTPServer((host, port), Handler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
