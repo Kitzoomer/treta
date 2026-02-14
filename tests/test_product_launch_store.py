@@ -14,7 +14,7 @@ class ProductLaunchStoreTest(unittest.TestCase):
         launches = ProductLaunchStore(proposal_store=proposals, path=root / "product_launches.json")
         return proposals, launches
 
-    def test_launch_created_when_proposal_becomes_launched(self):
+    def test_launch_created_only_when_proposal_explicitly_launched(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             proposals, launches = self._stores(root)
@@ -24,8 +24,14 @@ class ProductLaunchStoreTest(unittest.TestCase):
             control.consume(Event(type="ApproveProposal", payload={"proposal_id": "proposal-1"}, source="test"))
             control.consume(Event(type="StartBuildingProposal", payload={"proposal_id": "proposal-1"}, source="test"))
             control.consume(Event(type="MarkReadyToLaunch", payload={"proposal_id": "proposal-1"}, source="test"))
-            actions = control.consume(Event(type="MarkProposalLaunched", payload={"proposal_id": "proposal-1"}, source="test"))
+            execute_actions = control.consume(Event(type="ExecuteProductPlanRequested", payload={"proposal_id": "proposal-1"}, source="test"))
 
+            self.assertTrue(any(action.type == "ProductPlanExecuted" for action in execute_actions))
+            self.assertTrue(any(action.type == "ProductProposalStatusChanged" and action.payload["status"] == "ready_for_review" for action in execute_actions))
+            self.assertIsNone(launches.get_by_proposal_id("proposal-1"))
+
+            actions = control.consume(Event(type="MarkProposalLaunched", payload={"proposal_id": "proposal-1"}, source="test"))
+            self.assertTrue(any(action.type == "ProductProposalStatusChanged" and action.payload["status"] == "launched" for action in actions))
             self.assertTrue(any(action.type == "ProductLaunched" for action in actions))
             launch = launches.get_by_proposal_id("proposal-1")
             self.assertIsNotNone(launch)

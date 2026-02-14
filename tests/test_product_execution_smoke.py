@@ -32,6 +32,15 @@ class ProductExecutionSmokeTest(unittest.TestCase):
         self.assertEqual(len(generated), 1)
 
         proposal_id = generated[0].payload["proposal_id"]
+        for event_type in ["ApproveProposal", "StartBuildingProposal", "MarkReadyToLaunch"]:
+            dispatcher.handle(
+                Event(
+                    type=event_type,
+                    source="test",
+                    payload={"proposal_id": proposal_id},
+                )
+            )
+
         dispatcher.handle(
             Event(
                 type="ExecuteProductPlanRequested",
@@ -47,6 +56,20 @@ class ProductExecutionSmokeTest(unittest.TestCase):
             if event.type == "ProductPlanExecuted"
         ]
         self.assertEqual(len(execution_events), 1)
+
+        status_events = [
+            event
+            for event in events_after_execution[history_before:]
+            if event.type == "ProductProposalStatusChanged" and event.payload.get("status") == "ready_for_review"
+        ]
+        self.assertEqual(len(status_events), 1)
+
+        launched_events = [
+            event
+            for event in events_after_execution[history_before:]
+            if event.type == "ProductLaunched"
+        ]
+        self.assertEqual(len(launched_events), 0)
 
         package = execution_events[0].payload["execution_package"]
         self.assertTrue(package.get("reddit_post", {}).get("title"))

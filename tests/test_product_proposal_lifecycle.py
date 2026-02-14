@@ -18,7 +18,7 @@ class ProductProposalLifecycleTest(unittest.TestCase):
 
             self.assertEqual(proposal["status"], "draft")
 
-            for status in ["approved", "building", "ready_to_launch", "launched", "archived"]:
+            for status in ["approved", "building", "ready_to_launch", "ready_for_review", "launched", "archived"]:
                 proposal = store.transition_status("proposal-1", status)
                 self.assertEqual(proposal["status"], status)
 

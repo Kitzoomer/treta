@@ -191,7 +191,7 @@ class Control:
                     payload={"proposal_id": updated["id"], "status": updated["status"], "proposal": updated},
                 )
             ]
-            if updated["status"] == "launched":
+            if event.type == "MarkProposalLaunched":
                 launch = self.product_launch_store.add_from_proposal(updated["id"])
                 launch = self.product_launch_store.mark_launched(launch["id"])
                 actions.append(
@@ -279,7 +279,7 @@ class Control:
 
             execution_package = self.execution_engine.generate_execution_package(proposal)
             print(f"[EXECUTION] proposal_id={proposal_id}")
-            return [
+            actions = [
                 Action(
                     type="ProductPlanExecuted",
                     payload={
@@ -288,6 +288,18 @@ class Control:
                     },
                 )
             ]
+
+            updated = self.product_proposal_store.transition_status(
+                proposal_id=proposal_id,
+                new_status="ready_for_review",
+            )
+            actions.append(
+                Action(
+                    type="ProductProposalStatusChanged",
+                    payload={"proposal_id": updated["id"], "status": updated["status"], "proposal": updated},
+                )
+            )
+            return actions
 
         if event.type == "ListOpportunities":
             status = event.payload.get("status")
