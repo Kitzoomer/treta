@@ -11,6 +11,7 @@ from core.scheduler import DailyScheduler
 from core.product_proposal_store import ProductProposalStore
 from core.product_plan_store import ProductPlanStore
 from core.product_launch_store import ProductLaunchStore
+from core.performance_engine import PerformanceEngine
 
 
 def main():
@@ -24,6 +25,7 @@ def main():
     product_proposal_store = ProductProposalStore()
     product_plan_store = ProductPlanStore()
     product_launch_store = ProductLaunchStore(proposal_store=product_proposal_store)
+    performance_engine = PerformanceEngine(product_launch_store=product_launch_store)
     control = Control(
         opportunity_store=opportunity_store,
         product_proposal_store=product_proposal_store,
@@ -42,6 +44,7 @@ def main():
             product_proposal_store=product_proposal_store,
             product_plan_store=product_plan_store,
             product_launch_store=product_launch_store,
+            performance_engine=performance_engine,
             control=control,
         )
     except TypeError:
