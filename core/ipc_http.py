@@ -13,6 +13,7 @@ class Handler(BaseHTTPRequestHandler):
     opportunity_store = None
     product_proposal_store = None
     product_plan_store = None
+    product_launch_store = None
     control = None
     ui_dir = Path(__file__).resolve().parent.parent / "ui"
 
@@ -89,6 +90,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(404, {"error": "not_found"})
             return self._send(200, item)
 
+        if parsed.path == "/product_launches":
+            if self.product_launch_store is None:
+                return self._send(503, {"error": "product_launch_store_unavailable"})
+            items = self.product_launch_store.list()[:10]
+            return self._send(200, {"items": items})
+
+        if parsed.path.startswith("/product_launches/"):
+            if self.product_launch_store is None:
+                return self._send(503, {"error": "product_launch_store_unavailable"})
+            launch_id = parsed.path.rsplit("/", 1)[-1]
+            item = self.product_launch_store.get(launch_id)
+            if item is None:
+                return self._send(404, {"error": "not_found"})
+            return self._send(200, item)
+
         if parsed.path == "/product_plans":
             if self.product_plan_store is None:
                 return self._send(503, {"error": "product_plan_store_unavailable"})
@@ -134,6 +150,14 @@ class Handler(BaseHTTPRequestHandler):
                 transition_event_type = event_type
                 break
 
+        launch_sale_id = None
+        if self.path.startswith("/product_launches/") and self.path.endswith("/add_sale"):
+            launch_sale_id = self.path[len("/product_launches/"):-len("/add_sale")]
+
+        launch_status_id = None
+        if self.path.startswith("/product_launches/") and self.path.endswith("/status"):
+            launch_status_id = self.path[len("/product_launches/"):-len("/status")]
+
         allowed_paths = {
             "/event",
             "/opportunities/evaluate",
@@ -142,7 +166,7 @@ class Handler(BaseHTTPRequestHandler):
             "/product_plans/build",
             "/product_proposals/execute",
         }
-        if self.path not in allowed_paths and transition_event_type is None:
+        if self.path not in allowed_paths and transition_event_type is None and launch_sale_id is None and launch_status_id is None:
             return self._send(404, {"ok": False, "error": "not_found"})
 
         length = int(self.headers.get("Content-Length", "0"))
@@ -227,6 +251,26 @@ class Handler(BaseHTTPRequestHandler):
 
                 return self._send(404, {"ok": False, "error": "proposal_not_found"})
 
+            if launch_sale_id is not None:
+                if self.product_launch_store is None:
+                    return self._send(503, {"ok": False, "error": "product_launch_store_unavailable"})
+                launch_id = str(launch_sale_id).strip()
+                if not launch_id:
+                    return self._send(400, {"ok": False, "error": "missing_id"})
+                amount = float(data.get("amount", 0))
+                updated = self.product_launch_store.add_sale(launch_id, amount)
+                return self._send(200, updated)
+
+            if launch_status_id is not None:
+                if self.product_launch_store is None:
+                    return self._send(503, {"ok": False, "error": "product_launch_store_unavailable"})
+                launch_id = str(launch_status_id).strip()
+                if not launch_id:
+                    return self._send(400, {"ok": False, "error": "missing_id"})
+                status = str(data.get("status", "")).strip()
+                updated = self.product_launch_store.transition_status(launch_id, status)
+                return self._send(200, updated)
+
             event_id = str(data.get("id", "")).strip()
             if not event_id:
                 return self._send(400, {"ok": False, "error": "missing_id"})
@@ -263,6 +307,7 @@ def start_http_server(
     opportunity_store=None,
     product_proposal_store=None,
     product_plan_store=None,
+    product_launch_store=None,
     control=None,
 ):
     # Thread daemon: se muere si se muere el proceso principal (bien para dev)
@@ -270,6 +315,7 @@ def start_http_server(
     Handler.opportunity_store = opportunity_store
     Handler.product_proposal_store = product_proposal_store
     Handler.product_plan_store = product_plan_store
+    Handler.product_launch_store = product_launch_store
     Handler.control = control
     server = HTTPServer((host, port), Handler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
