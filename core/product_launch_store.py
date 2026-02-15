@@ -72,11 +72,26 @@ class ProductLaunchStore:
             "launched_at": launched_at,
             "status": status,
             "metrics": LaunchMetricsModule.normalize(item.get("metrics")),
+            "gumroad_product_id": None,
+            "last_gumroad_sync_at": None,
+            "last_gumroad_sale_id": None,
         }
 
         product_name = item.get("product_name")
         if product_name is not None:
             normalized["product_name"] = str(product_name)
+
+        gumroad_product_id = item.get("gumroad_product_id")
+        if gumroad_product_id is not None:
+            normalized["gumroad_product_id"] = str(gumroad_product_id)
+
+        last_gumroad_sync_at = item.get("last_gumroad_sync_at")
+        if last_gumroad_sync_at is not None:
+            normalized["last_gumroad_sync_at"] = str(last_gumroad_sync_at)
+
+        last_gumroad_sale_id = item.get("last_gumroad_sale_id")
+        if last_gumroad_sale_id is not None:
+            normalized["last_gumroad_sale_id"] = str(last_gumroad_sale_id)
 
         return normalized
 
@@ -124,6 +139,47 @@ class ProductLaunchStore:
         if item is None:
             raise ValueError(f"launch not found: {launch_id}")
         item["metrics"] = LaunchMetricsModule.add_sale(item.get("metrics", {}), amount)
+        self._save()
+        return deepcopy(item)
+
+    def add_sales_batch(self, launch_id: str, sales_count: int, revenue_delta: float) -> ProductLaunch:
+        item = self._find(launch_id)
+        if item is None:
+            raise ValueError(f"launch not found: {launch_id}")
+
+        metrics = LaunchMetricsModule.normalize(item.get("metrics", {}))
+        metrics["sales"] += max(0, int(sales_count))
+        metrics["revenue"] = round(metrics["revenue"] + float(revenue_delta), 2)
+        item["metrics"] = metrics
+        self._save()
+        return deepcopy(item)
+
+    def link_gumroad_product(self, launch_id: str, gumroad_product_id: str) -> ProductLaunch:
+        item = self._find(launch_id)
+        if item is None:
+            raise ValueError(f"launch not found: {launch_id}")
+
+        product_id = str(gumroad_product_id).strip()
+        if not product_id:
+            raise ValueError("missing_gumroad_product_id")
+
+        item["gumroad_product_id"] = product_id
+        self._save()
+        return deepcopy(item)
+
+    def update_gumroad_sync_state(
+        self,
+        launch_id: str,
+        *,
+        last_sync_at: str,
+        last_sale_id: str | None,
+    ) -> ProductLaunch:
+        item = self._find(launch_id)
+        if item is None:
+            raise ValueError(f"launch not found: {launch_id}")
+
+        item["last_gumroad_sync_at"] = str(last_sync_at)
+        item["last_gumroad_sale_id"] = str(last_sale_id) if last_sale_id else None
         self._save()
         return deepcopy(item)
 

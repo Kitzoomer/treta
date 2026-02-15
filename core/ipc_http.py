@@ -6,6 +6,7 @@ from urllib.parse import parse_qs, urlparse
 
 from core.events import Event
 from core.bus import event_bus
+from core.integrations.gumroad_client import GumroadAPIError
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -194,6 +195,10 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/product_launches/") and self.path.endswith("/status"):
             launch_status_id = self.path[len("/product_launches/"):-len("/status")]
 
+        launch_link_gumroad_id = None
+        if self.path.startswith("/product_launches/") and self.path.endswith("/link_gumroad"):
+            launch_link_gumroad_id = self.path[len("/product_launches/"):-len("/link_gumroad")]
+
         strategy_execute_id = None
         if self.path.startswith("/strategy/execute_action/"):
             strategy_execute_id = self.path[len("/strategy/execute_action/"):]
@@ -209,8 +214,9 @@ class Handler(BaseHTTPRequestHandler):
             "/scan/infoproduct",
             "/product_plans/build",
             "/product_proposals/execute",
+            "/gumroad/sync_sales",
         }
-        if self.path not in allowed_paths and transition_event_type is None and launch_sale_id is None and launch_status_id is None and strategy_execute_id is None and strategy_reject_id is None:
+        if self.path not in allowed_paths and transition_event_type is None and launch_sale_id is None and launch_status_id is None and launch_link_gumroad_id is None and strategy_execute_id is None and strategy_reject_id is None:
             return self._send(404, {"ok": False, "error": "not_found"})
 
         length = int(self.headers.get("Content-Length", "0"))
@@ -315,6 +321,27 @@ class Handler(BaseHTTPRequestHandler):
                 updated = self.product_launch_store.transition_status(launch_id, status)
                 return self._send(200, updated)
 
+            if launch_link_gumroad_id is not None:
+                if self.control is None:
+                    return self._send(503, {"ok": False, "error": "control_unavailable"})
+                launch_id = str(launch_link_gumroad_id).strip()
+                if not launch_id:
+                    return self._send(400, {"ok": False, "error": "missing_id"})
+                gumroad_product_id = str(data.get("gumroad_product_id", "")).strip()
+                if not gumroad_product_id:
+                    return self._send(400, {"ok": False, "error": "missing_gumroad_product_id"})
+                updated = self.control.link_launch_gumroad(launch_id, gumroad_product_id)
+                return self._send(200, updated)
+
+            if self.path == "/gumroad/sync_sales":
+                if self.control is None:
+                    return self._send(503, {"ok": False, "error": "control_unavailable"})
+                since = data.get("since")
+                if since is not None:
+                    since = str(since)
+                summary = self.control.sync_gumroad_sales(since=since)
+                return self._send(200, summary)
+
             if strategy_execute_id is not None:
                 if self.strategy_action_execution_layer is None:
                     return self._send(503, {"ok": False, "error": "strategy_action_execution_layer_unavailable"})
@@ -358,6 +385,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True})
 
             return self._send(404, {"ok": False, "error": "not_found"})
+        except GumroadAPIError as e:
+            return self._send(502, {"ok": False, "error": str(e)})
+        except ValueError as e:
+            if "Missing Gumroad credentials" in str(e):
+                return self._send(400, {"ok": False, "error": str(e)})
+            return self._send(400, {"ok": False, "error": str(e)})
         except Exception as e:
             return self._send(400, {"ok": False, "error": str(e)})
 
