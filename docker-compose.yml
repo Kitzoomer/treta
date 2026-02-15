@@ -9,5 +9,8 @@ services:
       - ../../config:/config
     environment:
       - TRETA_ENV=local
+      - GUMROAD_APP_ID=${GUMROAD_APP_ID:-}
+      - GUMROAD_APP_SECRET=${GUMROAD_APP_SECRET:-}
+      - GUMROAD_REDIRECT_URI=${GUMROAD_REDIRECT_URI:-}
     stdin_open: true
     tty: true

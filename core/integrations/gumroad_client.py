@@ -7,8 +7,8 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     class _RequestsShim:
         @staticmethod
-        def get(url: str, params: dict[str, str], timeout: int):
-            return _fallback_get(url, params=params, timeout=timeout)
+        def get(url: str, params: dict[str, str], headers: dict[str, str], timeout: int):
+            return _fallback_get(url, params=params, headers=headers, timeout=timeout)
 
     requests = _RequestsShim()
 
@@ -28,13 +28,14 @@ class _FallbackResponse:
         return self._payload
 
 
-def _fallback_get(url: str, params: dict[str, str], timeout: int) -> _FallbackResponse:
+def _fallback_get(url: str, params: dict[str, str], headers: dict[str, str], timeout: int) -> _FallbackResponse:
     from urllib.parse import urlencode
-    from urllib.request import urlopen
+    from urllib.request import Request, urlopen
     import json as _json
 
     query = urlencode(params)
-    with urlopen(f"{url}?{query}", timeout=timeout) as resp:
+    request = Request(f"{url}?{query}", headers=headers)
+    with urlopen(request, timeout=timeout) as resp:
         body = _json.loads(resp.read().decode("utf-8"))
         return _FallbackResponse(resp.status, body)
 
@@ -51,7 +52,7 @@ class GumroadClient:
     def __init__(self, access_token: str) -> None:
         token = str(access_token or "").strip()
         if not token:
-            raise ValueError("Missing Gumroad access token. Set GUMROAD_ACCESS_TOKEN.")
+            raise ValueError("Missing Gumroad access token.")
         self._access_token = token
 
     def get_sales(self, product_id: str, after: str | None = None) -> list[dict[str, Any]]:
@@ -60,14 +61,18 @@ class GumroadClient:
             raise ValueError("missing_product_id")
 
         params: dict[str, str] = {
-            "access_token": self._access_token,
             "product_id": normalized_product_id,
         }
         if after:
             params["after"] = str(after)
 
         try:
-            response = requests.get(self._SALES_ENDPOINT, params=params, timeout=10)
+            response = requests.get(
+                self._SALES_ENDPOINT,
+                params=params,
+                headers={"Authorization": f"Bearer {self._access_token}"},
+                timeout=10,
+            )
             response.raise_for_status()
             payload = response.json()
         except Exception as exc:  # requests/network/json failures

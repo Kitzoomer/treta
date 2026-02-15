@@ -1,5 +1,4 @@
 import json
-import os
 import threading
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -8,6 +7,7 @@ from urllib.parse import parse_qs, urlparse
 from core.events import Event
 from core.bus import event_bus
 from core.integrations.gumroad_client import GumroadAPIError, GumroadClient
+from core.gumroad_oauth import exchange_code_for_token, get_auth_url, load_token, save_token
 from core.services.gumroad_sync_service import GumroadSyncService
 
 
@@ -167,6 +167,18 @@ class Handler(BaseHTTPRequestHandler):
             status = query.get("status", [None])[0]
             items = self.opportunity_store.list(status=status)
             return self._send(200, {"items": items})
+
+        if parsed.path == "/gumroad/auth":
+            return self._send(200, {"auth_url": get_auth_url()})
+
+        if parsed.path == "/gumroad/callback":
+            query = parse_qs(parsed.query)
+            code = str(query.get("code", [""])[0]).strip()
+            if not code:
+                return self._send(400, {"ok": False, "error": "missing_code"})
+            token = exchange_code_for_token(code)
+            save_token(token)
+            return self._send(200, {"status": "connected"})
 
         return self._send(404, {"error": "not_found"})
 
@@ -338,9 +350,9 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/gumroad/sync_sales":
                 if self.product_launch_store is None:
                     return self._send(503, {"ok": False, "error": "product_launch_store_unavailable"})
-                access_token = str(os.getenv("GUMROAD_ACCESS_TOKEN") or "").strip()
+                access_token = load_token()
                 if not access_token:
-                    return self._send(400, {"ok": False, "error": "Missing Gumroad access token. Set GUMROAD_ACCESS_TOKEN."})
+                    return self._send(400, {"ok": False, "error": "Gumroad not connected. Visit /gumroad/auth first."})
                 gumroad_client = GumroadClient(access_token)
                 service = GumroadSyncService(self.product_launch_store, gumroad_client)
                 summary = service.sync_sales()

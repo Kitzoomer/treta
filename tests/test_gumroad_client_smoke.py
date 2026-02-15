@@ -29,7 +29,8 @@ class GumroadClientSmokeTest(unittest.TestCase):
         )
         mock_get.assert_called_once_with(
             "https://api.gumroad.com/v2/sales",
-            params={"access_token": "token-123", "product_id": "product-abc"},
+            params={"product_id": "product-abc"},
+            headers={"Authorization": "Bearer token-123"},
             timeout=10,
         )
 
