@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List
 
+from core.risk_evaluation_engine import RiskEvaluationEngine
+
 
 StrategyAction = Dict[str, Any]
 
@@ -16,13 +18,14 @@ class StrategyActionStore:
     """Persistent bounded store for strategy actions requiring confirmation."""
 
     _DEFAULT_DATA_DIR = "./.treta_data"
-    _ALLOWED_TYPES = {"scale", "review", "price_test", "new_product"}
+    _ALLOWED_TYPES = {"scale", "review", "price_test", "new_product", "archive"}
     _ALLOWED_STATUSES = {"pending_confirmation", "executed", "rejected"}
 
     def __init__(self, capacity: int = 200, path: Path | None = None):
         data_dir = Path(os.getenv("TRETA_DATA_DIR", self._DEFAULT_DATA_DIR))
         self._path = path or data_dir / "strategy_actions.json"
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._risk_evaluation_engine = RiskEvaluationEngine()
         self._items: deque[StrategyAction] = deque(self._load_items(), maxlen=capacity)
 
     def _load_items(self) -> List[StrategyAction]:
@@ -60,7 +63,13 @@ class StrategyActionStore:
         if status not in self._ALLOWED_STATUSES:
             status = "pending_confirmation"
 
-        return {
+        sales = item.get("sales")
+        try:
+            normalized_sales = max(int(sales), 0) if sales is not None else None
+        except (TypeError, ValueError):
+            normalized_sales = None
+
+        normalized = {
             "id": str(item.get("id") or self._next_id()),
             "type": action_type,
             "target_id": str(item.get("target_id") or ""),
@@ -68,6 +77,10 @@ class StrategyActionStore:
             "status": status,
             "created_at": str(item.get("created_at") or self._now()),
         }
+        if normalized_sales is not None:
+            normalized["sales"] = normalized_sales
+        normalized.update(self._risk_evaluation_engine.evaluate(normalized))
+        return normalized
 
     def _find(self, action_id: str) -> StrategyAction | None:
         for item in self._items:
@@ -75,7 +88,7 @@ class StrategyActionStore:
                 return item
         return None
 
-    def add(self, *, action_type: str, target_id: str, reasoning: str, status: str = "pending_confirmation") -> StrategyAction:
+    def add(self, *, action_type: str, target_id: str, reasoning: str, status: str = "pending_confirmation", sales: int | None = None) -> StrategyAction:
         item = self._normalize_item(
             {
                 "id": self._next_id(),
@@ -84,6 +97,7 @@ class StrategyActionStore:
                 "reasoning": reasoning,
                 "status": status,
                 "created_at": self._now(),
+                "sales": sales,
             }
         )
         self._items.append(item)

@@ -37,6 +37,7 @@ class StrategyDecisionEngineTest(unittest.TestCase):
                 {
                     "type": "scale",
                     "target_id": launch["id"],
+                    "sales": 5,
                     "reasoning": "Launch has 5 sales, which meets the scale threshold.",
                 },
                 decision["actions"],
@@ -128,6 +129,9 @@ class StrategyDecisionEngineTest(unittest.TestCase):
             self.assertEqual(len(pending), 1)
             self.assertEqual(pending[0]["type"], "scale")
             self.assertEqual(pending[0]["status"], "pending_confirmation")
+            self.assertEqual(pending[0]["risk_level"], "low")
+            self.assertEqual(pending[0]["expected_impact_score"], 8)
+            self.assertTrue(pending[0]["auto_executable"])
 
     def test_strategy_action_endpoints(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -161,6 +165,9 @@ class StrategyDecisionEngineTest(unittest.TestCase):
                     pending_payload = json.loads(response.read().decode("utf-8"))
 
                 action_id = pending_payload["items"][0]["id"]
+                self.assertEqual(pending_payload["items"][0]["risk_level"], "low")
+                self.assertEqual(pending_payload["items"][0]["expected_impact_score"], 8)
+                self.assertTrue(pending_payload["items"][0]["auto_executable"])
                 execute_request = Request(
                     f"http://127.0.0.1:{port}/strategy/execute_action/{action_id}",
                     data=b"{}",

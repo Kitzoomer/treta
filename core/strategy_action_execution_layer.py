@@ -20,6 +20,7 @@ class StrategyActionExecutionLayer:
             action_type = str(action.get("type") or "").strip()
             target_id = str(action.get("target_id") or "").strip()
             reasoning = str(action.get("reasoning") or "").strip()
+            sales = action.get("sales")
             if not action_type or not target_id or not reasoning:
                 continue
 
@@ -37,6 +38,7 @@ class StrategyActionExecutionLayer:
                     target_id=target_id,
                     reasoning=reasoning,
                     status="pending_confirmation",
+                    sales=sales,
                 )
             )
 
