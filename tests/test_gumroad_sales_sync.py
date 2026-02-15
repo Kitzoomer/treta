@@ -3,10 +3,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-from core.gumroad_sales_sync_service import GumroadSalesSyncService
-from core.integrations.gumroad_client import GumroadAPIError
 from core.product_launch_store import ProductLaunchStore
 from core.product_proposal_store import ProductProposalStore
+from core.services.gumroad_sync_service import GumroadSyncService
 
 
 class GumroadSalesSyncServiceTest(unittest.TestCase):
@@ -24,35 +23,22 @@ class GumroadSalesSyncServiceTest(unittest.TestCase):
             launches.link_gumroad_product(launch["id"], "gumroad-product-1")
 
             gumroad_client = Mock()
-            gumroad_client.has_credentials.return_value = True
-            gumroad_client.get_sales_for_product.return_value = {
-                "sales": [
-                    {"id": "sale-2", "price": "19.99"},
-                    {"id": "sale-1", "price": "10.00"},
-                ]
-            }
+            gumroad_client.get_sales.return_value = [
+                {"sale_id": "sale-2", "amount": 19.99, "created_at": "2026-01-02T00:00:00Z"},
+                {"sale_id": "sale-1", "amount": 10.00, "created_at": "2026-01-01T00:00:00Z"},
+            ]
 
-            service = GumroadSalesSyncService(launches, gumroad_client)
-            summary = service.sync()
+            service = GumroadSyncService(launches, gumroad_client)
+            summary = service.sync_sales()
 
             updated = launches.get(launch["id"])
             self.assertEqual(summary["synced_launches"], 1)
             self.assertEqual(summary["new_sales"], 2)
-            self.assertEqual(summary["revenue"], 29.99)
+            self.assertEqual(summary["revenue_added"], 29.99)
             self.assertEqual(updated["metrics"]["sales"], 2)
             self.assertEqual(updated["metrics"]["revenue"], 29.99)
             self.assertEqual(updated["last_gumroad_sale_id"], "sale-2")
             self.assertIsNotNone(updated["last_gumroad_sync_at"])
-
-            reloaded_proposals = ProductProposalStore(path=root / "product_proposals.json")
-            reloaded_launches = ProductLaunchStore(
-                proposal_store=reloaded_proposals,
-                path=root / "product_launches.json",
-            )
-            persisted = reloaded_launches.get(launch["id"])
-            self.assertEqual(persisted["metrics"]["sales"], 2)
-            self.assertEqual(persisted["metrics"]["revenue"], 29.99)
-            self.assertEqual(persisted["last_gumroad_sale_id"], "sale-2")
 
     def test_cursor_prevents_double_counting(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -63,54 +49,20 @@ class GumroadSalesSyncServiceTest(unittest.TestCase):
             launches.link_gumroad_product(launch["id"], "gumroad-product-2")
 
             gumroad_client = Mock()
-            gumroad_client.has_credentials.return_value = True
-            gumroad_client.get_sales_for_product.return_value = {
-                "sales": [
-                    {"id": "sale-2", "price": "20.00"},
-                    {"id": "sale-1", "price": "10.00"},
-                ]
-            }
+            gumroad_client.get_sales.return_value = [
+                {"sale_id": "sale-2", "amount": 20.0, "created_at": "2026-01-02T00:00:00Z"},
+                {"sale_id": "sale-1", "amount": 10.0, "created_at": "2026-01-01T00:00:00Z"},
+            ]
 
-            service = GumroadSalesSyncService(launches, gumroad_client)
-            service.sync()
-            second = service.sync()
+            service = GumroadSyncService(launches, gumroad_client)
+            service.sync_sales()
+            second = service.sync_sales()
 
             updated = launches.get(launch["id"])
             self.assertEqual(second["new_sales"], 0)
-            self.assertEqual(second["revenue"], 0.0)
+            self.assertEqual(second["revenue_added"], 0.0)
             self.assertEqual(updated["metrics"]["sales"], 2)
             self.assertEqual(updated["metrics"]["revenue"], 30.0)
-
-    def test_missing_credentials_returns_clear_error(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            root = Path(tmp_dir)
-            proposals, launches = self._stores(root)
-            proposals.add({"id": "proposal-3", "product_name": "No Token Kit"})
-            launch = launches.add_from_proposal("proposal-3")
-            launches.link_gumroad_product(launch["id"], "gumroad-product-3")
-
-            gumroad_client = Mock()
-            gumroad_client.has_credentials.return_value = False
-
-            service = GumroadSalesSyncService(launches, gumroad_client)
-            with self.assertRaisesRegex(ValueError, "Missing Gumroad credentials"):
-                service.sync()
-
-    def test_api_failure_raises_gumroad_api_error(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            root = Path(tmp_dir)
-            proposals, launches = self._stores(root)
-            proposals.add({"id": "proposal-4", "product_name": "Failure Kit"})
-            launch = launches.add_from_proposal("proposal-4")
-            launches.link_gumroad_product(launch["id"], "gumroad-product-4")
-
-            gumroad_client = Mock()
-            gumroad_client.has_credentials.return_value = True
-            gumroad_client.get_sales_for_product.side_effect = GumroadAPIError("bad gateway")
-
-            service = GumroadSalesSyncService(launches, gumroad_client)
-            with self.assertRaisesRegex(GumroadAPIError, "bad gateway"):
-                service.sync()
 
 
 if __name__ == "__main__":

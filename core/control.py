@@ -14,7 +14,7 @@ from core.product_proposal_store import ProductProposalStore
 from core.product_builder import ProductBuilder
 from core.product_plan_store import ProductPlanStore
 from core.execution_engine import ExecutionEngine
-from core.gumroad_sales_sync_service import GumroadSalesSyncService
+from core.services.gumroad_sync_service import GumroadSyncService
 from core.product_launch_store import ProductLaunchStore
 
 
@@ -55,7 +55,7 @@ class Control:
             proposal_store=self.product_proposal_store,
         )
         self.gumroad_sales_sync_service = (
-            GumroadSalesSyncService(self.product_launch_store, self.gumroad_client)
+            GumroadSyncService(self.product_launch_store, self.gumroad_client)
             if self.gumroad_client is not None
             else None
         )
@@ -63,10 +63,10 @@ class Control:
     def link_launch_gumroad(self, launch_id: str, gumroad_product_id: str) -> Dict[str, object]:
         return self.product_launch_store.link_gumroad_product(launch_id, gumroad_product_id)
 
-    def sync_gumroad_sales(self, since: str | None = None) -> Dict[str, object]:
+    def sync_gumroad_sales(self) -> Dict[str, object]:
         if self.gumroad_sales_sync_service is None:
-            raise ValueError("Missing Gumroad credentials. Set GUMROAD_APP_ID and GUMROAD_APP_SECRET.")
-        return self.gumroad_sales_sync_service.sync(since=since)
+            raise ValueError("Missing Gumroad access token. Set GUMROAD_ACCESS_TOKEN.")
+        return self.gumroad_sales_sync_service.sync_sales()
 
     def evaluate_opportunity(self, opportunity: Dict[str, object]) -> Dict[str, object]:
         return self.decision_engine.evaluate(opportunity)

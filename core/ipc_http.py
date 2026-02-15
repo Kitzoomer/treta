@@ -1,4 +1,5 @@
 import json
+import os
 import threading
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -6,7 +7,8 @@ from urllib.parse import parse_qs, urlparse
 
 from core.events import Event
 from core.bus import event_bus
-from core.integrations.gumroad_client import GumroadAPIError
+from core.integrations.gumroad_client import GumroadAPIError, GumroadClient
+from core.services.gumroad_sync_service import GumroadSyncService
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -334,12 +336,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, updated)
 
             if self.path == "/gumroad/sync_sales":
-                if self.control is None:
-                    return self._send(503, {"ok": False, "error": "control_unavailable"})
-                since = data.get("since")
-                if since is not None:
-                    since = str(since)
-                summary = self.control.sync_gumroad_sales(since=since)
+                if self.product_launch_store is None:
+                    return self._send(503, {"ok": False, "error": "product_launch_store_unavailable"})
+                access_token = str(os.getenv("GUMROAD_ACCESS_TOKEN") or "").strip()
+                if not access_token:
+                    return self._send(400, {"ok": False, "error": "Missing Gumroad access token. Set GUMROAD_ACCESS_TOKEN."})
+                gumroad_client = GumroadClient(access_token)
+                service = GumroadSyncService(self.product_launch_store, gumroad_client)
+                summary = service.sync_sales()
                 return self._send(200, summary)
 
             if strategy_execute_id is not None:
