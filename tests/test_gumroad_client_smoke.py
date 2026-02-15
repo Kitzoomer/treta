@@ -1,62 +1,49 @@
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
-from core.integrations.gumroad_client import GumroadClient
+from core.integrations.gumroad_client import GumroadAPIError, GumroadClient
 
 
 class GumroadClientSmokeTest(unittest.TestCase):
-    def test_reads_credentials_from_environment_and_fetches_resources(self):
-        transport = Mock()
-        transport.oauth_token.return_value = "token-123"
-        transport.get.side_effect = [
-            {"products": [{"id": "p1"}]},
-            {"sales": [{"id": "s1", "price": "19.99"}]},
-            {"sales": [{"id": "s1", "price": "19.99"}, {"id": "s2", "price": 5}]},
-        ]
+    @patch("core.integrations.gumroad_client.requests.get")
+    def test_get_sales_normalizes_payload(self, mock_get):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "sales": [
+                {"id": "sale-2", "price": "19.99", "created_at": "2026-01-02T00:00:00Z"},
+                {"id": "sale-1", "amount_cents": 1000, "created_at": "2026-01-01T00:00:00Z"},
+            ]
+        }
+        mock_get.return_value = response
 
-        with unittest.mock.patch.dict(
-            "os.environ",
-            {"GUMROAD_APP_ID": "app-id", "GUMROAD_APP_SECRET": "app-secret"},
-            clear=False,
-        ):
-            client = GumroadClient(transport=transport)
-            self.assertEqual(client.get_products(), {"products": [{"id": "p1"}]})
-            self.assertEqual(
-                client.get_sales(),
-                {"sales": [{"id": "s1", "price": "19.99"}], "limit": 10},
-            )
-            self.assertEqual(
-                client.get_total_revenue(),
-                {"total_revenue": 24.99, "currency": "USD", "sales_count": 2},
-            )
+        client = GumroadClient("token-123")
+        sales = client.get_sales("product-abc")
 
-        transport.oauth_token.assert_called_once_with(
-            app_id="app-id",
-            app_secret="app-secret",
+        self.assertEqual(
+            sales,
+            [
+                {"sale_id": "sale-2", "amount": 19.99, "created_at": "2026-01-02T00:00:00Z"},
+                {"sale_id": "sale-1", "amount": 10.0, "created_at": "2026-01-01T00:00:00Z"},
+            ],
         )
-        self.assertEqual(transport.get.call_count, 3)
+        mock_get.assert_called_once_with(
+            "https://api.gumroad.com/v2/sales",
+            params={"access_token": "token-123", "product_id": "product-abc"},
+            timeout=10,
+        )
 
-    def test_missing_credentials_fails_safely(self):
-        transport = Mock()
+    @patch("core.integrations.gumroad_client.requests.get")
+    def test_get_sales_raises_api_error(self, mock_get):
+        mock_get.side_effect = RuntimeError("boom")
+        client = GumroadClient("token-123")
 
-        with unittest.mock.patch.dict(
-            "os.environ",
-            {"GUMROAD_APP_ID": "", "GUMROAD_APP_SECRET": ""},
-            clear=False,
-        ):
-            client = GumroadClient(transport=transport)
+        with self.assertRaisesRegex(GumroadAPIError, "Gumroad API request failed"):
+            client.get_sales("product-abc")
 
-            with self.assertLogs("core.integrations.gumroad_client", level="WARNING") as log_cm:
-                self.assertEqual(client.get_products(), {"products": []})
-                self.assertEqual(client.get_sales(), {"sales": [], "limit": 10})
-                self.assertEqual(
-                    client.get_total_revenue(),
-                    {"total_revenue": 0.0, "currency": "USD", "sales_count": 0},
-                )
-
-        self.assertTrue(any("credentials are missing" in m for m in log_cm.output))
-        transport.oauth_token.assert_not_called()
-        transport.get.assert_not_called()
+    def test_missing_access_token_raises_value_error(self):
+        with self.assertRaisesRegex(ValueError, "Missing Gumroad access token"):
+            GumroadClient("")
 
 
 if __name__ == "__main__":
