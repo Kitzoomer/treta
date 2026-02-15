@@ -3,66 +3,35 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Treta Dashboard</title>
+    <title>Treta Control Surface</title>
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
-    <main class="dashboard">
-      <h1>Treta Dashboard</h1>
+    <main class="app-layout">
+      <aside class="panel panel-left">
+        <header class="panel-header">
+          <h1>Treta Chat</h1>
+          <div class="system-status">
+            <span class="status-dot" id="status-dot"></span>
+            <span id="system-status">loading...</span>
+          </div>
+        </header>
 
-      <section class="card">
-        <h2>Current State</h2>
-        <p id="current-state">-</p>
+        <section id="chat-history" class="chat-history" aria-live="polite"></section>
+
+        <form id="chat-form" class="chat-controls">
+          <input id="chat-input" type="text" placeholder="Type instruction... (/scan, /evaluate <id>)" autocomplete="off" />
+          <button type="submit">Execute</button>
+        </form>
+      </aside>
+
+      <section class="panel panel-center">
+        <div id="page-content" class="page-content"></div>
       </section>
 
-      <section class="card">
-        <h2>Last Decision</h2>
-        <p><strong>Decision:</strong> <span id="last-decision">-</span></p>
-        <p><strong>Score:</strong> <span id="last-score">-</span></p>
-        <p><strong>Reasoning:</strong> <span id="last-reasoning">-</span></p>
-      </section>
-
-      <section class="card">
-        <h2>Last 10 Events</h2>
-        <ul id="events-list"></ul>
-      </section>
-
-      <section class="card">
-        <h2>Opportunities (last 10)</h2>
-        <ul id="opportunities-list"></ul>
-        <p>
-          Use endpoints:
-          <code>POST /opportunities/evaluate {"id":"..."}</code>
-          and
-          <code>POST /opportunities/dismiss {"id":"..."}</code>
-        </p>
-      </section>
-
-      <section class="card">
-        <h2>Product Proposals (latest 5, incl. status)</h2>
-        <ul id="product-proposals-list"></ul>
-      </section>
-
-      <section class="card">
-        <h2>Product Plans (latest 5)</h2>
-        <ul id="product-plans-list"></ul>
-        <p>
-          Use endpoints:
-          <code>POST /product_plans/build {"proposal_id":"..."}</code>,
-          <code>GET /product_plans</code>, and
-          <code>GET /product_plans/{plan_id}</code>
-        </p>
-      </section>
-
-
-      <section class="card">
-        <h2>Product Launches (latest 5)</h2>
-        <ul id="product-launches-list"></ul>
-      </section>
-
-      <section class="card actions">
-        <button id="simulate-opportunity">Simulate Opportunity</button>
-      </section>
+      <aside class="panel panel-right">
+        <nav id="page-nav" class="page-nav" aria-label="Main navigation"></nav>
+      </aside>
     </main>
 
     <script src="/app.js"></script>
