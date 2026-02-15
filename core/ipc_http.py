@@ -169,15 +169,28 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"items": items})
 
         if parsed.path == "/gumroad/auth":
-            return self._send(200, {"auth_url": get_auth_url()})
+            try:
+                auth_url = get_auth_url()
+            except ValueError as e:
+                return self._send(400, {"ok": False, "error": str(e)})
+
+            self.send_response(302)
+            self.send_header("Location", auth_url)
+            self.end_headers()
+            return
 
         if parsed.path == "/gumroad/callback":
             query = parse_qs(parsed.query)
             code = str(query.get("code", [""])[0]).strip()
             if not code:
                 return self._send(400, {"ok": False, "error": "missing_code"})
-            token = exchange_code_for_token(code)
-            save_token(token)
+            try:
+                token = exchange_code_for_token(code)
+                save_token(token)
+            except ValueError as e:
+                return self._send(400, {"ok": False, "error": str(e)})
+            except Exception as e:
+                return self._send(502, {"ok": False, "error": f"oauth_exchange_failed: {e}"})
             return self._send(200, {"status": "connected"})
 
         return self._send(404, {"error": "not_found"})

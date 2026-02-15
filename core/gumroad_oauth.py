@@ -54,10 +54,12 @@ def _token_path() -> Path:
 
 
 def get_auth_url() -> str:
-    app_id = str(os.getenv("GUMROAD_APP_ID") or "").strip()
+    app_id = str(os.getenv("GUMROAD_CLIENT_ID") or os.getenv("GUMROAD_APP_ID") or "").strip()
     redirect_uri = str(os.getenv("GUMROAD_REDIRECT_URI") or "").strip()
     if not app_id or not redirect_uri:
-        raise ValueError("Missing Gumroad OAuth configuration. Set GUMROAD_APP_ID and GUMROAD_REDIRECT_URI.")
+        raise ValueError(
+            "Missing Gumroad OAuth configuration. Set GUMROAD_CLIENT_ID (or GUMROAD_APP_ID) and GUMROAD_REDIRECT_URI."
+        )
 
     query = urlencode(
         {
@@ -74,11 +76,14 @@ def exchange_code_for_token(code: str) -> str:
     if not normalized_code:
         raise ValueError("missing_code")
 
-    app_id = str(os.getenv("GUMROAD_APP_ID") or "").strip()
-    app_secret = str(os.getenv("GUMROAD_APP_SECRET") or "").strip()
+    app_id = str(os.getenv("GUMROAD_CLIENT_ID") or os.getenv("GUMROAD_APP_ID") or "").strip()
+    app_secret = str(os.getenv("GUMROAD_CLIENT_SECRET") or os.getenv("GUMROAD_APP_SECRET") or "").strip()
     redirect_uri = str(os.getenv("GUMROAD_REDIRECT_URI") or "").strip()
     if not app_id or not app_secret or not redirect_uri:
-        raise ValueError("Missing Gumroad OAuth configuration. Set GUMROAD_APP_ID, GUMROAD_APP_SECRET, and GUMROAD_REDIRECT_URI.")
+        raise ValueError(
+            "Missing Gumroad OAuth configuration. Set GUMROAD_CLIENT_ID/GUMROAD_CLIENT_SECRET "
+            "(or GUMROAD_APP_ID/GUMROAD_APP_SECRET) and GUMROAD_REDIRECT_URI."
+        )
 
     response = requests.post(
         _TOKEN_URL,

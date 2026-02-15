@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 from unittest.mock import patch
 
 from core.ipc_http import start_http_server
@@ -12,10 +12,50 @@ from core.product_launch_store import ProductLaunchStore
 from core.product_proposal_store import ProductProposalStore
 
 
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
 class GumroadSyncEndpointTest(unittest.TestCase):
     def _store(self, root: Path) -> ProductLaunchStore:
         proposals = ProductProposalStore(path=root / "product_proposals.json")
         return ProductLaunchStore(proposal_store=proposals, path=root / "product_launches.json")
+
+
+    def test_auth_endpoint_redirects_to_gumroad_authorize(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            launches = self._store(root)
+            previous = {
+                "TRETA_DATA_DIR": os.environ.get("TRETA_DATA_DIR"),
+                "GUMROAD_CLIENT_ID": os.environ.get("GUMROAD_CLIENT_ID"),
+                "GUMROAD_REDIRECT_URI": os.environ.get("GUMROAD_REDIRECT_URI"),
+            }
+            os.environ["TRETA_DATA_DIR"] = str(root)
+            os.environ["GUMROAD_CLIENT_ID"] = "client-123"
+            os.environ["GUMROAD_REDIRECT_URI"] = "http://localhost:7777/gumroad/callback"
+            server = start_http_server(host="127.0.0.1", port=0, product_launch_store=launches)
+            try:
+                opener = build_opener(_NoRedirectHandler())
+                req = Request(f"http://127.0.0.1:{server.server_port}/gumroad/auth")
+                with self.assertRaises(HTTPError) as ctx:
+                    opener.open(req, timeout=2)
+
+                self.assertEqual(ctx.exception.code, 302)
+                location = ctx.exception.headers.get("Location", "")
+                self.assertTrue(location.startswith("https://gumroad.com/oauth/authorize?"))
+                self.assertIn("client_id=client-123", location)
+                self.assertIn("response_type=code", location)
+            finally:
+                for key, value in previous.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+                server.shutdown()
+                server.server_close()
 
     def test_sync_sales_without_stored_token_returns_400(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
