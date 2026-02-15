@@ -19,6 +19,7 @@ class Handler(BaseHTTPRequestHandler):
     strategy_engine = None
     strategy_decision_engine = None
     strategy_action_execution_layer = None
+    autonomy_policy_engine = None
     ui_dir = Path(__file__).resolve().parent.parent / "ui"
 
     def _send(self, code: int, body: dict):
@@ -120,6 +121,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(503, {"error": "strategy_action_execution_layer_unavailable"})
             items = self.strategy_action_execution_layer.list_pending_actions()
             return self._send(200, {"items": items})
+
+        if parsed.path == "/autonomy/status":
+            if self.autonomy_policy_engine is None:
+                return self._send(503, {"error": "autonomy_policy_engine_unavailable"})
+            return self._send(200, self.autonomy_policy_engine.status())
 
         if parsed.path.startswith("/product_launches/"):
             if self.product_launch_store is None:
@@ -364,6 +370,7 @@ def start_http_server(
     strategy_engine=None,
     strategy_decision_engine=None,
     strategy_action_execution_layer=None,
+    autonomy_policy_engine=None,
 ):
     # Thread daemon: se muere si se muere el proceso principal (bien para dev)
     Handler.state_machine = state_machine
@@ -376,6 +383,7 @@ def start_http_server(
     Handler.strategy_engine = strategy_engine
     Handler.strategy_decision_engine = strategy_decision_engine
     Handler.strategy_action_execution_layer = strategy_action_execution_layer
+    Handler.autonomy_policy_engine = autonomy_policy_engine
     server = HTTPServer((host, port), Handler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()

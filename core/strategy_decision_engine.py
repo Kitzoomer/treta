@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 
 from core.performance_engine import PerformanceEngine
 from core.product_launch_store import ProductLaunchStore
+from core.autonomy_policy_engine import AutonomyPolicyEngine
 from core.strategy_action_execution_layer import StrategyActionExecutionLayer
 
 
@@ -15,10 +16,12 @@ class StrategyDecisionEngine:
         self,
         product_launch_store: ProductLaunchStore,
         strategy_action_execution_layer: StrategyActionExecutionLayer | None = None,
+        autonomy_policy_engine: AutonomyPolicyEngine | None = None,
     ):
         self._product_launch_store = product_launch_store
         self._performance_engine = PerformanceEngine(product_launch_store=product_launch_store)
         self._strategy_action_execution_layer = strategy_action_execution_layer
+        self._autonomy_policy_engine = autonomy_policy_engine
 
     def _utcnow(self) -> datetime:
         return datetime.now(timezone.utc)
@@ -118,6 +121,9 @@ class StrategyDecisionEngine:
 
         if self._strategy_action_execution_layer is not None:
             self._strategy_action_execution_layer.register_pending_actions(actions)
+
+        if self._autonomy_policy_engine is not None:
+            self._autonomy_policy_engine.apply()
 
         confidence = 10 if actions else 8
 

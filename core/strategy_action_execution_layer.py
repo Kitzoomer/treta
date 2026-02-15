@@ -47,8 +47,8 @@ class StrategyActionExecutionLayer:
     def list_pending_actions(self) -> List[Dict[str, Any]]:
         return self._strategy_action_store.list(status="pending_confirmation")
 
-    def execute_action(self, action_id: str) -> Dict[str, Any]:
-        updated = self._strategy_action_store.set_status(action_id, "executed")
+    def execute_action(self, action_id: str, status: str = "executed") -> Dict[str, Any]:
+        updated = self._strategy_action_store.set_status(action_id, status)
         event_bus.push(
             Event(
                 type="StrategyActionExecuted",
