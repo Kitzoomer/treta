@@ -59,6 +59,7 @@ class StrategyDecisionEngine:
                     {
                         "type": "scale",
                         "target_id": launch_id,
+                        "sales": sales,
                         "reasoning": f"Launch has {sales} sales, which meets the scale threshold.",
                     }
                 )
