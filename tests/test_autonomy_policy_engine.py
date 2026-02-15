@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.request import urlopen
 
 from core.bus import event_bus
+from core.adaptive_policy_engine import AdaptivePolicyEngine
 from core.autonomy_policy_engine import AutonomyPolicyEngine
 from core.ipc_http import start_http_server
 from core.strategy_action_execution_layer import StrategyActionExecutionLayer
@@ -33,60 +34,65 @@ class _StubExecutionLayer:
 
 class AutonomyPolicyEngineTest(unittest.TestCase):
     def test_only_low_risk_high_impact_pending_actions_are_auto_executed(self):
-        now = datetime(2025, 1, 10, 12, 0, tzinfo=timezone.utc)
-        store = _StubStore(
-            [
-                {
-                    "id": "a-1",
-                    "status": "pending_confirmation",
-                    "risk_level": "low",
-                    "expected_impact_score": 6,
-                    "created_at": "2025-01-10T09:00:00+00:00",
-                },
-                {
-                    "id": "a-2",
-                    "status": "pending_confirmation",
-                    "risk_level": "low",
-                    "expected_impact_score": 5,
-                    "created_at": "2025-01-10T09:01:00+00:00",
-                },
-                {
-                    "id": "a-3",
-                    "status": "pending_confirmation",
-                    "risk_level": "medium",
-                    "expected_impact_score": 9,
-                    "created_at": "2025-01-10T09:02:00+00:00",
-                },
-                {
-                    "id": "a-4",
-                    "status": "executed",
-                    "risk_level": "low",
-                    "expected_impact_score": 9,
-                    "created_at": "2025-01-10T09:03:00+00:00",
-                },
-            ]
-        )
-        execution_layer = _StubExecutionLayer()
-        engine = AutonomyPolicyEngine(
-            strategy_action_store=store,
-            strategy_action_execution_layer=execution_layer,
-            mode="partial",
-        )
-        engine._utcnow = lambda: now
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            now = datetime(2025, 1, 10, 12, 0, tzinfo=timezone.utc)
+            store = _StubStore(
+                [
+                    {
+                        "id": "a-1",
+                        "status": "pending_confirmation",
+                        "risk_level": "low",
+                        "expected_impact_score": 6,
+                        "created_at": "2025-01-10T09:00:00+00:00",
+                    },
+                    {
+                        "id": "a-2",
+                        "status": "pending_confirmation",
+                        "risk_level": "low",
+                        "expected_impact_score": 5,
+                        "created_at": "2025-01-10T09:01:00+00:00",
+                    },
+                    {
+                        "id": "a-3",
+                        "status": "pending_confirmation",
+                        "risk_level": "medium",
+                        "expected_impact_score": 9,
+                        "created_at": "2025-01-10T09:02:00+00:00",
+                    },
+                    {
+                        "id": "a-4",
+                        "status": "executed",
+                        "risk_level": "low",
+                        "expected_impact_score": 9,
+                        "created_at": "2025-01-10T09:03:00+00:00",
+                    },
+                ]
+            )
+            execution_layer = _StubExecutionLayer()
+            adaptive = AdaptivePolicyEngine(path=Path(tmp_dir) / "adaptive_policy.json")
+            engine = AutonomyPolicyEngine(
+                strategy_action_store=store,
+                strategy_action_execution_layer=execution_layer,
+                mode="partial",
+                adaptive_policy_engine=adaptive,
+            )
+            engine._utcnow = lambda: now
 
-        executed = engine.apply()
+            executed = engine.apply()
 
-        self.assertEqual(execution_layer.executed_ids, [("a-1", "auto_executed")])
-        self.assertEqual(executed, [{"id": "a-1", "status": "auto_executed"}])
+            self.assertEqual(execution_layer.executed_ids, [("a-1", "auto_executed")])
+            self.assertEqual(executed, [{"id": "a-1", "status": "auto_executed"}])
 
     def test_partial_mode_auto_executes_eligible_actions_up_to_limit(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             store = StrategyActionStore(path=Path(tmp_dir) / "strategy_actions.json")
             execution_layer = StrategyActionExecutionLayer(strategy_action_store=store)
+            adaptive = AdaptivePolicyEngine(path=Path(tmp_dir) / "adaptive_policy.json")
             engine = AutonomyPolicyEngine(
                 strategy_action_store=store,
                 strategy_action_execution_layer=execution_layer,
                 mode="partial",
+                adaptive_policy_engine=adaptive,
             )
 
             eligible_ids = []
@@ -161,10 +167,12 @@ class AutonomyPolicyEngineTest(unittest.TestCase):
 
             store = StrategyActionStore(path=path)
             execution_layer = StrategyActionExecutionLayer(strategy_action_store=store)
+            adaptive = AdaptivePolicyEngine(path=Path(tmp_dir) / "adaptive_policy.json")
             engine = AutonomyPolicyEngine(
                 strategy_action_store=store,
                 strategy_action_execution_layer=execution_layer,
                 mode="partial",
+                adaptive_policy_engine=adaptive,
             )
             engine._utcnow = lambda: now
 
@@ -178,10 +186,12 @@ class AutonomyPolicyEngineTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             store = StrategyActionStore(path=Path(tmp_dir) / "strategy_actions.json")
             execution_layer = StrategyActionExecutionLayer(strategy_action_store=store)
+            adaptive = AdaptivePolicyEngine(path=Path(tmp_dir) / "adaptive_policy.json")
             engine = AutonomyPolicyEngine(
                 strategy_action_store=store,
                 strategy_action_execution_layer=execution_layer,
                 mode="manual",
+                adaptive_policy_engine=adaptive,
             )
 
             store.add(
@@ -202,6 +212,9 @@ class AutonomyPolicyEngineTest(unittest.TestCase):
                 with urlopen(f"http://127.0.0.1:{port}/autonomy/status", timeout=2) as response:
                     self.assertEqual(response.status, 200)
                     payload = json.loads(response.read().decode("utf-8"))
+                with urlopen(f"http://127.0.0.1:{port}/autonomy/adaptive_status", timeout=2) as response:
+                    self.assertEqual(response.status, 200)
+                    adaptive_payload = json.loads(response.read().decode("utf-8"))
             finally:
                 server.shutdown()
                 server.server_close()
@@ -209,6 +222,10 @@ class AutonomyPolicyEngineTest(unittest.TestCase):
             self.assertEqual(payload["mode"], "manual")
             self.assertEqual(payload["auto_executed_last_24h"], 0)
             self.assertEqual(payload["pending_low_risk_actions"], 1)
+            self.assertEqual(adaptive_payload["success_rate"], 0.0)
+            self.assertEqual(adaptive_payload["avg_revenue_delta"], 0.0)
+            self.assertEqual(adaptive_payload["impact_threshold"], 6)
+            self.assertEqual(adaptive_payload["max_auto_executions_per_24h"], 3)
 
 
 if __name__ == "__main__":

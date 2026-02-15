@@ -127,6 +127,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(503, {"error": "autonomy_policy_engine_unavailable"})
             return self._send(200, self.autonomy_policy_engine.status())
 
+        if parsed.path == "/autonomy/adaptive_status":
+            if self.autonomy_policy_engine is None:
+                return self._send(503, {"error": "autonomy_policy_engine_unavailable"})
+            return self._send(200, self.autonomy_policy_engine.adaptive_status())
+
         if parsed.path.startswith("/product_launches/"):
             if self.product_launch_store is None:
                 return self._send(503, {"error": "product_launch_store_unavailable"})
