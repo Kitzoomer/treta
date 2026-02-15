@@ -11,10 +11,12 @@ from core.gumroad_oauth import get_auth_url, load_token, save_token
 class GumroadOAuthTest(unittest.TestCase):
     def test_auth_url_format(self):
         previous = {
+            "GUMROAD_CLIENT_ID": os.environ.get("GUMROAD_CLIENT_ID"),
             "GUMROAD_APP_ID": os.environ.get("GUMROAD_APP_ID"),
             "GUMROAD_REDIRECT_URI": os.environ.get("GUMROAD_REDIRECT_URI"),
         }
-        os.environ["GUMROAD_APP_ID"] = "app-123"
+        os.environ["GUMROAD_CLIENT_ID"] = "app-123"
+        os.environ.pop("GUMROAD_APP_ID", None)
         os.environ["GUMROAD_REDIRECT_URI"] = "http://localhost:7777/gumroad/callback"
         try:
             auth_url = get_auth_url()
@@ -52,12 +54,16 @@ class GumroadOAuthTest(unittest.TestCase):
         from core.gumroad_oauth import exchange_code_for_token
 
         previous = {
+            "GUMROAD_CLIENT_ID": os.environ.get("GUMROAD_CLIENT_ID"),
+            "GUMROAD_CLIENT_SECRET": os.environ.get("GUMROAD_CLIENT_SECRET"),
             "GUMROAD_APP_ID": os.environ.get("GUMROAD_APP_ID"),
             "GUMROAD_APP_SECRET": os.environ.get("GUMROAD_APP_SECRET"),
             "GUMROAD_REDIRECT_URI": os.environ.get("GUMROAD_REDIRECT_URI"),
         }
-        os.environ["GUMROAD_APP_ID"] = "app-123"
-        os.environ["GUMROAD_APP_SECRET"] = "secret-123"
+        os.environ["GUMROAD_CLIENT_ID"] = "app-123"
+        os.environ["GUMROAD_CLIENT_SECRET"] = "secret-123"
+        os.environ.pop("GUMROAD_APP_ID", None)
+        os.environ.pop("GUMROAD_APP_SECRET", None)
         os.environ["GUMROAD_REDIRECT_URI"] = "http://localhost:7777/gumroad/callback"
 
         response = Mock()
