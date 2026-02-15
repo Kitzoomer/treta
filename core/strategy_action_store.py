@@ -19,7 +19,7 @@ class StrategyActionStore:
 
     _DEFAULT_DATA_DIR = "./.treta_data"
     _ALLOWED_TYPES = {"scale", "review", "price_test", "new_product", "archive"}
-    _ALLOWED_STATUSES = {"pending_confirmation", "executed", "rejected"}
+    _ALLOWED_STATUSES = {"pending_confirmation", "executed", "auto_executed", "rejected"}
 
     def __init__(self, capacity: int = 200, path: Path | None = None):
         data_dir = Path(os.getenv("TRETA_DATA_DIR", self._DEFAULT_DATA_DIR))
@@ -77,6 +77,9 @@ class StrategyActionStore:
             "status": status,
             "created_at": str(item.get("created_at") or self._now()),
         }
+        executed_at = str(item.get("executed_at") or "").strip()
+        if executed_at:
+            normalized["executed_at"] = executed_at
         if normalized_sales is not None:
             normalized["sales"] = normalized_sales
         normalized.update(self._risk_evaluation_engine.evaluate(normalized))
@@ -137,5 +140,7 @@ class StrategyActionStore:
             raise ValueError(f"strategy action not found: {action_id}")
 
         item["status"] = target_status
+        if target_status in {"executed", "auto_executed"}:
+            item["executed_at"] = self._now()
         self._save()
         return deepcopy(item)
