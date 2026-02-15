@@ -12,7 +12,73 @@ from core.strategy_action_execution_layer import StrategyActionExecutionLayer
 from core.strategy_action_store import StrategyActionStore
 
 
+class _StubStore:
+    def __init__(self, items):
+        self._items = list(items)
+
+    def list(self, status=None):
+        if status is None:
+            return list(self._items)
+        return [item for item in self._items if item.get("status") == status]
+
+
+class _StubExecutionLayer:
+    def __init__(self):
+        self.executed_ids = []
+
+    def execute_action(self, action_id, status="executed"):
+        self.executed_ids.append((action_id, status))
+        return {"id": action_id, "status": status}
+
+
 class AutonomyPolicyEngineTest(unittest.TestCase):
+    def test_only_low_risk_high_impact_pending_actions_are_auto_executed(self):
+        now = datetime(2025, 1, 10, 12, 0, tzinfo=timezone.utc)
+        store = _StubStore(
+            [
+                {
+                    "id": "a-1",
+                    "status": "pending_confirmation",
+                    "risk_level": "low",
+                    "expected_impact_score": 6,
+                    "created_at": "2025-01-10T09:00:00+00:00",
+                },
+                {
+                    "id": "a-2",
+                    "status": "pending_confirmation",
+                    "risk_level": "low",
+                    "expected_impact_score": 5,
+                    "created_at": "2025-01-10T09:01:00+00:00",
+                },
+                {
+                    "id": "a-3",
+                    "status": "pending_confirmation",
+                    "risk_level": "medium",
+                    "expected_impact_score": 9,
+                    "created_at": "2025-01-10T09:02:00+00:00",
+                },
+                {
+                    "id": "a-4",
+                    "status": "executed",
+                    "risk_level": "low",
+                    "expected_impact_score": 9,
+                    "created_at": "2025-01-10T09:03:00+00:00",
+                },
+            ]
+        )
+        execution_layer = _StubExecutionLayer()
+        engine = AutonomyPolicyEngine(
+            strategy_action_store=store,
+            strategy_action_execution_layer=execution_layer,
+            mode="partial",
+        )
+        engine._utcnow = lambda: now
+
+        executed = engine.apply()
+
+        self.assertEqual(execution_layer.executed_ids, [("a-1", "auto_executed")])
+        self.assertEqual(executed, [{"id": "a-1", "status": "auto_executed"}])
+
     def test_partial_mode_auto_executes_eligible_actions_up_to_limit(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             store = StrategyActionStore(path=Path(tmp_dir) / "strategy_actions.json")
