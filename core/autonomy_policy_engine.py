@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
+from core.adaptive_policy_engine import AdaptivePolicyEngine
 from core.bus import event_bus
 from core.events import Event
 from core.strategy_action_execution_layer import StrategyActionExecutionLayer
@@ -18,11 +19,15 @@ class AutonomyPolicyEngine:
         strategy_action_execution_layer: StrategyActionExecutionLayer,
         mode: str = "manual",
         max_auto_executions_per_24h: int = 3,
+        adaptive_policy_engine: AdaptivePolicyEngine | None = None,
     ):
         self._strategy_action_store = strategy_action_store
         self._strategy_action_execution_layer = strategy_action_execution_layer
         self._mode = "partial" if mode == "partial" else "manual"
-        self._max_auto_executions_per_24h = max(int(max_auto_executions_per_24h), 0)
+        self._adaptive_policy_engine = adaptive_policy_engine or AdaptivePolicyEngine(
+            impact_threshold=6,
+            max_auto_executions_per_24h=max_auto_executions_per_24h,
+        )
 
     def _utcnow(self) -> datetime:
         return datetime.now(timezone.utc)
@@ -49,11 +54,13 @@ class AutonomyPolicyEngine:
 
     def _eligible_pending_low_risk_actions(self) -> List[Dict[str, Any]]:
         pending = self._strategy_action_store.list(status="pending_confirmation")
+        adaptive_status = self._adaptive_policy_engine.adaptive_status()
+        impact_threshold = int(adaptive_status["impact_threshold"])
         eligible = [
             item
             for item in pending
             if item.get("risk_level") == "low"
-            and int(item.get("expected_impact_score", 0) or 0) >= 6
+            and int(item.get("expected_impact_score", 0) or 0) >= impact_threshold
         ]
         return sorted(eligible, key=lambda item: (str(item.get("created_at", "")), str(item.get("id", ""))))
 
@@ -62,7 +69,9 @@ class AutonomyPolicyEngine:
             return []
 
         already_auto_executed = self._count_auto_executed_last_24h()
-        remaining_budget = max(self._max_auto_executions_per_24h - already_auto_executed, 0)
+        adaptive_status = self._adaptive_policy_engine.adaptive_status()
+        max_auto_executions = int(adaptive_status["max_auto_executions_per_24h"])
+        remaining_budget = max(max_auto_executions - already_auto_executed, 0)
         if remaining_budget <= 0:
             return []
 
@@ -72,6 +81,8 @@ class AutonomyPolicyEngine:
             if not action_id:
                 continue
             updated = self._strategy_action_execution_layer.execute_action(action_id, status="auto_executed")
+            revenue_delta = float(action.get("revenue_delta", 0) or 0)
+            self._adaptive_policy_engine.record_action_outcome(revenue_delta=revenue_delta)
             event_bus.push(
                 Event(
                     type="AutonomyActionAutoExecuted",
@@ -84,8 +95,13 @@ class AutonomyPolicyEngine:
         return executed
 
     def status(self) -> Dict[str, Any]:
-        return {
+        summary = {
             "mode": self._mode,
             "auto_executed_last_24h": self._count_auto_executed_last_24h(),
             "pending_low_risk_actions": len(self._eligible_pending_low_risk_actions()),
         }
+        summary.update(self._adaptive_policy_engine.adaptive_status())
+        return summary
+
+    def adaptive_status(self) -> Dict[str, Any]:
+        return self._adaptive_policy_engine.adaptive_status()
