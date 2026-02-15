@@ -13,6 +13,10 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 
+class GumroadAPIError(RuntimeError):
+    """Raised when Gumroad API communication fails."""
+
+
 class GumroadClient:
     """Small Gumroad API client with OAuth token flow.
 
@@ -93,6 +97,48 @@ class GumroadClient:
         if not isinstance(response, dict):
             return {}
         return response
+
+    def has_credentials(self) -> bool:
+        """Return True when OAuth credentials are configured."""
+        return self._has_credentials()
+
+    def get_sales_for_product(
+        self,
+        product_id: str,
+        *,
+        limit: int = 100,
+        after: str | None = None,
+    ) -> dict[str, Any]:
+        """Fetch sales for a specific Gumroad product.
+
+        Raises:
+            ValueError: If credentials are not configured.
+            GumroadAPIError: If the request fails or returns malformed data.
+        """
+        token = self._get_access_token()
+        if not token:
+            raise ValueError("Missing Gumroad credentials. Set GUMROAD_APP_ID and GUMROAD_APP_SECRET.")
+
+        params: dict[str, Any] = {
+            "product_id": str(product_id).strip(),
+            "limit": limit if isinstance(limit, int) and limit > 0 else 100,
+        }
+        if after:
+            params["after"] = after
+
+        try:
+            payload = self._transport.get(path="/v2/sales", access_token=token, params=params)
+        except Exception as exc:
+            raise GumroadAPIError(f"Gumroad API request failed: {exc}") from exc
+
+        if not isinstance(payload, dict):
+            raise GumroadAPIError("Gumroad API returned invalid response payload.")
+
+        sales = payload.get("sales", [])
+        if not isinstance(sales, list):
+            raise GumroadAPIError("Gumroad API returned invalid sales payload.")
+
+        return {"sales": sales, "limit": params["limit"]}
 
     @staticmethod
     def _empty_products_payload() -> dict[str, list[dict[str, Any]]]:
