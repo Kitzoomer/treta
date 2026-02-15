@@ -1,16 +1,20 @@
-version: "3.9"
-
 services:
   treta:
     build: .
     container_name: treta-core
+    ports:
+      - "7777:7777"
+
     volumes:
       - ../../data:/data
       - ../../config:/config
+
     environment:
       - TRETA_ENV=local
-      - GUMROAD_APP_ID=${GUMROAD_APP_ID:-}
-      - GUMROAD_APP_SECRET=${GUMROAD_APP_SECRET:-}
-      - GUMROAD_REDIRECT_URI=${GUMROAD_REDIRECT_URI:-}
+      - TRETA_TIMEZONE=Asia/Bangkok
+      - TRETA_SCAN_HOUR=9
+      - GUMROAD_ACCESS_TOKEN=${GUMROAD_ACCESS_TOKEN}
+
     stdin_open: true
     tty: true
+
