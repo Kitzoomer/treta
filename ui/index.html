@@ -10,32 +10,19 @@
     <main class="app-layout">
       <aside class="panel panel-left" aria-label="Control center">
         <header class="panel-header">
-          <h1>Control Center</h1>
-          <div class="system-status" id="system-indicator">
-            <span class="status-dot" id="status-dot"></span>
-            <span id="system-status">LISTENING</span>
-          </div>
+          <h1>Command Center</h1>
         </header>
 
-        <section class="control-card">
-          <h2>Chat</h2>
-          <p class="control-helper">Ask for actions in plain language. Treta translates quick commands into pipeline events.</p>
-          <section id="chat-history" class="chat-history" aria-live="polite"></section>
+        <section id="system-status-panel" class="control-card system-status-card" aria-label="System status"></section>
 
-          <form id="chat-form" class="chat-controls">
+        <section id="activity-timeline-panel" class="control-card timeline-card" aria-label="Activity timeline"></section>
+
+        <section id="command-bar-panel" class="control-card command-bar-card" aria-label="Quick command bar">
+          <h2>Quick Command Bar</h2>
+          <form id="chat-form" class="quick-command-bar">
             <input id="chat-input" type="text" placeholder="Try: 'scan for opportunities' or 'show me proposals ready to launch'" autocomplete="off" />
             <button type="submit">Execute</button>
           </form>
-        </section>
-
-        <section class="control-card mini-status">
-          <h2>Last event executed</h2>
-          <p id="last-event" class="last-event">No events yet.</p>
-        </section>
-
-        <section class="control-card mini-log">
-          <h2>Event stream</h2>
-          <div id="event-log" class="event-log"></div>
         </section>
       </aside>
 

@@ -2,7 +2,7 @@ const CONFIG = {
   routes: ["home", "dashboard", "work", "profile", "game", "strategy", "settings"],
   defaultRoute: "home",
   defaultRefreshMs: 3000,
-  maxEventStream: 10,
+  maxEventStream: 20,
 };
 
 const STORAGE_KEYS = {
@@ -35,7 +35,7 @@ const state = {
     loaded: false,
     error: "",
   },
-  logs: [{ role: "system", message: "Treta mini-OS online." }],
+  expandedTimelineEvents: {},
   debugMode: localStorage.getItem(STORAGE_KEYS.debug) === "true",
   refreshMs: Number(localStorage.getItem(STORAGE_KEYS.refreshMs) || CONFIG.defaultRefreshMs),
   profile: loadProfileState(),
@@ -53,13 +53,10 @@ const state = {
 const ui = {
   pageContent: document.getElementById("page-content"),
   pageNav: document.getElementById("page-nav"),
-  chatHistory: document.getElementById("chat-history"),
   chatForm: document.getElementById("chat-form"),
   chatInput: document.getElementById("chat-input"),
-  statusDot: document.getElementById("status-dot"),
-  statusText: document.getElementById("system-status"),
-  eventLog: document.getElementById("event-log"),
-  lastEvent: document.getElementById("last-event"),
+  systemStatusPanel: document.getElementById("system-status-panel"),
+  activityTimelinePanel: document.getElementById("activity-timeline-panel"),
   telemetry: document.getElementById("telemetry-content"),
 };
 
@@ -896,35 +893,113 @@ function renderNavigation() {
 }
 
 function log(role, message) {
-  state.logs.push({ role, message });
-  if (state.logs.length > 100) state.logs = state.logs.slice(-100);
-  renderChat();
+  console.info(`[${role}] ${message}`);
 }
 
-function renderChat() {
-  ui.chatHistory.innerHTML = state.logs
-    .slice(-30)
-    .map((entry) => `<div class="chat-row ${entry.role}">${helpers.escape(entry.message)}</div>`)
-    .join("");
-  ui.chatHistory.scrollTop = ui.chatHistory.scrollHeight;
+function mapSystemMode(rawState) {
+  const value = helpers.t(rawState, "IDLE").toUpperCase();
+  if (value === "IDLE") return { label: "IDLE", className: "mode-idle" };
+  if (["LISTENING", "THINKING"].includes(value)) return { label: "SCANNING", className: "mode-scanning" };
+  if (value === "SPEAKING") return { label: "BUILDING", className: "mode-building" };
+  if (value === "ERROR") return { label: "ERROR", className: "mode-error" };
+  return { label: value, className: "mode-idle" };
+}
+
+function formatEventTitle(type) {
+  if (!type) return "System event";
+  const knownTitles = {
+    RunInfoproductScan: "Infoproduct scan started",
+    OpportunityDetected: "Opportunity detected",
+    ProductProposalGenerated: "Proposal generated",
+    ProductLaunchCreated: "Launch created",
+    StrategyActionCreated: "Strategy action created",
+  };
+  if (knownTitles[type]) return knownTitles[type];
+  return type.replace(/([a-z])([A-Z])/g, "$1 $2");
+}
+
+function eventIcon(type) {
+  const knownIcons = {
+    RunInfoproductScan: "🔍",
+    OpportunityDetected: "💡",
+    ProductProposalGenerated: "📦",
+    ProductLaunchCreated: "🚀",
+    StrategyActionCreated: "🧠",
+  };
+  return knownIcons[type] || "⚙";
+}
+
+function eventKey(event, index) {
+  return `${helpers.t(event.timestamp, "no-time")}-${helpers.t(event.type, "event")}-${index}`;
+}
+
+function renderSystemStatus() {
+  const mode = mapSystemMode(state.system.state);
+  const latestEvent = state.events[0];
+  const lastAction = latestEvent ? formatEventTitle(latestEvent.type) : "No events yet";
+
+  ui.systemStatusPanel.innerHTML = `
+    <h2>System Status</h2>
+    <div class="system-mode-row">
+      <span class="status-dot ${mode.className}" aria-hidden="true"></span>
+      <span class="mode-label">SYSTEM MODE</span>
+    </div>
+    <div class="system-status-lines">
+      <p><span>Current Mode:</span> <strong>${helpers.escape(mode.label)}</strong></p>
+      <p><span>Last Action:</span> <strong>${helpers.escape(lastAction)}</strong></p>
+    </div>
+  `;
+}
+
+function renderActivityTimeline() {
+  const timelineItems = state.events.slice(0, CONFIG.maxEventStream);
+  if (!timelineItems.length) {
+    ui.activityTimelinePanel.innerHTML = "<h2>Activity Timeline</h2><p class='empty'>Waiting for events…</p>";
+    return;
+  }
+
+  ui.activityTimelinePanel.innerHTML = `
+    <h2>Activity Timeline</h2>
+    <div class="activity-timeline-list">
+      ${timelineItems
+        .map((event, index) => {
+          const key = eventKey(event, index);
+          const expanded = Boolean(state.expandedTimelineEvents[key]);
+          return `
+            <article class="timeline-item ${expanded ? "expanded" : ""}" data-event-key="${helpers.escape(key)}">
+              <button class="timeline-item-toggle" type="button" data-action="toggle-event" data-event-key="${helpers.escape(key)}">
+                <span class="timeline-icon" aria-hidden="true">${eventIcon(event.type)}</span>
+                <span class="timeline-main">
+                  <strong>${helpers.escape(formatEventTitle(event.type))}</strong>
+                  <small>${helpers.escape(helpers.t(event.timestamp, "Unknown time"))}</small>
+                </span>
+              </button>
+              ${expanded ? `<pre class="timeline-payload">${helpers.escape(JSON.stringify(event.payload || {}, null, 2))}</pre>` : ""}
+            </article>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+
+  ui.activityTimelinePanel.querySelectorAll("button[data-action='toggle-event']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const key = button.dataset.eventKey;
+      state.expandedTimelineEvents[key] = !state.expandedTimelineEvents[key];
+      renderActivityTimeline();
+    });
+  });
+}
+
+function renderCommandBar() {
+  if (!ui.chatForm) return;
+  ui.chatForm.classList.add("quick-command-bar");
 }
 
 function renderControlCenter() {
-  const currentState = helpers.t(state.system.state, "IDLE").toUpperCase();
-  ui.statusText.textContent = currentState;
-  ui.statusDot.classList.remove("status-running", "status-error");
-  if (["LISTENING", "RUNNING", "ACTIVE"].includes(currentState)) ui.statusDot.classList.add("status-running");
-  if (["ERROR", "FAILED", "OFFLINE"].includes(currentState)) ui.statusDot.classList.add("status-error");
-
-  const last = state.events[0];
-  ui.lastEvent.textContent = last ? `${last.type} · ${helpers.t(last.timestamp)}` : "No events yet.";
-
-  ui.eventLog.innerHTML = state.events
-    .slice(0, CONFIG.maxEventStream)
-    .map((event) => `<div class="event-log-item"><strong>${helpers.escape(event.type)}</strong><br>${helpers.escape(JSON.stringify(event.payload || {}))}</div>`)
-    .join("") || "<div class='event-log-item'>Waiting for events…</div>";
-
-  renderChat();
+  renderSystemStatus();
+  renderActivityTimeline();
+  renderCommandBar();
 }
 
 function renderTelemetry() {
