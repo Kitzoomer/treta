@@ -23,6 +23,7 @@ const state = {
   opportunities: [],
   proposals: [],
   launches: [],
+  plans: [],
   performance: {},
   strategy: {},
   strategyView: {
@@ -39,6 +40,13 @@ const state = {
   refreshMs: Number(localStorage.getItem(STORAGE_KEYS.refreshMs) || CONFIG.defaultRefreshMs),
   profile: loadProfileState(),
   currentRoute: CONFIG.defaultRoute,
+  workView: {
+    messages: {},
+    executionPackages: {},
+    activeExecutionProposalId: "",
+    plansByProposal: {},
+    activePlanProposalId: "",
+  },
   timerId: null,
 };
 
@@ -110,6 +118,30 @@ const api = {
   },
   getProductLaunches() {
     return this.fetchJson("/product_launches");
+  },
+  getProductLaunch(id) {
+    return this.fetchJson(`/product_launches/${id}`);
+  },
+  addLaunchSale(id, amount) {
+    return this.fetchJson(`/product_launches/${id}/add_sale`, { method: "POST", body: JSON.stringify({ amount }) });
+  },
+  setLaunchStatus(id, status) {
+    return this.fetchJson(`/product_launches/${id}/status`, { method: "POST", body: JSON.stringify({ status }) });
+  },
+  linkLaunchGumroad(id, gumroadProductId) {
+    return this.fetchJson(`/product_launches/${id}/link_gumroad`, { method: "POST", body: JSON.stringify({ gumroad_product_id: gumroadProductId }) });
+  },
+  getProductPlans() {
+    return this.fetchJson("/product_plans");
+  },
+  getProductPlan(id) {
+    return this.fetchJson(`/product_plans/${id}`);
+  },
+  buildProductPlan(proposalId) {
+    return this.fetchJson("/product_plans/build", { method: "POST", body: JSON.stringify({ proposal_id: proposalId }) });
+  },
+  executeProposal(id) {
+    return this.fetchJson("/product_proposals/execute", { method: "POST", body: JSON.stringify({ id }) });
   },
   getPerformanceSummary() {
     return this.fetchJson("/performance/summary");
@@ -475,6 +507,81 @@ const views = {
       `;
     }).join("") || "<p class='empty'>No proposals yet. Evaluate opportunities to create proposals.</p>";
 
+    const launchesRows = state.launches.slice(0, 20).map((item) => {
+      const launchId = helpers.t(item.id, "-");
+      const message = state.workView.messages[`launch-${launchId}`] || "";
+      return `
+        <tr>
+          <td>${helpers.t(item.id)}</td>
+          <td>${helpers.t(item.proposal_id)}</td>
+          <td><span class="badge ${helpers.badgeClass(item.status)}">${helpers.statusLabel(item.status)}</span></td>
+          <td>${helpers.t(item.sales, 0)}</td>
+          <td>${helpers.t(item.revenue, 0)}</td>
+          <td>${helpers.t(item.gumroad_product_id)}</td>
+          <td>${helpers.t(item.last_synced_at)}</td>
+          <td>
+            <div class="inline-form-grid">
+              <div class="inline-control-group">
+                <label>Amount</label>
+                <input type="number" step="0.01" min="0" data-launch-input="sale" data-id="${helpers.t(item.id)}" placeholder="0.00">
+                <button class="secondary-btn" data-action="launch-add-sale" data-id="${helpers.t(item.id)}">Add sale</button>
+              </div>
+              <div class="inline-control-group">
+                <label>Status</label>
+                <select data-launch-input="status" data-id="${helpers.t(item.id)}">
+                  <option value="active">Active</option>
+                  <option value="paused">Paused</option>
+                  <option value="launched">Launched</option>
+                  <option value="archived">Archived</option>
+                </select>
+                <button class="secondary-btn" data-action="launch-set-status" data-id="${helpers.t(item.id)}">Set status</button>
+              </div>
+              <div class="inline-control-group">
+                <label>Gumroad Product</label>
+                <input type="text" data-launch-input="gumroad" data-id="${helpers.t(item.id)}" placeholder="gumroad_product_id" value="${helpers.t(item.gumroad_product_id, "")}">
+                <button class="secondary-btn" data-action="launch-link-gumroad" data-id="${helpers.t(item.id)}">Link Gumroad</button>
+              </div>
+            </div>
+            <p class="inline-feedback">${helpers.escape(message)}</p>
+          </td>
+        </tr>
+      `;
+    }).join("") || "<tr><td colspan='8' class='empty'>No launches yet.</td></tr>";
+
+    const proposalActionRows = state.proposals.slice(0, 20).map((proposal) => {
+      const proposalId = helpers.t(proposal.id);
+      const plan = state.plans.find((item) => String(item.proposal_id) === String(proposal.id));
+      const planId = plan?.id;
+      const planMsg = state.workView.messages[`plan-${proposalId}`] || "";
+      const executeMsg = state.workView.messages[`exec-${proposalId}`] || "";
+      return `
+        <tr>
+          <td>${proposalId}</td>
+          <td>${helpers.t(proposal.product_name, "-")}</td>
+          <td><span class="badge ${helpers.badgeClass(proposal.status)}">${helpers.statusLabel(proposal.status)}</span></td>
+          <td>
+            <div class="card-actions wrap no-margin">
+              <button class="secondary-btn" data-action="generate-execution-package" data-id="${proposalId}">Generate execution package</button>
+              ${state.workView.executionPackages[proposalId] ? `<button class="secondary-btn" data-action="show-execution-package" data-id="${proposalId}">Preview package</button>` : ""}
+            </div>
+            <p class="inline-feedback">${helpers.escape(executeMsg)}</p>
+          </td>
+          <td>
+            <div class="card-actions wrap no-margin">
+              <button class="secondary-btn" data-action="build-plan" data-id="${proposalId}">Build plan</button>
+              <button class="secondary-btn" data-action="view-plan" data-id="${proposalId}" data-plan-id="${helpers.t(planId, "")}">View plan</button>
+            </div>
+            <p class="inline-feedback">${helpers.escape(planMsg)}</p>
+          </td>
+        </tr>
+      `;
+    }).join("") || "<tr><td colspan='5' class='empty'>No proposals available for execution/plans.</td></tr>";
+
+    const selectedExecutionId = state.workView.activeExecutionProposalId;
+    const selectedExecutionPackage = state.workView.executionPackages[selectedExecutionId] || null;
+    const selectedPlanId = state.workView.activePlanProposalId;
+    const selectedPlan = state.workView.plansByProposal[selectedPlanId] || null;
+
     this.shell("Work", "Execution pipeline with guided lifecycle", `
       <section class="work-execution">
         <div class="card work-pipeline-overview">
@@ -512,6 +619,55 @@ const views = {
             ${draftProposals}
           </section>
         </div>
+
+        <article class="card">
+          <h3>Launches</h3>
+          <div class="work-table-wrap">
+            <table class="work-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Proposal</th>
+                  <th>Status</th>
+                  <th>Sales</th>
+                  <th>Revenue</th>
+                  <th>Gumroad Product</th>
+                  <th>Last synced</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>${launchesRows}</tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="card">
+          <h3>Execution Package + Plans</h3>
+          <div class="work-table-wrap">
+            <table class="work-table">
+              <thead>
+                <tr>
+                  <th>Proposal ID</th>
+                  <th>Product</th>
+                  <th>Status</th>
+                  <th>Execution package</th>
+                  <th>Plans</th>
+                </tr>
+              </thead>
+              <tbody>${proposalActionRows}</tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="card">
+          <h3>Execution Package Preview</h3>
+          ${renderExecutionPackagePreview(selectedExecutionId, selectedExecutionPackage)}
+        </article>
+
+        <article class="card">
+          <h3>Product Plan Viewer</h3>
+          ${renderPlanPreview(selectedPlanId, selectedPlan)}
+        </article>
 
         <article class="card"><h3>Action output</h3><section id="work-response" class="result-box">Ready.</section></article>
       </section>
@@ -801,12 +957,13 @@ function renderTelemetry() {
 
 async function refreshLoop() {
   try {
-    const [systemData, eventData, oppData, proposalData, launchData, perfData, strategyData] = await Promise.all([
+    const [systemData, eventData, oppData, proposalData, launchData, planData, perfData, strategyData] = await Promise.all([
       api.getState(),
       api.getRecentEvents(),
       api.getOpportunities(),
       api.getProductProposals(),
       api.getProductLaunches(),
+      api.getProductPlans(),
       api.getPerformanceSummary(),
       api.getStrategyRecommendations(),
     ]);
@@ -816,6 +973,7 @@ async function refreshLoop() {
     state.opportunities = oppData.items || [];
     state.proposals = proposalData.items || [];
     state.launches = launchData.items || [];
+    state.plans = planData.items || [];
     state.performance = perfData || {};
     state.strategy = strategyData || {};
   } catch (error) {
@@ -925,25 +1083,200 @@ function bindWorkActions() {
     });
   });
 
-  ui.pageContent.querySelectorAll("button[data-action='launch-sale']").forEach((button) => {
+  ui.pageContent.querySelectorAll("button[data-action='launch-add-sale']").forEach((button) => {
     button.addEventListener("click", async () => {
-      const amount = Number(window.prompt("Sale amount", "1") || "0");
-      await runAction(
-        () => api.fetchJson(`/product_launches/${button.dataset.id}/add_sale`, { method: "POST", body: JSON.stringify({ amount }) }),
-        ACTION_TARGETS.work
+      const input = ui.pageContent.querySelector(`input[data-launch-input='sale'][data-id='${button.dataset.id}']`);
+      const amount = Number(input?.value || "0");
+      await runWorkInlineAction(
+        `launch-${button.dataset.id}`,
+        () => api.addLaunchSale(button.dataset.id, amount),
+        `Sale added to launch ${button.dataset.id}.`
       );
     });
   });
 
-  ui.pageContent.querySelectorAll("button[data-action='launch-status']").forEach((button) => {
+  ui.pageContent.querySelectorAll("button[data-action='launch-set-status']").forEach((button) => {
     button.addEventListener("click", async () => {
-      const status = (window.prompt("New status", "active") || "").trim();
-      await runAction(
-        () => api.fetchJson(`/product_launches/${button.dataset.id}/status`, { method: "POST", body: JSON.stringify({ status }) }),
-        ACTION_TARGETS.work
+      const input = ui.pageContent.querySelector(`select[data-launch-input='status'][data-id='${button.dataset.id}']`);
+      const status = helpers.t(input?.value, "active");
+      await runWorkInlineAction(
+        `launch-${button.dataset.id}`,
+        () => api.setLaunchStatus(button.dataset.id, status),
+        `Launch ${button.dataset.id} status updated to ${status}.`
       );
     });
   });
+
+  ui.pageContent.querySelectorAll("button[data-action='launch-link-gumroad']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const input = ui.pageContent.querySelector(`input[data-launch-input='gumroad'][data-id='${button.dataset.id}']`);
+      const gumroadProductId = helpers.t(input?.value, "").trim();
+      await runWorkInlineAction(
+        `launch-${button.dataset.id}`,
+        () => api.linkLaunchGumroad(button.dataset.id, gumroadProductId),
+        `Launch ${button.dataset.id} linked to Gumroad product ${gumroadProductId || "-"}.`
+      );
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='generate-execution-package']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await runWorkInlineAction(
+        `exec-${button.dataset.id}`,
+        async () => {
+          const result = await api.executeProposal(button.dataset.id);
+          state.workView.executionPackages[button.dataset.id] = result.execution_package || result;
+          state.workView.activeExecutionProposalId = button.dataset.id;
+          return result;
+        },
+        `Execution package generated for proposal ${button.dataset.id}.`
+      );
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='show-execution-package']").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.workView.activeExecutionProposalId = button.dataset.id;
+      router.render();
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='copy-package-block']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const raw = decodeURIComponent(button.dataset.copyValue || "");
+      try {
+        await navigator.clipboard.writeText(raw);
+        state.workView.messages[`exec-${button.dataset.id}`] = "Copied to clipboard.";
+      } catch (_error) {
+        state.workView.messages[`exec-${button.dataset.id}`] = "Clipboard unavailable in this environment.";
+      }
+      router.render();
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='build-plan']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await runWorkInlineAction(
+        `plan-${button.dataset.id}`,
+        async () => {
+          const result = await api.buildProductPlan(button.dataset.id);
+          await refreshLoop();
+          const builtPlanId = result.id || result.plan_id;
+          if (builtPlanId) {
+            const planDetails = await api.getProductPlan(builtPlanId);
+            state.workView.plansByProposal[button.dataset.id] = planDetails;
+            state.workView.activePlanProposalId = button.dataset.id;
+          }
+          return result;
+        },
+        `Plan built for proposal ${button.dataset.id}.`
+      );
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='view-plan']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const proposalId = button.dataset.id;
+      const fromList = state.plans.find((item) => String(item.proposal_id) === String(proposalId));
+      const planId = button.dataset.planId || fromList?.id;
+      if (!planId) {
+        state.workView.activePlanProposalId = proposalId;
+        state.workView.plansByProposal[proposalId] = null;
+        state.workView.messages[`plan-${proposalId}`] = "No plan yet.";
+        router.render();
+        return;
+      }
+      await runWorkInlineAction(
+        `plan-${proposalId}`,
+        async () => {
+          const result = await api.getProductPlan(planId);
+          state.workView.activePlanProposalId = proposalId;
+          state.workView.plansByProposal[proposalId] = result;
+          return result;
+        },
+        `Plan ${planId} loaded.`
+      );
+    });
+  });
+}
+
+async function runWorkInlineAction(key, actionFn, successMessage) {
+  try {
+    const result = await actionFn();
+    state.workView.messages[key] = successMessage;
+    document.getElementById(ACTION_TARGETS.work).textContent = JSON.stringify(result, null, 2);
+    log("system", `Action ok: ${JSON.stringify(result)}`);
+    await refreshLoop();
+  } catch (error) {
+    state.workView.messages[key] = `Error: ${error.message}`;
+    document.getElementById(ACTION_TARGETS.work).textContent = `error: ${error.message}`;
+    log("system", `Action failed: ${error.message}`);
+    router.render();
+  }
+}
+
+function renderExecutionPackagePreview(proposalId, executionPackage) {
+  if (!proposalId || !executionPackage) {
+    return "<p class='empty'>Generate an execution package from a proposal to preview copy blocks.</p>";
+  }
+
+  const redditPost = executionPackage.reddit_post || {};
+  const launchSteps = Array.isArray(executionPackage.launch_steps) ? executionPackage.launch_steps : [];
+  const sections = [
+    { label: "Reddit title", value: helpers.t(redditPost.title, "No reddit title") },
+    { label: "Reddit body", value: helpers.t(redditPost.body, "No reddit body") },
+    { label: "Gumroad description", value: helpers.t(executionPackage.gumroad_description, "No description") },
+    { label: "Short pitch", value: helpers.t(executionPackage.short_pitch, "No short pitch") },
+    { label: "Pricing strategy", value: helpers.t(executionPackage.pricing_strategy, "No pricing strategy") },
+    { label: "Launch steps", value: launchSteps.length ? launchSteps.map((step) => `• ${step}`).join("\n") : "No launch steps" },
+  ];
+
+  return `
+    <p class="muted-note">Previewing proposal: <strong>${helpers.escape(proposalId)}</strong></p>
+    <div class="work-copy-grid">
+      ${sections.map((section) => `
+        <article class="copy-block">
+          <header>
+            <h4>${section.label}</h4>
+            <button class="secondary-btn" data-action="copy-package-block" data-id="${helpers.escape(proposalId)}" data-copy-value="${encodeURIComponent(section.value)}">Copy</button>
+          </header>
+          <pre>${helpers.escape(section.value)}</pre>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderPlanPreview(proposalId, plan) {
+  if (!proposalId) return "<p class='empty'>Select “View plan” on any proposal to load plan details.</p>";
+  if (!plan) return `<p class='empty'>No plan yet for proposal ${helpers.escape(proposalId)}.</p>`;
+
+  const renderList = (items) => {
+    if (!Array.isArray(items) || items.length === 0) return "<p class='empty'>No entries.</p>";
+    return `<ul>${items.map((item) => `<li>${helpers.escape(item)}</li>`).join("")}</ul>`;
+  };
+
+  return `
+    <p class="muted-note">Plan for proposal: <strong>${helpers.escape(proposalId)}</strong></p>
+    <div class="plan-grid">
+      <section>
+        <h4>Outline</h4>
+        <pre>${helpers.escape(helpers.t(plan.outline, "No outline"))}</pre>
+      </section>
+      <section>
+        <h4>Deliverables</h4>
+        ${renderList(plan.deliverables)}
+      </section>
+      <section>
+        <h4>Build steps</h4>
+        ${renderList(plan.build_steps)}
+      </section>
+      <section>
+        <h4>Launch plan</h4>
+        ${renderList(plan.launch_plan)}
+      </section>
+    </div>
+  `;
 }
 
 function bindDashboardActions() {
