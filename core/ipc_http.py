@@ -9,6 +9,7 @@ from core.bus import event_bus
 from core.integrations.gumroad_client import GumroadAPIError, GumroadClient
 from core.gumroad_oauth import exchange_code_for_token, get_auth_url, load_token, save_token
 from core.services.gumroad_sync_service import GumroadSyncService
+from core.system_integrity import compute_system_integrity
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -134,6 +135,41 @@ class Handler(BaseHTTPRequestHandler):
             if self.autonomy_policy_engine is None:
                 return self._send(503, {"error": "autonomy_policy_engine_unavailable"})
             return self._send(200, self.autonomy_policy_engine.adaptive_status())
+
+        if parsed.path == "/system/integrity":
+            if self.product_proposal_store is None:
+                return self._send(503, {"error": "product_proposal_store_unavailable"})
+            if self.product_plan_store is None:
+                return self._send(503, {"error": "product_plan_store_unavailable"})
+            if self.product_launch_store is None:
+                return self._send(503, {"error": "product_launch_store_unavailable"})
+
+            try:
+                proposals = self.product_proposal_store.list()
+            except Exception:
+                proposals = []
+
+            try:
+                plans = self.product_plan_store.list(limit=10000)
+            except TypeError:
+                try:
+                    plans = self.product_plan_store.list()
+                except Exception:
+                    plans = []
+            except Exception:
+                plans = []
+
+            try:
+                launches = self.product_launch_store.list()
+            except Exception:
+                launches = []
+
+            report = compute_system_integrity(
+                proposals=proposals,
+                plans=plans,
+                launches=launches,
+            )
+            return self._send(200, report)
 
         if parsed.path.startswith("/product_launches/"):
             if self.product_launch_store is None:
