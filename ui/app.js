@@ -11,6 +11,11 @@ const STORAGE_KEYS = {
   profile: "treta.profile",
 };
 
+const ACTION_TARGETS = {
+  work: "work-response",
+  settings: "settings-response",
+};
+
 const state = {
   system: { state: "IDLE" },
   events: [],
@@ -222,6 +227,7 @@ const views = {
         <article class="card"><h3>Product Launches (latest 10)</h3>${launches}</article>
         <article class="card"><h3>Performance summary</h3>${helpers.json(state.performance)}</article>
         <article class="card"><h3>Strategy recommendations</h3>${helpers.json(state.strategy)}</article>
+        <article class="card"><h3>Action output</h3><section id="work-response" class="result-box">Ready.</section></article>
       </section>
     `);
     bindWorkActions();
@@ -291,7 +297,7 @@ const views = {
     });
 
     document.getElementById("sync-sales")?.addEventListener("click", async () => {
-      await runAction(async () => api.fetchJson("/gumroad/sync_sales", { method: "POST", body: JSON.stringify({}) }), "settings-response");
+      await runAction(async () => api.fetchJson("/gumroad/sync_sales", { method: "POST", body: JSON.stringify({}) }), ACTION_TARGETS.settings);
     });
 
     document.getElementById("clear-cache")?.addEventListener("click", () => {
@@ -299,7 +305,7 @@ const views = {
       state.debugMode = false;
       state.refreshMs = CONFIG.defaultRefreshMs;
       state.profile = loadProfileState();
-      document.getElementById("settings-response").textContent = "UI cache cleared.";
+      document.getElementById(ACTION_TARGETS.settings).textContent = "UI cache cleared.";
       log("system", "UI cache cleared.");
     });
   },
@@ -396,6 +402,7 @@ function startRefreshLoop() {
 
 async function executeCommand(rawInput) {
   const input = rawInput.trim();
+  const command = input.toLowerCase();
   if (!input) return;
 
   log("user", input);
@@ -411,7 +418,7 @@ async function executeCommand(rawInput) {
       return refreshLoop();
     }
 
-    if (input === "scan") {
+    if (command === "scan") {
       const result = await api.fetchJson("/event", {
         method: "POST",
         body: JSON.stringify({ type: "RunInfoproductScan", payload: {} }),
@@ -420,19 +427,19 @@ async function executeCommand(rawInput) {
       return refreshLoop();
     }
 
-    if (input === "list opps") {
+    if (command === "list opps") {
       router.navigate("work");
       log("system", "Navigated to Work (opportunities visible).");
       return;
     }
 
-    if (input === "list proposals") {
+    if (command === "list proposals") {
       router.navigate("work");
       log("system", "Navigated to Work (proposals visible).");
       return;
     }
 
-    if (input === "sync sales") {
+    if (command === "sync sales") {
       const result = await api.fetchJson("/gumroad/sync_sales", {
         method: "POST",
         body: JSON.stringify({}),
@@ -465,7 +472,7 @@ function bindWorkActions() {
     button.addEventListener("click", async () => {
       await runAction(
         () => api.fetchJson("/opportunities/evaluate", { method: "POST", body: JSON.stringify({ id: button.dataset.id }) }),
-        "settings-response"
+        ACTION_TARGETS.work
       );
     });
   });
@@ -474,7 +481,7 @@ function bindWorkActions() {
     button.addEventListener("click", async () => {
       await runAction(
         () => api.fetchJson("/opportunities/dismiss", { method: "POST", body: JSON.stringify({ id: button.dataset.id }) }),
-        "settings-response"
+        ACTION_TARGETS.work
       );
     });
   });
@@ -482,7 +489,7 @@ function bindWorkActions() {
   ui.pageContent.querySelectorAll("button[data-action='proposal']").forEach((button) => {
     button.addEventListener("click", async () => {
       const endpoint = `/product_proposals/${button.dataset.id}/${button.dataset.transition}`;
-      await runAction(() => api.fetchJson(endpoint, { method: "POST", body: JSON.stringify({}) }), "settings-response");
+      await runAction(() => api.fetchJson(endpoint, { method: "POST", body: JSON.stringify({}) }), ACTION_TARGETS.work);
     });
   });
 
@@ -491,7 +498,7 @@ function bindWorkActions() {
       const amount = Number(window.prompt("Sale amount", "1") || "0");
       await runAction(
         () => api.fetchJson(`/product_launches/${button.dataset.id}/add_sale`, { method: "POST", body: JSON.stringify({ amount }) }),
-        "settings-response"
+        ACTION_TARGETS.work
       );
     });
   });
@@ -501,7 +508,7 @@ function bindWorkActions() {
       const status = (window.prompt("New status", "active") || "").trim();
       await runAction(
         () => api.fetchJson(`/product_launches/${button.dataset.id}/status`, { method: "POST", body: JSON.stringify({ status }) }),
-        "settings-response"
+        ACTION_TARGETS.work
       );
     });
   });
