@@ -123,11 +123,18 @@ const helpers = {
       .replaceAll("<", "&lt;")
       .replaceAll(">", "&gt;");
   },
+  normalizeStatus(status) {
+    return String(status || "").toLowerCase();
+  },
   badgeClass(status) {
-    const value = String(status || "").toLowerCase();
-    if (["launched", "approved", "active", "completed", "ready"].includes(value)) return "ok";
+    const value = this.normalizeStatus(status);
+    if (["launched", "approved", "active", "completed", "ready", "ready_to_launch"].includes(value)) return "ok";
     if (["rejected", "dismissed", "archived", "failed", "error"].includes(value)) return "error";
+    if (["building", "in_progress", "draft", "ready_for_review"].includes(value)) return "info";
     return "warn";
+  },
+  statusLabel(status) {
+    return this.normalizeStatus(status).replaceAll("_", " ") || "pending";
   },
 };
 
@@ -182,51 +189,152 @@ const views = {
   },
 
   loadWork() {
+    const opportunitiesCount = state.opportunities.length;
+    const proposalStatuses = state.proposals.reduce((acc, item) => {
+      const status = helpers.normalizeStatus(item.status);
+      acc[status] = (acc[status] || 0) + 1;
+      return acc;
+    }, {});
+    const proposalsDraft = proposalStatuses.draft || 0;
+    const proposalsReady = (proposalStatuses.ready_to_launch || 0) + (proposalStatuses.ready_for_review || 0);
+    const buildsInProgress = proposalStatuses.building || 0;
+    const launchedProducts = state.launches.filter((item) => helpers.normalizeStatus(item.status) === "launched").length;
+
+    const recommendedAction = (() => {
+      if (proposalsDraft > 0) {
+        return {
+          title: "Move proposals into build",
+          body: "You have draft proposals waiting for approval. Promote the strongest draft to start execution.",
+          cta: "Review draft proposals",
+        };
+      }
+      if (proposalsReady > 0) {
+        return {
+          title: "Launch ready products",
+          body: "Some builds are marked ready. Launch them now to start collecting market feedback.",
+          cta: "Launch ready products",
+        };
+      }
+      return {
+        title: "Scan for new opportunities",
+        body: "Pipeline is quiet. Run a fresh scan to feed new opportunities into the workflow.",
+        cta: "Run opportunity scan",
+      };
+    })();
+
+    const transitionConfig = {
+      draft: [{ transition: "approve", label: "Move to Build" }, { transition: "reject", label: "Reject" }],
+      approved: [{ transition: "start_build", label: "Start Build" }, { transition: "archive", label: "Archive" }],
+      building: [{ transition: "ready", label: "Mark Ready" }],
+      ready_to_launch: [{ transition: "launch", label: "Launch Product" }],
+      ready_for_review: [{ transition: "launch", label: "Launch Product" }],
+      launched: [{ transition: "archive", label: "Archive" }],
+      rejected: [{ transition: "archive", label: "Archive" }],
+      archived: [],
+    };
+
     const opportunities = state.opportunities.slice(0, 10).map((item) => `
       <article class="card row-item">
         <h4>${helpers.t(item.title, item.id)}</h4>
-        <p>source: ${helpers.t(item.source, "-")} · status: ${helpers.t(item.status || item.decision, "pending")}</p>
+        <p><span class="badge ${helpers.badgeClass(item.status || item.decision)}">${helpers.t(item.status || item.decision, "pending")}</span>source: ${helpers.t(item.source, "-")}</p>
         <div class="card-actions">
-          <button data-action="eval-opp" data-id="${item.id}">Evaluate</button>
-          <button data-action="dismiss-opp" data-id="${item.id}">Dismiss</button>
+          <button data-action="eval-opp" data-id="${item.id}">Evaluate Opportunity</button>
+          <button data-action="dismiss-opp" data-id="${item.id}">Dismiss Opportunity</button>
         </div>
       </article>
-    `).join("") || "<p class='empty'>No opportunities.</p>";
+    `).join("") || "<p class='empty'>No opportunities yet. Run a scan to discover new ideas.</p>";
 
-    const proposals = state.proposals.slice(0, 10).map((item) => `
-      <article class="card row-item">
-        <h4>${helpers.t(item.product_name, item.id)}</h4>
-        <p>
-          <span class="badge ${helpers.badgeClass(item.status)}">${helpers.t(item.status, "pending")}</span>
-          confidence: ${helpers.t(item.confidence, "-")} · price: ${helpers.t(item.price_suggestion, "-")}
-        </p>
-        <div class="card-actions wrap">
-          ${["approve", "reject", "start_build", "ready", "launch", "archive"].map((action) => `<button data-action="proposal" data-transition="${action}" data-id="${item.id}">${action}</button>`).join("")}
-        </div>
-      </article>
-    `).join("") || "<p class='empty'>No proposals.</p>";
+    const proposals = state.proposals.slice(0, 10).map((item) => {
+      const status = helpers.normalizeStatus(item.status);
+      const actions = (transitionConfig[status] || []).map((action) => (
+        `<button data-action="proposal" data-transition="${action.transition}" data-id="${item.id}">${action.label}</button>`
+      )).join("");
+
+      return `
+        <article class="card row-item">
+          <h4>${helpers.t(item.product_name, item.id)}</h4>
+          <p>
+            <span class="badge ${helpers.badgeClass(item.status)}">${helpers.statusLabel(item.status)}</span>
+            confidence: ${helpers.t(item.confidence, "-")} · price: ${helpers.t(item.price_suggestion, "-")}
+          </p>
+          <div class="card-actions wrap">
+            ${actions || "<span class='empty'>No lifecycle actions available.</span>"}
+          </div>
+        </article>
+      `;
+    }).join("") || "<p class='empty'>No proposals yet. Evaluate opportunities to create proposals.</p>";
+
+    const builds = state.proposals
+      .filter((item) => ["approved", "building", "ready_to_launch", "ready_for_review"].includes(helpers.normalizeStatus(item.status)))
+      .slice(0, 10)
+      .map((item) => `
+        <article class="card row-item">
+          <h4>${helpers.t(item.product_name, item.id)}</h4>
+          <p><span class="badge ${helpers.badgeClass(item.status)}">${helpers.statusLabel(item.status)}</span> updated: ${helpers.t(item.updated_at, "-")}</p>
+        </article>
+      `).join("") || "<p class='empty'>No builds in progress. Move approved proposals to build.</p>";
 
     const launches = state.launches.slice(0, 10).map((item) => `
       <article class="card row-item">
         <h4>${helpers.t(item.product_name, item.id)}</h4>
         <p>
-          <span class="badge ${helpers.badgeClass(item.status)}">${helpers.t(item.status, "queued")}</span>
+          <span class="badge ${helpers.badgeClass(item.status)}">${helpers.statusLabel(item.status || "queued")}</span>
           sales: ${helpers.t(item.metrics?.sales, 0)} · revenue: ${helpers.t(item.metrics?.revenue, 0)}
         </p>
         <div class="card-actions">
-          <button data-action="launch-sale" data-id="${item.id}">add_sale</button>
-          <button data-action="launch-status" data-id="${item.id}">status</button>
+          <button data-action="launch-sale" data-id="${item.id}">Record Sale</button>
+          <button data-action="launch-status" data-id="${item.id}">Update Status</button>
         </div>
       </article>
-    `).join("") || "<p class='empty'>No launches.</p>";
+    `).join("") || "<p class='empty'>No launches yet. Launch a ready product to populate this section.</p>";
 
-    this.shell("Work", "Operaciones y lifecycle", `
-      <section class="stack">
-        <article class="card"><h3>Opportunities (last 10)</h3>${opportunities}</article>
-        <article class="card"><h3>Product Proposals (latest 10)</h3>${proposals}</article>
-        <article class="card"><h3>Product Launches (latest 10)</h3>${launches}</article>
-        <article class="card"><h3>Performance summary</h3>${helpers.json(state.performance)}</article>
-        <article class="card"><h3>Strategy recommendations</h3>${helpers.json(state.strategy)}</article>
+    this.shell("Work", "Execution pipeline with guided lifecycle", `
+      <section class="stack work-stack">
+        <article class="card pipeline-summary">
+          <h3>Pipeline Summary</h3>
+          <div class="pipeline-flow">
+            <div class="pipeline-step"><span>Opportunities</span><strong>${opportunitiesCount}</strong></div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-step"><span>Proposals</span><strong>${proposalsDraft} draft · ${proposalsReady} ready</strong></div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-step"><span>Builds</span><strong>${buildsInProgress} in progress</strong></div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-step"><span>Launched</span><strong>${launchedProducts}</strong></div>
+          </div>
+        </article>
+
+        <article class="card recommendation-card">
+          <h3>Recommended Action</h3>
+          <h4>${recommendedAction.title}</h4>
+          <p>${recommendedAction.body}</p>
+          <div class="recommendation-cta">${recommendedAction.cta}</div>
+        </article>
+
+        <details class="card accordion" open>
+          <summary>Opportunities <span class="helper">Validate market demand before proposing products.</span></summary>
+          ${opportunities}
+        </details>
+
+        <details class="card accordion" open>
+          <summary>Proposals <span class="helper">Convert ideas into decisions and move them through lifecycle gates.</span></summary>
+          ${proposals}
+        </details>
+
+        <details class="card accordion" open>
+          <summary>Builds <span class="helper">Track approved and actively built products.</span></summary>
+          ${builds}
+        </details>
+
+        <details class="card accordion" open>
+          <summary>Launches <span class="helper">Operate live products and monitor outcomes.</span></summary>
+          ${launches}
+        </details>
+
+        <details class="card accordion">
+          <summary>Performance <span class="helper">Review output signals to steer the next cycle.</span></summary>
+          ${helpers.json(state.performance)}
+        </details>
+
         <article class="card"><h3>Action output</h3><section id="work-response" class="result-box">Ready.</section></article>
       </section>
     `);
@@ -418,7 +526,7 @@ async function executeCommand(rawInput) {
       return refreshLoop();
     }
 
-    if (command === "scan") {
+    if (command === "scan" || command.includes("scan")) {
       const result = await api.fetchJson("/event", {
         method: "POST",
         body: JSON.stringify({ type: "RunInfoproductScan", payload: {} }),
@@ -427,19 +535,19 @@ async function executeCommand(rawInput) {
       return refreshLoop();
     }
 
-    if (command === "list opps") {
+    if (command === "list opps" || command.includes("opportun")) {
       router.navigate("work");
       log("system", "Navigated to Work (opportunities visible).");
       return;
     }
 
-    if (command === "list proposals") {
+    if (command === "list proposals" || command.includes("proposal")) {
       router.navigate("work");
       log("system", "Navigated to Work (proposals visible).");
       return;
     }
 
-    if (command === "sync sales") {
+    if (command === "sync sales" || (command.includes("sync") && command.includes("sale"))) {
       const result = await api.fetchJson("/gumroad/sync_sales", {
         method: "POST",
         body: JSON.stringify({}),
@@ -448,7 +556,7 @@ async function executeCommand(rawInput) {
       return refreshLoop();
     }
 
-    log("system", "Unknown command. Supported: scan, list opps, list proposals, sync sales, JSON payload.");
+    log("system", "Unknown request. Try: 'scan for opportunities', 'show opportunities', 'show proposals', 'sync sales', or paste JSON.");
   } catch (error) {
     log("system", `command error: ${error.message}`);
   }
