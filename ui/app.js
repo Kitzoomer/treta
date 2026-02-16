@@ -196,9 +196,61 @@ const views = {
     const proposalsCount = state.proposals.length;
     const buildsCount = state.proposals.filter((item) => ["approved", "building", "ready_to_launch", "ready_for_review"].includes(helpers.normalizeStatus(item.status))).length;
     const launchedProducts = state.launches.filter((item) => helpers.normalizeStatus(item.status) === "launched").length;
+    const activeLaunches = state.launches.filter((item) => helpers.normalizeStatus(item.status) === "active").length;
     const readyToLaunch = (proposalsByStatus.ready_to_launch || 0) + (proposalsByStatus.ready_for_review || 0);
     const draftCount = proposalsByStatus.draft || 0;
+    const approvedCount = proposalsByStatus.approved || 0;
+    const buildsInProgress = proposalsByStatus.building || 0;
     const alertsCount = state.events.filter((event) => ["error", "failed", "warning"].some((keyword) => helpers.normalizeStatus(event.type).includes(keyword))).length;
+    const scanningCount = draftCount + (proposalsByStatus.ready_for_review || 0);
+
+    const systemMode = (() => {
+      if (activeLaunches > 0) return "LAUNCHING";
+      if (approvedCount > 0 || buildsInProgress > 0) return "BUILDING";
+      if (scanningCount > 0) return "SCANNING";
+      return "IDLE";
+    })();
+
+    const primaryAction = (() => {
+      if (opportunitiesCount === 0) {
+        return {
+          key: "scan",
+          buttonLabel: "Run Opportunity Scan",
+          helperText: "No opportunities are in the pipeline. Run a scan to discover new ideas.",
+          disabled: false,
+        };
+      }
+      if (scanningCount > 0) {
+        return {
+          key: "review",
+          buttonLabel: "Review Draft Proposals",
+          helperText: "Drafts or items ready for review are pending your decision before execution.",
+          disabled: false,
+        };
+      }
+      if (approvedCount > 0 && buildsInProgress === 0 && readyToLaunch === 0) {
+        return {
+          key: "start-build",
+          buttonLabel: "Start Build",
+          helperText: "Approved proposals are ready to move into active build state.",
+          disabled: false,
+        };
+      }
+      if (readyToLaunch > 0) {
+        return {
+          key: "launch",
+          buttonLabel: "Launch Product",
+          helperText: "You have build output ready to launch and validate in market.",
+          disabled: false,
+        };
+      }
+      return {
+        key: "ready",
+        buttonLabel: "System Ready",
+        helperText: "Pipeline is aligned. No immediate action is required.",
+        disabled: true,
+      };
+    })();
 
     const recommendation = (() => {
       if (readyToLaunch > 0) {
@@ -227,6 +279,20 @@ const views = {
 
     this.shell("Dashboard", "Operational summary and next best action", `
       <section class="stack">
+        <article class="card system-mode-card">
+          <h3>System Mode</h3>
+          <div class="system-mode-badge ${helpers.badgeClass(systemMode)}">${systemMode}</div>
+          <p class="system-mode-helper">Derived from live opportunities, proposals, builds, and launches.</p>
+        </article>
+
+        <article class="card primary-action-card">
+          <h3>Primary Action</h3>
+          <p>${primaryAction.helperText}</p>
+          <div class="card-actions">
+            <button class="primary-action-btn" data-action="dashboard-primary" data-primary-action="${primaryAction.key}" ${primaryAction.disabled ? "disabled" : ""}>${primaryAction.buttonLabel}</button>
+          </div>
+        </article>
+
         <section class="card-grid cols-2">
           <article class="card">
             <h3>System state</h3>
@@ -272,6 +338,7 @@ const views = {
         </article>
       </section>
     `);
+    bindDashboardActions();
   },
 
   loadWork() {
@@ -704,6 +771,26 @@ function bindWorkActions() {
         () => api.fetchJson(`/product_launches/${button.dataset.id}/status`, { method: "POST", body: JSON.stringify({ status }) }),
         ACTION_TARGETS.work
       );
+    });
+  });
+}
+
+function bindDashboardActions() {
+  ui.pageContent.querySelectorAll("button[data-action='dashboard-primary']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const action = button.dataset.primaryAction;
+      if (action === "scan") {
+        await runAction(
+          () => api.fetchJson("/event", { method: "POST", body: JSON.stringify({ type: "RunInfoproductScan", payload: {} }) }),
+          ACTION_TARGETS.work
+        );
+        return;
+      }
+
+      if (["review", "start-build", "launch"].includes(action)) {
+        router.navigate("work");
+        log("system", "Navigated to Work to complete the recommended action.");
+      }
     });
   });
 }
