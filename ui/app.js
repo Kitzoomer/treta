@@ -602,85 +602,109 @@ const views = {
     const recommendation = strategyView.recommendation || {};
     const autonomyStatus = strategyView.autonomyStatus || {};
     const adaptiveStatus = strategyView.adaptiveStatus || {};
-    const healthSummary = helpers.strategyHealthSummary(pendingActions);
 
-    const groupedActions = pendingActions.reduce((acc, item) => {
-      const group = helpers.strategyGroup(item.type);
-      if (!acc[group]) acc[group] = [];
-      acc[group].push(item);
-      return acc;
-    }, { Growth: [], Optimization: [], Defensive: [] });
+    const numberOrNull = (value) => {
+      const normalized = typeof value === "string" ? value.replace("%", "") : value;
+      const parsed = Number.parseFloat(normalized);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
 
-    const pendingMarkup = strategyView.loading
-      ? "<p class='empty'>Loading pending actions…</p>"
-      : ["Growth", "Optimization", "Defensive"].map((group) => {
-        const actions = groupedActions[group] || [];
-        if (!actions.length) return "";
-        return `
-          <section class="strategy-group-block">
-            <h4 class="strategy-group-title">${group}</h4>
-            ${actions.map((item) => `
-              <article class="card row-item strategy-action-card">
-                <h4>${helpers.t(item.title, item.id)}</h4>
-                <p>
-                  <span class="badge info">Type: ${helpers.t(item.type)}</span>
-                  <span class="badge ${helpers.priorityBadgeClass(item.priority)}">Priority: ${helpers.t(item.priority, "unknown")}</span>
-                  <span class="badge ${helpers.badgeClass(item.risk_level)}">Risk: ${helpers.t(item.risk_level, "unknown")}</span>
-                </p>
-                <p>
-                  <span class="badge warn">Impact score: ${helpers.t(item.expected_impact_score, 0)}</span>
-                  ${item.auto_executable ? '<span class="badge ok">Auto-executable</span>' : ""}
-                </p>
-                <div class="card-actions wrap">
-                  <button data-action="strategy-execute" data-id="${item.id}">Execute</button>
-                  <button class="secondary-btn" data-action="strategy-reject" data-id="${item.id}">Reject</button>
-                </div>
-              </article>
-            `).join("")}
-          </section>
-        `;
-      }).join("") || "<p class='empty'>No pending strategic actions.</p>";
+    const renderAutonomyStabilityBadge = () => {
+      const successRate = numberOrNull(adaptiveStatus.success_rate ?? adaptiveStatus.current_success_rate ?? autonomyStatus.success_rate);
+      const threshold = numberOrNull(adaptiveStatus.impact_threshold ?? autonomyStatus.impact_threshold);
+
+      if (successRate === null || threshold === null) {
+        return '<span class="badge info">Learning</span>';
+      }
+
+      if (successRate > threshold) {
+        return '<span class="badge ok">Stable</span>';
+      }
+
+      if (successRate >= threshold - 0.05) {
+        return '<span class="badge warn">Learning</span>';
+      }
+
+      return '<span class="badge error">Risk</span>';
+    };
+
+    const renderActionQueue = () => {
+      if (strategyView.loading) return "<p class='empty'>Loading pending actions…</p>";
+      if (!pendingActions.length) return "<p class='empty'>No pending actions right now. Queue is clear.</p>";
+
+      return `
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Action name</th>
+                <th>Priority</th>
+                <th>Risk</th>
+                <th>Expected impact</th>
+                <th>Auto executable</th>
+                <th>Controls</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${pendingActions.map((item) => `
+                <tr>
+                  <td>${helpers.escape(helpers.t(item.title || item.name, item.id))}</td>
+                  <td><span class="badge ${helpers.priorityBadgeClass(item.priority)}">${helpers.t(item.priority, "unknown")}</span></td>
+                  <td><span class="badge ${helpers.badgeClass(item.risk_level)}">${helpers.t(item.risk_level, "unknown")}</span></td>
+                  <td>${helpers.escape(helpers.t(item.expected_impact || item.expected_impact_score, "Not specified"))}</td>
+                  <td>${item.auto_executable ? '<span class="badge ok">Auto</span>' : '<span class="badge info">Manual</span>'}</td>
+                  <td>
+                    <div class="card-actions wrap">
+                      <button data-action="strategy-execute" data-id="${item.id}">Execute</button>
+                      <button class="secondary-btn" data-action="strategy-reject" data-id="${item.id}">Reject</button>
+                    </div>
+                  </td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      `;
+    };
 
     const strategyError = strategyView.error ? `<p class="empty">${helpers.escape(strategyView.error)}</p>` : "";
 
-    this.shell("Strategy", "Strategic decisions and autonomy controls", `
+    this.shell("Strategy", "Strategic Control Layer", `
       <section class="stack">
         <article class="card strategy-health-card">
-          <h3>Strategic Health</h3>
+          <h3>Strategic Situation</h3>
+          <p class="empty">A concise executive snapshot from the latest recommendation engine output.</p>
+          <p>
+            <span class="badge ${helpers.priorityBadgeClass(recommendation.priority_level)}">Priority ${helpers.t(recommendation.priority_level, "Unknown")}</span>
+            <span class="badge ${recommendation.auto_executable ? "ok" : "info"}">${recommendation.auto_executable ? "Auto Executable" : "Manual Review"}</span>
+          </p>
           <section class="card-grid cols-2">
-            <div class="metric"><span>Total pending actions</span><strong>${healthSummary.total}</strong></div>
-            <div class="metric"><span>High priority actions</span><strong>${healthSummary.highPriorityCount}</strong></div>
-            <div class="metric"><span>Auto-executable actions</span><strong>${healthSummary.autoExecutableCount}</strong></div>
-            <div class="metric"><span>Average impact score</span><strong>${healthSummary.averageImpactScore.toFixed(2)}</strong></div>
+            <div class="metric"><span>Focus area</span><strong>${helpers.t(recommendation.focus_area || recommendation.focus, "No focus area available")}</strong></div>
+            <div class="metric"><span>Risk level</span><strong>${helpers.t(recommendation.risk_level, "Risk not specified")}</strong></div>
+            <div class="metric"><span>Recommended next move</span><strong>${helpers.t(recommendation.suggested_next_move || recommendation.next_move, "No recommended move yet")}</strong></div>
+            <div class="metric"><span>Summary</span><strong>${helpers.t(recommendation.summary_text || recommendation.summary, "No summary available")}</strong></div>
           </section>
-          <p><strong>Status:</strong> ${healthSummary.status}</p>
-          <p><strong>Focus:</strong> ${helpers.t(recommendation.focus_area || recommendation.focus)}</p>
-          <p><strong>Autonomy mode:</strong> ${helpers.t(autonomyStatus.mode || autonomyStatus.autonomy_mode)}</p>
-          <p><strong>Impact threshold:</strong> ${helpers.t(adaptiveStatus.impact_threshold || autonomyStatus.impact_threshold)}</p>
         </article>
 
         <article class="card">
-          <h3>Pending Strategic Actions</h3>
+          <h3>Action Queue</h3>
           ${strategyError}
-          ${pendingMarkup}
+          ${renderActionQueue()}
           <section id="strategy-response" class="result-box">Ready.</section>
         </article>
 
-        <article class="card recommendation-card">
-          <h3>Strategy Recommendation</h3>
-          <p><strong>Focus area:</strong> ${helpers.t(recommendation.focus_area)}</p>
-          <p><strong>Summary:</strong> ${helpers.t(recommendation.summary_text || recommendation.summary)}</p>
-          <p><strong>Priority level:</strong> ${helpers.t(recommendation.priority_level)}</p>
-          <p><strong>Suggested next move:</strong> ${helpers.t(recommendation.suggested_next_move)}</p>
-        </article>
-
         <article class="card">
-          <h3>Autonomy Status</h3>
+          <h3>Autonomy Engine</h3>
+          <p>
+            <strong>Derived status:</strong>
+            ${renderAutonomyStabilityBadge()}
+          </p>
           <section class="card-grid cols-2">
-            <div class="metric"><span>Autonomy mode</span><strong>${helpers.t(autonomyStatus.mode || autonomyStatus.autonomy_mode)}</strong></div>
+            <div class="metric"><span>Current mode</span><strong>${helpers.t(autonomyStatus.mode || autonomyStatus.autonomy_mode, "Unknown mode")}</strong></div>
+            <div class="metric"><span>Success rate</span><strong>${helpers.t(adaptiveStatus.success_rate || adaptiveStatus.current_success_rate || autonomyStatus.success_rate, "No data")}</strong></div>
             <div class="metric"><span>Max auto executions/day</span><strong>${helpers.t(autonomyStatus.max_auto_executions_per_day)}</strong></div>
-            <div class="metric"><span>Impact threshold</span><strong>${helpers.t(autonomyStatus.impact_threshold)}</strong></div>
-            <div class="metric"><span>Current success rate</span><strong>${helpers.t(adaptiveStatus.current_success_rate || adaptiveStatus.success_rate)}</strong></div>
+            <div class="metric"><span>Impact threshold</span><strong>${helpers.t(adaptiveStatus.impact_threshold || autonomyStatus.impact_threshold, "No threshold")}</strong></div>
+            <div class="metric"><span>Executions today</span><strong>${helpers.t(autonomyStatus.executions_today || autonomyStatus.auto_executions_today || adaptiveStatus.executions_today, "Not available")}</strong></div>
           </section>
         </article>
       </section>
