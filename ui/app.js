@@ -161,6 +161,53 @@ const helpers = {
   statusLabel(status) {
     return this.normalizeStatus(status).replaceAll("_", " ") || "pending";
   },
+  normalizeActionType(type) {
+    return this.normalizeStatus(type).replaceAll("-", "_");
+  },
+  priorityBadgeClass(priority) {
+    const value = this.normalizeStatus(priority);
+    if (value === "high") return "error";
+    if (value === "medium") return "warn";
+    if (value === "low") return "ok";
+    return "info";
+  },
+  strategyGroup(type) {
+    const normalized = this.normalizeActionType(type);
+    if (["scale", "new_product"].includes(normalized)) return "Growth";
+    if (["review", "price_test"].includes(normalized)) return "Optimization";
+    if (normalized.includes("risk") || normalized.includes("defense") || normalized.includes("defensive")) return "Defensive";
+    return "Defensive";
+  },
+  actionImpactScore(action) {
+    const value = Number(action?.expected_impact_score);
+    return Number.isFinite(value) ? value : 0;
+  },
+  strategyHealthSummary(pendingActions) {
+    const actions = pendingActions || [];
+    const total = actions.length;
+    const highPriorityCount = actions.filter((item) => this.normalizeStatus(item.priority) === "high").length;
+    const mediumPriorityCount = actions.filter((item) => this.normalizeStatus(item.priority) === "medium").length;
+    const lowPriorityCount = actions.filter((item) => this.normalizeStatus(item.priority) === "low").length;
+    const autoExecutableCount = actions.filter((item) => Boolean(item.auto_executable)).length;
+    const averageImpactScore = total
+      ? actions.reduce((sum, item) => sum + this.actionImpactScore(item), 0) / total
+      : 0;
+
+    let status = "Stable";
+    if (highPriorityCount > Math.max(mediumPriorityCount, lowPriorityCount)) {
+      status = "Aggressive";
+    } else if (mediumPriorityCount > highPriorityCount && mediumPriorityCount >= lowPriorityCount) {
+      status = "Defensive";
+    }
+
+    return {
+      total,
+      highPriorityCount,
+      autoExecutableCount,
+      averageImpactScore,
+      status,
+    };
+  },
 };
 
 const router = {
@@ -555,31 +602,63 @@ const views = {
     const recommendation = strategyView.recommendation || {};
     const autonomyStatus = strategyView.autonomyStatus || {};
     const adaptiveStatus = strategyView.adaptiveStatus || {};
+    const healthSummary = helpers.strategyHealthSummary(pendingActions);
+
+    const groupedActions = pendingActions.reduce((acc, item) => {
+      const group = helpers.strategyGroup(item.type);
+      if (!acc[group]) acc[group] = [];
+      acc[group].push(item);
+      return acc;
+    }, { Growth: [], Optimization: [], Defensive: [] });
 
     const pendingMarkup = strategyView.loading
       ? "<p class='empty'>Loading pending actions…</p>"
-      : pendingActions.map((item) => `
-        <article class="card row-item">
-          <h4>${helpers.t(item.title, item.id)}</h4>
-          <p>
-            <span class="badge info">Type: ${helpers.t(item.type)}</span>
-            <span class="badge ${helpers.badgeClass(item.risk_level)}">Risk: ${helpers.t(item.risk_level, "unknown")}</span>
-          </p>
-          <p>
-            <span class="badge warn">Impact: ${helpers.t(item.expected_impact_score, 0)}</span>
-            <span class="badge ${item.auto_executable ? "ok" : "warn"}">Auto executable: ${item.auto_executable ? "Yes" : "No"}</span>
-          </p>
-          <div class="card-actions wrap">
-            <button data-action="strategy-execute" data-id="${item.id}">Execute</button>
-            <button class="secondary-btn" data-action="strategy-reject" data-id="${item.id}">Reject</button>
-          </div>
-        </article>
-      `).join("") || "<p class='empty'>No pending strategic actions.</p>";
+      : ["Growth", "Optimization", "Defensive"].map((group) => {
+        const actions = groupedActions[group] || [];
+        if (!actions.length) return "";
+        return `
+          <section class="strategy-group-block">
+            <h4 class="strategy-group-title">${group}</h4>
+            ${actions.map((item) => `
+              <article class="card row-item strategy-action-card">
+                <h4>${helpers.t(item.title, item.id)}</h4>
+                <p>
+                  <span class="badge info">Type: ${helpers.t(item.type)}</span>
+                  <span class="badge ${helpers.priorityBadgeClass(item.priority)}">Priority: ${helpers.t(item.priority, "unknown")}</span>
+                  <span class="badge ${helpers.badgeClass(item.risk_level)}">Risk: ${helpers.t(item.risk_level, "unknown")}</span>
+                </p>
+                <p>
+                  <span class="badge warn">Impact score: ${helpers.t(item.expected_impact_score, 0)}</span>
+                  ${item.auto_executable ? '<span class="badge ok">Auto-executable</span>' : ""}
+                </p>
+                <div class="card-actions wrap">
+                  <button data-action="strategy-execute" data-id="${item.id}">Execute</button>
+                  <button class="secondary-btn" data-action="strategy-reject" data-id="${item.id}">Reject</button>
+                </div>
+              </article>
+            `).join("")}
+          </section>
+        `;
+      }).join("") || "<p class='empty'>No pending strategic actions.</p>";
 
     const strategyError = strategyView.error ? `<p class="empty">${helpers.escape(strategyView.error)}</p>` : "";
 
     this.shell("Strategy", "Strategic decisions and autonomy controls", `
       <section class="stack">
+        <article class="card strategy-health-card">
+          <h3>Strategic Health</h3>
+          <section class="card-grid cols-2">
+            <div class="metric"><span>Total pending actions</span><strong>${healthSummary.total}</strong></div>
+            <div class="metric"><span>High priority actions</span><strong>${healthSummary.highPriorityCount}</strong></div>
+            <div class="metric"><span>Auto-executable actions</span><strong>${healthSummary.autoExecutableCount}</strong></div>
+            <div class="metric"><span>Average impact score</span><strong>${healthSummary.averageImpactScore.toFixed(2)}</strong></div>
+          </section>
+          <p><strong>Status:</strong> ${healthSummary.status}</p>
+          <p><strong>Focus:</strong> ${helpers.t(recommendation.focus_area || recommendation.focus)}</p>
+          <p><strong>Autonomy mode:</strong> ${helpers.t(autonomyStatus.mode || autonomyStatus.autonomy_mode)}</p>
+          <p><strong>Impact threshold:</strong> ${helpers.t(adaptiveStatus.impact_threshold || autonomyStatus.impact_threshold)}</p>
+        </article>
+
         <article class="card">
           <h3>Pending Strategic Actions</h3>
           ${strategyError}
