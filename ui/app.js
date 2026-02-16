@@ -184,8 +184,6 @@ const views = {
   },
 
   loadDashboard() {
-    const latestDecision = state.proposals[0];
-    const latestLaunch = state.launches[0];
     const proposalsByStatus = state.proposals.reduce((acc, item) => {
       const status = helpers.normalizeStatus(item.status);
       acc[status] = (acc[status] || 0) + 1;
@@ -193,15 +191,12 @@ const views = {
     }, {});
 
     const opportunitiesCount = state.opportunities.length;
-    const proposalsCount = state.proposals.length;
     const buildsCount = state.proposals.filter((item) => ["approved", "building", "ready_to_launch", "ready_for_review"].includes(helpers.normalizeStatus(item.status))).length;
-    const launchedProducts = state.launches.filter((item) => helpers.normalizeStatus(item.status) === "launched").length;
     const activeLaunches = state.launches.filter((item) => helpers.normalizeStatus(item.status) === "active").length;
     const readyToLaunch = (proposalsByStatus.ready_to_launch || 0) + (proposalsByStatus.ready_for_review || 0);
     const draftCount = proposalsByStatus.draft || 0;
     const approvedCount = proposalsByStatus.approved || 0;
     const buildsInProgress = proposalsByStatus.building || 0;
-    const alertsCount = state.events.filter((event) => ["error", "failed", "warning"].some((keyword) => helpers.normalizeStatus(event.type).includes(keyword))).length;
     const scanningCount = draftCount + (proposalsByStatus.ready_for_review || 0);
 
     const systemMode = (() => {
@@ -216,126 +211,98 @@ const views = {
         return {
           key: "scan",
           buttonLabel: "Run Opportunity Scan",
-          helperText: "No opportunities are in the pipeline. Run a scan to discover new ideas.",
-          disabled: false,
         };
       }
-      if (scanningCount > 0) {
+      if (draftCount > 0) {
         return {
           key: "review",
-          buttonLabel: "Review Draft Proposals",
-          helperText: "Drafts or items ready for review are pending your decision before execution.",
-          disabled: false,
+          buttonLabel: "Review Drafts",
         };
       }
-      if (approvedCount > 0 && buildsInProgress === 0 && readyToLaunch === 0) {
+      if (approvedCount > 0) {
         return {
           key: "start-build",
           buttonLabel: "Start Build",
-          helperText: "Approved proposals are ready to move into active build state.",
-          disabled: false,
         };
       }
       if (readyToLaunch > 0) {
         return {
           key: "launch",
           buttonLabel: "Launch Product",
-          helperText: "You have build output ready to launch and validate in market.",
-          disabled: false,
         };
       }
       return {
-        key: "ready",
-        buttonLabel: "System Ready",
-        helperText: "Pipeline is aligned. No immediate action is required.",
-        disabled: true,
+        key: "scan",
+        buttonLabel: "Run Opportunity Scan",
       };
     })();
 
-    const recommendation = (() => {
-      if (readyToLaunch > 0) {
-        return {
-          title: "Launch products already marked ready",
-          body: `${readyToLaunch} proposal(s) can be launched now to validate demand and convert momentum into revenue.`,
-        };
+    const strategicFocus = (() => {
+      if (activeLaunches > 0) return "Monitoring live launches.";
+      if (buildsInProgress > 0 || readyToLaunch > 0) return "Shipping current builds.";
+      if (draftCount > 0) return "Converting drafts into products.";
+      return "Acquiring new opportunities.";
+    })();
+
+    const systemHealth = (() => {
+      if (opportunitiesCount === 0 && draftCount === 0 && buildsCount === 0) {
+        return { label: "Critical", tone: "error" };
       }
-      if (draftCount > 0) {
-        return {
-          title: "Review and approve draft proposals",
-          body: `${draftCount} draft proposal(s) are waiting for a decision and can unblock the build queue.`,
-        };
+      if (draftCount > 0 && buildsCount === 0) {
+        return { label: "Attention Needed", tone: "warn" };
       }
-      if (opportunitiesCount === 0) {
-        return {
-          title: "Run a new opportunity scan",
-          body: "No opportunities are available yet. Trigger a scan from chat to refill the pipeline.",
-        };
-      }
-      return {
-        title: "Keep builds moving",
-        body: "Pipeline is healthy. Prioritize items in building to keep launch cadence consistent.",
-      };
+      return { label: "Healthy", tone: "ok" };
+    })();
+
+    const modeHelper = (() => {
+      if (systemMode === "LAUNCHING") return "Launches are active and being monitored.";
+      if (systemMode === "BUILDING") return "Products are moving through build execution.";
+      if (systemMode === "SCANNING") return "Opportunity discovery and proposal review are in progress.";
+      return "No active pipeline movement detected.";
     })();
 
     this.shell("Dashboard", "Operational summary and next best action", `
-      <section class="stack">
-        <article class="card system-mode-card">
+      <section class="os-dashboard">
+        <article class="card os-system-mode">
           <h3>System Mode</h3>
           <div class="system-mode-badge ${helpers.badgeClass(systemMode)}">${systemMode}</div>
-          <p class="system-mode-helper">Derived from live opportunities, proposals, builds, and launches.</p>
+          <p class="system-mode-helper">${modeHelper}</p>
         </article>
 
-        <article class="card primary-action-card">
+        <article class="card os-primary-action">
           <h3>Primary Action</h3>
-          <p>${primaryAction.helperText}</p>
-          <div class="card-actions">
-            <button class="primary-action-btn" data-action="dashboard-primary" data-primary-action="${primaryAction.key}" ${primaryAction.disabled ? "disabled" : ""}>${primaryAction.buttonLabel}</button>
-          </div>
+          <button class="primary-action-btn" data-action="dashboard-primary" data-primary-action="${primaryAction.key}">${primaryAction.buttonLabel}</button>
+          <p>Treta recommends this as your next highest-leverage action.</p>
         </article>
 
-        <section class="card-grid cols-2">
+        <article class="card os-strategic-focus">
+          <h3>Strategic Focus</h3>
+          <p>${strategicFocus}</p>
+        </article>
+
+        <article class="card os-system-health">
+          <span>System Health:</span>
+          <span class="badge ${systemHealth.tone}">${systemHealth.label}</span>
+        </article>
+
+        <section class="os-key-metrics">
           <article class="card">
-            <h3>System state</h3>
-            <div class="metric"><span>Current</span><strong>${helpers.t(state.system.state, "IDLE")}</strong></div>
+            <h3>Opportunities</h3>
+            <div class="metric"><strong>${opportunitiesCount}</strong></div>
           </article>
           <article class="card">
-            <h3>Latest decision</h3>
-            <p>${latestDecision ? `${helpers.t(latestDecision.product_name, latestDecision.id)} · ${helpers.statusLabel(latestDecision.status)}` : "No data yet."}</p>
+            <h3>Draft Proposals</h3>
+            <div class="metric"><strong>${draftCount}</strong></div>
           </article>
           <article class="card">
-            <h3>Latest launch</h3>
-            <p>${latestLaunch ? `${helpers.t(latestLaunch.product_name, latestLaunch.id)} · ${helpers.statusLabel(latestLaunch.status)}` : "No data yet."}</p>
+            <h3>Active Builds</h3>
+            <div class="metric"><strong>${buildsCount}</strong></div>
           </article>
           <article class="card">
-            <h3>Revenue summary</h3>
-            <div class="metric"><span>Total revenue</span><strong>${helpers.t(state.performance.total_revenue, 0)}</strong></div>
-            <div class="metric"><span>Total sales</span><strong>${helpers.t(state.performance.total_sales, 0)}</strong></div>
-          </article>
-          <article class="card">
-            <h3>Alerts</h3>
-            <div class="metric"><span>Recent alerts</span><strong>${alertsCount}</strong></div>
+            <h3>Total Revenue</h3>
+            <div class="metric"><strong>${helpers.t(state.performance.total_revenue, 0)}</strong></div>
           </article>
         </section>
-
-        <article class="card pipeline-summary">
-          <h3>Pipeline Summary</h3>
-          <div class="pipeline-flow">
-            <div class="pipeline-step"><span>Opportunities</span><strong>${opportunitiesCount}</strong></div>
-            <div class="pipeline-arrow">→</div>
-            <div class="pipeline-step"><span>Proposals</span><strong>${proposalsCount}</strong></div>
-            <div class="pipeline-arrow">→</div>
-            <div class="pipeline-step"><span>Builds</span><strong>${buildsCount}</strong></div>
-            <div class="pipeline-arrow">→</div>
-            <div class="pipeline-step"><span>Launched</span><strong>${launchedProducts}</strong></div>
-          </div>
-        </article>
-
-        <article class="card recommendation-card">
-          <h3>Recommended Action</h3>
-          <h4>${recommendation.title}</h4>
-          <p>${recommendation.body}</p>
-          <div class="recommendation-cta">UI heuristic based on current pipeline data</div>
-        </article>
       </section>
     `);
     bindDashboardActions();
