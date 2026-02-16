@@ -3,34 +3,55 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Treta Control Surface</title>
+    <title>Treta OS Dashboard</title>
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
     <main class="app-layout">
-      <aside class="panel panel-left">
+      <aside class="panel panel-left" aria-label="Control center">
         <header class="panel-header">
-          <h1>Treta Chat</h1>
-          <div class="system-status">
+          <h1>Control Center</h1>
+          <div class="system-status" id="system-indicator">
             <span class="status-dot" id="status-dot"></span>
-            <span id="system-status">loading...</span>
+            <span id="system-status">LISTENING</span>
           </div>
         </header>
 
-        <section id="chat-history" class="chat-history" aria-live="polite"></section>
+        <section class="control-card">
+          <h2>Chat</h2>
+          <section id="chat-history" class="chat-history" aria-live="polite"></section>
 
-        <form id="chat-form" class="chat-controls">
-          <input id="chat-input" type="text" placeholder="Type instruction... (/scan, /evaluate <id>)" autocomplete="off" />
-          <button type="submit">Execute</button>
-        </form>
+          <form id="chat-form" class="chat-controls">
+            <input id="chat-input" type="text" placeholder="Type instruction... (/scan, /evaluate <id>)" autocomplete="off" />
+            <button type="submit">Execute</button>
+          </form>
+        </section>
+
+        <section class="control-card mini-status">
+          <h2>Last event executed</h2>
+          <p id="last-event" class="last-event">No events yet.</p>
+        </section>
+
+        <section class="control-card mini-log">
+          <h2>Event stream</h2>
+          <div id="event-log" class="event-log"></div>
+        </section>
       </aside>
 
       <section class="panel panel-center">
         <div id="page-content" class="page-content"></div>
       </section>
 
-      <aside class="panel panel-right">
-        <nav id="page-nav" class="page-nav" aria-label="Main navigation"></nav>
+      <aside class="panel panel-right" aria-label="Navigation and telemetry">
+        <section class="control-card">
+          <h2>Navigation</h2>
+          <nav id="page-nav" class="page-nav" aria-label="Main navigation"></nav>
+        </section>
+
+        <section class="control-card" id="telemetry-panel">
+          <h2>Live telemetry</h2>
+          <div id="telemetry-content" class="telemetry-content"></div>
+        </section>
       </aside>
     </main>
 

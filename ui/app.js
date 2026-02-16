@@ -1,317 +1,376 @@
-const pages = [
-  { id: "home", label: "Treta (Home)", hash: "#/home" },
-  { id: "work", label: "nomorebusywork (Work)", hash: "#/work" },
-  { id: "profile", label: "Area Personal (Profile)", hash: "#/profile" },
-  { id: "game", label: "Juegos (Game)", hash: "#/game" },
-  { id: "settings", label: "Ajustes (Settings)", hash: "#/settings" },
-];
+const AppConfig = {
+  refreshIntervalMs: 20000,
+  pages: [
+    { id: "home", label: "Home", hash: "#/home" },
+    { id: "work", label: "Work", hash: "#/work" },
+    { id: "profile", label: "Profile", hash: "#/profile" },
+    { id: "game", label: "Game", hash: "#/game" },
+    { id: "settings", label: "Settings", hash: "#/settings" },
+  ],
+};
 
-const state = {
-  system: { state: "unknown" },
+const AppState = {
+  system: { state: "LISTENING" },
   events: [],
   opportunities: [],
   proposals: [],
   launches: [],
   performance: {},
-  strategy: {},
-  recommendations: [],
+  strategyRecommendations: { recommendations: [] },
+  debugMode: localStorage.getItem("treta.debug") === "true",
 };
 
-const pageContent = document.getElementById("page-content");
-const pageNav = document.getElementById("page-nav");
-const chatHistory = document.getElementById("chat-history");
-const chatForm = document.getElementById("chat-form");
-const chatInput = document.getElementById("chat-input");
-const statusDot = document.getElementById("status-dot");
-const statusText = document.getElementById("system-status");
+const UI = {
+  pageContent: document.getElementById("page-content"),
+  pageNav: document.getElementById("page-nav"),
+  chatHistory: document.getElementById("chat-history"),
+  chatForm: document.getElementById("chat-form"),
+  chatInput: document.getElementById("chat-input"),
+  statusDot: document.getElementById("status-dot"),
+  statusText: document.getElementById("system-status"),
+  eventLog: document.getElementById("event-log"),
+  lastEvent: document.getElementById("last-event"),
+  telemetry: document.getElementById("telemetry-content"),
+};
 
-function safeText(value, fallback = "-") {
-  if (value === null || value === undefined || value === "") {
-    return fallback;
-  }
-  return String(value);
-}
-
-async function requestJson(url, fallback) {
-  try {
-    const response = await fetch(url);
-    if (!response.ok) {
+const Api = {
+  async get(url, fallback) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) return fallback;
+      return await response.json();
+    } catch (error) {
       return fallback;
     }
-    return await response.json();
-  } catch (error) {
-    return fallback;
-  }
-}
-
-function addChat(role, text) {
-  const row = document.createElement("div");
-  row.className = `chat-row ${role}`;
-  row.textContent = text;
-  chatHistory.appendChild(row);
-  chatHistory.scrollTop = chatHistory.scrollHeight;
-}
-
-function getRoute() {
-  const hash = window.location.hash || "#/home";
-  return pages.find((page) => page.hash === hash)?.id || "home";
-}
-
-function renderNav() {
-  const route = getRoute();
-  pageNav.innerHTML = "";
-
-  for (const page of pages) {
-    const button = document.createElement("button");
-    button.className = `nav-btn ${page.id === route ? "active" : ""}`;
-    button.textContent = page.label;
-    button.addEventListener("click", () => {
-      window.location.hash = page.hash;
+  },
+  async post(url, payload = {}) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
     });
-    pageNav.appendChild(button);
-  }
-}
+    if (!response.ok) {
+      throw new Error(`Request failed: ${url}`);
+    }
+    return response.json().catch(() => ({}));
+  },
+};
 
-function lastStrategicDecision() {
-  return [...state.events]
-    .reverse()
-    .find((event) => event.type === "OpportunityEvaluated" || event.type === "StrategyDecisionMade");
-}
+const Helpers = {
+  text(value, fallback = "-") {
+    if (value === null || value === undefined || value === "") return fallback;
+    return String(value);
+  },
+  route() {
+    const hash = window.location.hash || "#/home";
+    return AppConfig.pages.find((page) => page.hash === hash)?.id || "home";
+  },
+  badgeClass(rawStatus) {
+    const status = String(rawStatus || "").toLowerCase();
+    if (["launched", "approved", "running", "ok", "success", "active"].includes(status)) return "ok";
+    if (["error", "failed", "offline", "rejected"].includes(status)) return "error";
+    return "warn";
+  },
+  latestEvent() {
+    return AppState.events[0] || null;
+  },
+  latestDecision() {
+    return AppState.events.find((event) => ["StrategyDecisionMade", "OpportunityEvaluated"].includes(event.type));
+  },
+};
 
-function buildMetric(label, value) {
-  return `<div class="kv"><label>${label}</label><span>${safeText(value)}</span></div>`;
-}
+const ControlCenter = {
+  addChat(role, text) {
+    const row = document.createElement("div");
+    row.className = `chat-row ${role}`;
+    row.textContent = text;
+    UI.chatHistory.appendChild(row);
+    UI.chatHistory.scrollTop = UI.chatHistory.scrollHeight;
+  },
+  updateSystemStatus() {
+    const rawState = Helpers.text(AppState.system.state, "LISTENING");
+    const upper = rawState.toUpperCase();
+    let normalized = "LISTENING";
+    if (["RUNNING", "ACTIVE", "ONLINE"].includes(upper)) normalized = "RUNNING";
+    if (["ERROR", "FAILED", "OFFLINE"].includes(upper)) normalized = "ERROR";
 
-function renderHome() {
-  const decisionEvent = lastStrategicDecision();
-  const decisionPayload = decisionEvent?.payload?.decision || decisionEvent?.payload || {};
-  const nextScan = new Date(Date.now() + 60 * 60 * 1000).toLocaleTimeString();
-  const recommendation = state.recommendations?.recommendations?.[0] || "Monitor opportunities and keep launch cadence.";
+    UI.statusText.textContent = normalized;
+    UI.statusDot.classList.remove("status-running", "status-error");
+    if (normalized === "RUNNING") UI.statusDot.classList.add("status-running");
+    if (normalized === "ERROR") UI.statusDot.classList.add("status-error");
+  },
+  updateEventWidgets() {
+    const latest = Helpers.latestEvent();
+    UI.lastEvent.textContent = latest
+      ? `${latest.type} · ${Helpers.text(latest.timestamp, "No timestamp")}`
+      : "No events yet.";
 
-  pageContent.innerHTML = `
-    <h2 class="page-title">Treta · Home</h2>
-    <section class="card wave" aria-hidden="true"></section>
-    <section class="stats-grid">
-      ${buildMetric("Current system state", state.system.state)}
-      ${buildMetric("Last strategic decision", decisionPayload.decision || "No decisions yet")}
-      ${buildMetric("Next scan time", nextScan)}
-      ${buildMetric("Current recommendation", recommendation)}
-    </section>
-  `;
-}
-
-function renderWork() {
-  const rows = state.launches.slice(0, 10).map((launch) => {
-    const metrics = launch.metrics || {};
-    return `
-      <tr>
-        <td>${safeText(launch.product_name || launch.id)}</td>
-        <td>${safeText(launch.status)}</td>
-        <td>${safeText(launch.price || launch.price_suggestion)}</td>
-        <td>${safeText(metrics.sales, 0)}</td>
-        <td>${safeText(metrics.revenue, 0)}</td>
-        <td>${safeText(state.strategy.suggested_action || "Optimize pricing and update creatives")}</td>
-      </tr>
+    const stream = AppState.events.slice(0, 6).map((event) => {
+      const payload = typeof event.payload === "object" ? JSON.stringify(event.payload) : Helpers.text(event.payload, "{}");
+      return `<div class="event-log-item"><strong>${event.type}</strong><br>${payload.slice(0, 84)}</div>`;
+    }).join("");
+    UI.eventLog.innerHTML = stream || '<div class="event-log-item">Waiting for events…</div>';
+  },
+  updateTelemetry() {
+    UI.telemetry.innerHTML = `
+      <div class="metric"><span>Opportunities</span><strong>${AppState.opportunities.length}</strong></div>
+      <div class="metric"><span>Proposals</span><strong>${AppState.proposals.length}</strong></div>
+      <div class="metric"><span>Launches</span><strong>${AppState.launches.length}</strong></div>
+      <div class="metric"><span>Total revenue</span><strong>${Helpers.text(AppState.performance.total_revenue, 0)}</strong></div>
     `;
-  }).join("");
+  },
+};
 
-  const statuses = ["draft", "approved", "ready", "launched", "archived"];
-  const lifecycle = statuses.map((statusLabel) => {
-    const count = state.proposals.filter((proposal) => (proposal.status || "draft") === statusLabel).length;
-    return `<article class="card">${buildMetric(statusLabel, count)}</article>`;
-  }).join("");
+const Navigation = {
+  render() {
+    const route = Helpers.route();
+    UI.pageNav.innerHTML = "";
+    for (const page of AppConfig.pages) {
+      const button = document.createElement("button");
+      button.className = `nav-btn ${page.id === route ? "active" : ""}`;
+      button.textContent = page.label;
+      button.addEventListener("click", () => {
+        window.location.hash = page.hash;
+      });
+      UI.pageNav.appendChild(button);
+    }
+  },
+};
 
-  pageContent.innerHTML = `
-    <h2 class="page-title">nomorebusywork · Work</h2>
-    <section class="card">
-      <h3>Product Overview</h3>
-      <div class="table-wrap">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>product_name</th><th>status</th><th>price</th><th>sales</th><th>revenue</th><th>recommended_action</th>
-            </tr>
-          </thead>
-          <tbody>${rows || '<tr><td colspan="6">No products available.</td></tr>'}</tbody>
-        </table>
-      </div>
+const Views = {
+  frame(title, subtitle, body) {
+    UI.pageContent.innerHTML = `
+      <header class="page-head">
+        <div>
+          <h2 class="page-title">${title}</h2>
+          <span class="page-subtitle">${subtitle}</span>
+        </div>
+      </header>
+      ${body}
+    `;
+  },
+  statusBadge(status) {
+    const cls = Helpers.badgeClass(status);
+    return `<span class="badge ${cls}">${Helpers.text(status, "pending")}</span>`;
+  },
+  card(title, content) {
+    return `<article class="card"><h3>${title}</h3>${content}</article>`;
+  },
+};
+
+function loadHome() {
+  const latestDecision = Helpers.latestDecision();
+  const latestLaunch = AppState.launches[0] || {};
+  const activeAlerts = AppState.events.filter((event) => String(event.type).toLowerCase().includes("error")).length;
+
+  Views.frame("Home", "System overview", `
+    <section class="card-grid">
+      ${Views.card("System status card", `<div class="metric"><span>State</span><strong>${Helpers.text(AppState.system.state, "LISTENING")}</strong></div>`)}
+      ${Views.card("Latest decision", `<p>${Helpers.text(latestDecision?.type, "No strategic decision yet")}</p>`)}
+      ${Views.card("Latest launch", `<p>${Helpers.text(latestLaunch.product_name || latestLaunch.id, "No launches yet")}</p>${Views.statusBadge(latestLaunch.status || "pending")}`)}
+      ${Views.card("Revenue summary", `<div class="metric"><span>Total</span><strong>${Helpers.text(AppState.performance.total_revenue, 0)}</strong></div>`)}
+      ${Views.card("Active alerts", `<div class="metric"><span>Alerts</span><strong>${activeAlerts}</strong></div>`)}
     </section>
-
-    <section>
-      <h3>Lifecycle</h3>
-      <div class="lifecycle-grid">${lifecycle}</div>
-    </section>
-
-    <section class="stats-grid">
-      ${buildMetric("total_revenue", state.performance.total_revenue || 0)}
-      ${buildMetric("total_sales", state.performance.total_sales || 0)}
-      ${buildMetric("best_product", state.performance.best_product || "-")}
-      ${buildMetric("top_category", state.performance.top_category || "-")}
-    </section>
-
-    <section class="card">
-      <h3>Strategy</h3>
-      <p><strong>Last decision:</strong> ${safeText(state.strategy.last_decision || "-")}</p>
-      <p><strong>Reason:</strong> ${safeText(state.strategy.reason || "-")}</p>
-      <p><strong>Suggested action:</strong> ${safeText(state.strategy.suggested_action || "-")}</p>
-    </section>
-  `;
+  `);
 }
 
-function renderProfile() {
-  const totalProducts = state.proposals.length;
-  pageContent.innerHTML = `
-    <h2 class="page-title">Area Personal · Profile</h2>
-    <section class="stats-grid">
-      ${buildMetric("Energy level indicator", "High focus")}
-      ${buildMetric("Productivity metrics", `${state.events.length} tracked events`)}
-      ${buildMetric("Total products created", totalProducts)}
-      ${buildMetric("Total revenue", state.performance.total_revenue || 0)}
-      ${buildMetric("Active goals", "3")}
-      ${buildMetric("Weekly consistency", "86%")}
+function workCards(items, itemRenderer) {
+  if (!items.length) return '<article class="card"><p>No data available.</p></article>';
+  return items.map(itemRenderer).join("");
+}
+
+function loadWork() {
+  Views.frame("Work", "Execution pipeline", `
+    <section class="card-grid">
+      ${workCards(AppState.opportunities.slice(0, 4), (opportunity) => Views.card(
+        `Opportunity · ${Helpers.text(opportunity.id)}`,
+        `<p>${Helpers.text(opportunity.title || opportunity.summary, "Untitled opportunity")}</p>${Views.statusBadge(opportunity.status || "new")}`
+      ))}
+
+      ${workCards(AppState.proposals.slice(0, 4), (proposal) => Views.card(
+        `Proposal · ${Helpers.text(proposal.id)}`,
+        `<p>${Helpers.text(proposal.title || proposal.name, "Untitled proposal")}</p>${Views.statusBadge(proposal.status || "draft")}`
+      ))}
+
+      ${workCards(AppState.launches.slice(0, 4), (launch) => Views.card(
+        `Launch · ${Helpers.text(launch.product_name || launch.id)}`,
+        `<div class="metric"><span>Revenue</span><strong>${Helpers.text(launch.metrics?.revenue, 0)}</strong></div>${Views.statusBadge(launch.status || "queued")}`
+      ))}
+
+      ${Views.card("Performance summary", `
+        <div class="metric"><span>Total sales</span><strong>${Helpers.text(AppState.performance.total_sales, 0)}</strong></div>
+        <div class="metric"><span>Best product</span><strong>${Helpers.text(AppState.performance.best_product, "-")}</strong></div>
+      `)}
+
+      ${Views.card("Strategy recommendations", (AppState.strategyRecommendations.recommendations || []).slice(0, 3)
+        .map((rec) => `<p>${Helpers.text(rec)}</p>`)
+        .join("") || "<p>No recommendations.</p>")}
     </section>
-  `;
+  `);
 }
 
-function renderGame() {
-  pageContent.innerHTML = `
-    <h2 class="page-title">Juegos · Game</h2>
-    <section class="card big-message">System in construction – gamification module coming soon</section>
-  `;
+function loadProfile() {
+  const weeklyOutput = AppState.events.length;
+  const revenuePerProduct = AppState.launches.length
+    ? (Number(AppState.performance.total_revenue || 0) / AppState.launches.length).toFixed(2)
+    : "0";
+
+  Views.frame("Profile", "Personal operating metrics", `
+    <section class="card-grid">
+      ${Views.card("Energy score", `<div class="metric"><span>Energy</span><strong>82</strong></div>`)}
+      ${Views.card("Focus score", `<div class="metric"><span>Focus</span><strong>79</strong></div>`)}
+      ${Views.card("Weekly output", `<div class="metric"><span>Events this week</span><strong>${weeklyOutput}</strong></div>`)}
+      ${Views.card("Revenue per product", `<div class="metric"><span>Average</span><strong>${revenuePerProduct}</strong></div>`)}
+      ${Views.card("Productivity score", `<div class="metric"><span>Score</span><strong>88</strong></div>`)}
+    </section>
+  `);
 }
 
-function renderSettings() {
-  pageContent.innerHTML = `
-    <h2 class="page-title">Ajustes · Settings</h2>
+function loadGame() {
+  Views.frame("Game", "Gamification", `
+    <section class="card center-message">En construcción</section>
+  `);
+}
 
+function loadSettings() {
+  Views.frame("Settings", "Runtime controls", `
     <section class="card">
-      <h3>System</h3>
       <div class="settings-grid">
-        ${buildMetric("Timezone", Intl.DateTimeFormat().resolvedOptions().timeZone)}
-        ${buildMetric("Scan hour", "08:00")}
-        ${buildMetric("Environment", "production")}
+        <label>Environment mode
+          <select id="environment-mode">
+            <option value="production">production</option>
+            <option value="staging">staging</option>
+            <option value="development">development</option>
+          </select>
+        </label>
+        <label>Scan hour
+          <input id="scan-hour" type="time" value="08:00" />
+        </label>
+        <label>Timezone
+          <input id="timezone" value="${Intl.DateTimeFormat().resolvedOptions().timeZone}" />
+        </label>
+        <label>API status
+          <input value="${Helpers.text(AppState.system.state, "LISTENING")}" readonly />
+        </label>
+        <label>Data path
+          <input value="data/memory/treta.sqlite" readonly />
+        </label>
+        <label>Toggle debug mode
+          <button type="button" id="toggle-debug">${AppState.debugMode ? "Disable" : "Enable"} debug mode</button>
+        </label>
+        <label>Reset data
+          <button type="button" id="reset-data">Reset data</button>
+        </label>
       </div>
     </section>
+  `);
 
-    <section class="card">
-      <h3>Integrations</h3>
-      <div class="settings-grid">
-        ${buildMetric("Reddit status", "Not connected")}
-        ${buildMetric("Gumroad status", state.launches.length ? "Connected" : "Pending")}
-        ${buildMetric("Token configured", state.launches.length > 0)}
-      </div>
-    </section>
+  const toggleButton = document.getElementById("toggle-debug");
+  const resetButton = document.getElementById("reset-data");
 
-    <section class="card">
-      <h3>Automation</h3>
-      <div class="settings-grid">
-        ${buildMetric("Auto launch toggle", "On")}
-        ${buildMetric("Auto pricing toggle", "On")}
-        ${buildMetric("Strategy mode selector", "Balanced")}
-      </div>
-    </section>
+  toggleButton.addEventListener("click", async () => {
+    AppState.debugMode = !AppState.debugMode;
+    localStorage.setItem("treta.debug", String(AppState.debugMode));
+    await Api.post("/event", {
+      type: "DebugModeToggled",
+      source: "dashboard",
+      payload: { enabled: AppState.debugMode },
+    });
+    loadSettings();
+  });
 
-    <section class="card">
-      <h3>Security</h3>
-      <div class="settings-grid">
-        <button type="button">Reset data</button>
-        <button type="button">Clear proposals</button>
-        <button type="button">Clear launches</button>
-      </div>
-    </section>
-  `;
+  resetButton.addEventListener("click", async () => {
+    await Api.post("/event", {
+      type: "ResetDataRequested",
+      source: "dashboard",
+      payload: { requested_at: new Date().toISOString() },
+    });
+    ControlCenter.addChat("system", "Reset data event sent to backend.");
+  });
 }
 
-function renderRoute() {
-  renderNav();
-  const route = getRoute();
+const Router = {
+  renderCurrent() {
+    Navigation.render();
+    const route = Helpers.route();
+    if (route === "home") return loadHome();
+    if (route === "work") return loadWork();
+    if (route === "profile") return loadProfile();
+    if (route === "game") return loadGame();
+    return loadSettings();
+  },
+};
 
-  if (route === "home") return renderHome();
-  if (route === "work") return renderWork();
-  if (route === "profile") return renderProfile();
-  if (route === "game") return renderGame();
-  return renderSettings();
-}
+const DataSync = {
+  async refresh() {
+    const [
+      systemData,
+      eventsData,
+      opportunitiesData,
+      proposalsData,
+      launchesData,
+      performanceData,
+      strategyRecommendations,
+    ] = await Promise.all([
+      Api.get("/state", { state: "LISTENING" }),
+      Api.get("/events", { events: [] }),
+      Api.get("/opportunities", { items: [] }),
+      Api.get("/product_proposals", { items: [] }),
+      Api.get("/product_launches", { items: [] }),
+      Api.get("/performance/summary", {}),
+      Api.get("/strategy/recommendations", { recommendations: [] }),
+    ]);
 
-function normalizeStrategy(decisionData, eventDecision) {
-  return {
-    last_decision: decisionData.decision || eventDecision?.decision || "-",
-    reason: decisionData.reasoning || eventDecision?.reasoning || "-",
-    suggested_action: decisionData.recommended_action || "Prepare next launch",
-  };
-}
+    AppState.system = systemData;
+    AppState.events = eventsData.events || [];
+    AppState.opportunities = opportunitiesData.items || [];
+    AppState.proposals = proposalsData.items || [];
+    AppState.launches = launchesData.items || [];
+    AppState.performance = performanceData || {};
+    AppState.strategyRecommendations = strategyRecommendations || { recommendations: [] };
 
-async function refreshData() {
-  const [systemData, eventsData, proposalsData, launchesData, performanceData, strategyData, recommendationsData] = await Promise.all([
-    requestJson("/state", { state: "offline" }),
-    requestJson("/events", { events: [] }),
-    requestJson("/product_proposals", { items: [] }),
-    requestJson("/product_launches", { items: [] }),
-    requestJson("/performance/summary", {}),
-    requestJson("/strategy/decide", {}),
-    requestJson("/strategy/recommendations", { recommendations: [] }),
-  ]);
-
-  state.system = systemData;
-  state.events = eventsData.events || [];
-  state.proposals = proposalsData.items || [];
-  state.launches = launchesData.items || [];
-  state.performance = performanceData || {};
-  const eventDecision = lastStrategicDecision()?.payload?.decision || lastStrategicDecision()?.payload;
-  state.strategy = normalizeStrategy(strategyData, eventDecision || {});
-  state.recommendations = recommendationsData || {};
-
-  statusText.textContent = safeText(systemData.state);
-  if (String(systemData.state || "").toLowerCase() !== "offline") {
-    statusDot.classList.add("online");
-  } else {
-    statusDot.classList.remove("online");
-  }
-
-  renderRoute();
-}
+    ControlCenter.updateSystemStatus();
+    ControlCenter.updateEventWidgets();
+    ControlCenter.updateTelemetry();
+    Router.renderCurrent();
+  },
+};
 
 async function runChatCommand(rawInput) {
   const input = rawInput.trim();
   if (!input) return;
 
-  addChat("user", input);
+  ControlCenter.addChat("user", input);
 
   if (input === "/scan") {
-    await fetch("/scan/infoproduct", { method: "POST" });
-    addChat("system", "Infoproduct scan requested.");
+    await Api.post("/scan/infoproduct");
+    ControlCenter.addChat("system", "Infoproduct scan requested.");
   } else if (input.startsWith("/evaluate ")) {
     const id = input.replace("/evaluate", "").trim();
-    await fetch("/opportunities/evaluate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id }),
-    });
-    addChat("system", `Opportunity evaluation requested for ${id}.`);
+    await Api.post("/opportunities/evaluate", { id });
+    ControlCenter.addChat("system", `Opportunity evaluation requested for ${id}.`);
   } else {
-    await fetch("/event", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: "ChatCommandReceived",
-        source: "dashboard",
-        payload: { message: input },
-      }),
+    await Api.post("/event", {
+      type: "ChatCommandReceived",
+      source: "dashboard",
+      payload: { message: input },
     });
-    addChat("system", "Command sent to system event bus.");
+    ControlCenter.addChat("system", "Command sent to system event bus.");
   }
 
-  await refreshData();
+  await DataSync.refresh();
 }
 
-chatForm.addEventListener("submit", async (event) => {
+UI.chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  await runChatCommand(chatInput.value);
-  chatInput.value = "";
+  await runChatCommand(UI.chatInput.value);
+  UI.chatInput.value = "";
 });
 
-window.addEventListener("hashchange", renderRoute);
+window.addEventListener("hashchange", () => Router.renderCurrent());
 
-addChat("system", "Treta interface ready.");
-refreshData();
-setInterval(refreshData, 20000);
+ControlCenter.addChat("system", "Treta OS dashboard online.");
+DataSync.refresh();
+setInterval(() => {
+  DataSync.refresh();
+}, AppConfig.refreshIntervalMs);
