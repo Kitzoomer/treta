@@ -1,5 +1,5 @@
 const CONFIG = {
-  routes: ["home", "work", "profile", "game", "settings"],
+  routes: ["home", "dashboard", "work", "profile", "game", "settings"],
   defaultRoute: "home",
   defaultRefreshMs: 3000,
   maxEventStream: 10,
@@ -148,8 +148,10 @@ const router = {
   },
   render() {
     state.currentRoute = this.resolveRoute();
+    document.body.dataset.route = state.currentRoute;
     renderNavigation();
     if (state.currentRoute === "home") return views.loadHome();
+    if (state.currentRoute === "dashboard") return views.loadDashboard();
     if (state.currentRoute === "work") return views.loadWork();
     if (state.currentRoute === "profile") return views.loadProfile();
     if (state.currentRoute === "game") return views.loadGame();
@@ -171,18 +173,102 @@ const views = {
   },
 
   loadHome() {
-    this.shell("Home", "Resumen operativo de Treta", `
-      <section class="card-grid cols-2">
-        <article class="card">
-          <h3>System State</h3>
-          <div class="metric"><span>Current</span><strong>${helpers.t(state.system.state, "IDLE")}</strong></div>
-          <div class="metric"><span>Latest event</span><strong>${helpers.t(state.events[0]?.type, "none")}</strong></div>
+    ui.pageContent.innerHTML = `
+      <section class="home-identity" aria-label="Treta identity">
+        <h1 class="treta-title" aria-label="TRETA">
+          <span class="treta-title-text">TRETA</span>
+          <span class="treta-wave" aria-hidden="true"></span>
+        </h1>
+      </section>
+    `;
+  },
+
+  loadDashboard() {
+    const latestDecision = state.proposals[0];
+    const latestLaunch = state.launches[0];
+    const proposalsByStatus = state.proposals.reduce((acc, item) => {
+      const status = helpers.normalizeStatus(item.status);
+      acc[status] = (acc[status] || 0) + 1;
+      return acc;
+    }, {});
+
+    const opportunitiesCount = state.opportunities.length;
+    const proposalsCount = state.proposals.length;
+    const buildsCount = state.proposals.filter((item) => ["approved", "building", "ready_to_launch", "ready_for_review"].includes(helpers.normalizeStatus(item.status))).length;
+    const launchedProducts = state.launches.filter((item) => helpers.normalizeStatus(item.status) === "launched").length;
+    const readyToLaunch = (proposalsByStatus.ready_to_launch || 0) + (proposalsByStatus.ready_for_review || 0);
+    const draftCount = proposalsByStatus.draft || 0;
+    const alertsCount = state.events.filter((event) => ["error", "failed", "warning"].some((keyword) => helpers.normalizeStatus(event.type).includes(keyword))).length;
+
+    const recommendation = (() => {
+      if (readyToLaunch > 0) {
+        return {
+          title: "Launch products already marked ready",
+          body: `${readyToLaunch} proposal(s) can be launched now to validate demand and convert momentum into revenue.`,
+        };
+      }
+      if (draftCount > 0) {
+        return {
+          title: "Review and approve draft proposals",
+          body: `${draftCount} draft proposal(s) are waiting for a decision and can unblock the build queue.`,
+        };
+      }
+      if (opportunitiesCount === 0) {
+        return {
+          title: "Run a new opportunity scan",
+          body: "No opportunities are available yet. Trigger a scan from chat to refill the pipeline.",
+        };
+      }
+      return {
+        title: "Keep builds moving",
+        body: "Pipeline is healthy. Prioritize items in building to keep launch cadence consistent.",
+      };
+    })();
+
+    this.shell("Dashboard", "Operational summary and next best action", `
+      <section class="stack">
+        <section class="card-grid cols-2">
+          <article class="card">
+            <h3>System state</h3>
+            <div class="metric"><span>Current</span><strong>${helpers.t(state.system.state, "IDLE")}</strong></div>
+          </article>
+          <article class="card">
+            <h3>Latest decision</h3>
+            <p>${latestDecision ? `${helpers.t(latestDecision.product_name, latestDecision.id)} · ${helpers.statusLabel(latestDecision.status)}` : "No data yet."}</p>
+          </article>
+          <article class="card">
+            <h3>Latest launch</h3>
+            <p>${latestLaunch ? `${helpers.t(latestLaunch.product_name, latestLaunch.id)} · ${helpers.statusLabel(latestLaunch.status)}` : "No data yet."}</p>
+          </article>
+          <article class="card">
+            <h3>Revenue summary</h3>
+            <div class="metric"><span>Total revenue</span><strong>${helpers.t(state.performance.total_revenue, 0)}</strong></div>
+            <div class="metric"><span>Total sales</span><strong>${helpers.t(state.performance.total_sales, 0)}</strong></div>
+          </article>
+          <article class="card">
+            <h3>Alerts</h3>
+            <div class="metric"><span>Recent alerts</span><strong>${alertsCount}</strong></div>
+          </article>
+        </section>
+
+        <article class="card pipeline-summary">
+          <h3>Pipeline Summary</h3>
+          <div class="pipeline-flow">
+            <div class="pipeline-step"><span>Opportunities</span><strong>${opportunitiesCount}</strong></div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-step"><span>Proposals</span><strong>${proposalsCount}</strong></div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-step"><span>Builds</span><strong>${buildsCount}</strong></div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-step"><span>Launched</span><strong>${launchedProducts}</strong></div>
+          </div>
         </article>
-        <article class="card">
-          <h3>Quick KPIs</h3>
-          <div class="metric"><span>Opportunities</span><strong>${state.opportunities.length}</strong></div>
-          <div class="metric"><span>Proposals</span><strong>${state.proposals.length}</strong></div>
-          <div class="metric"><span>Revenue</span><strong>${helpers.t(state.performance.total_revenue, 0)}</strong></div>
+
+        <article class="card recommendation-card">
+          <h3>Recommended Action</h3>
+          <h4>${recommendation.title}</h4>
+          <p>${recommendation.body}</p>
+          <div class="recommendation-cta">UI heuristic based on current pipeline data</div>
         </article>
       </section>
     `);
