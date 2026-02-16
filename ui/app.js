@@ -1,26 +1,33 @@
-const AppConfig = {
-  refreshIntervalMs: 20000,
-  pages: [
-    { id: "home", label: "Home", hash: "#/home" },
-    { id: "work", label: "Work", hash: "#/work" },
-    { id: "profile", label: "Profile", hash: "#/profile" },
-    { id: "game", label: "Game", hash: "#/game" },
-    { id: "settings", label: "Settings", hash: "#/settings" },
-  ],
+const CONFIG = {
+  routes: ["home", "work", "profile", "game", "settings"],
+  defaultRoute: "home",
+  defaultRefreshMs: 3000,
+  maxEventStream: 10,
 };
 
-const AppState = {
-  system: { state: "LISTENING" },
+const STORAGE_KEYS = {
+  debug: "treta.debug",
+  refreshMs: "treta.refreshMs",
+  profile: "treta.profile",
+};
+
+const state = {
+  system: { state: "IDLE" },
   events: [],
   opportunities: [],
   proposals: [],
   launches: [],
   performance: {},
-  strategyRecommendations: { recommendations: [] },
-  debugMode: localStorage.getItem("treta.debug") === "true",
+  strategy: {},
+  logs: [{ role: "system", message: "Treta mini-OS online." }],
+  debugMode: localStorage.getItem(STORAGE_KEYS.debug) === "true",
+  refreshMs: Number(localStorage.getItem(STORAGE_KEYS.refreshMs) || CONFIG.defaultRefreshMs),
+  profile: loadProfileState(),
+  currentRoute: CONFIG.defaultRoute,
+  timerId: null,
 };
 
-const UI = {
+const ui = {
   pageContent: document.getElementById("page-content"),
   pageNav: document.getElementById("page-nav"),
   chatHistory: document.getElementById("chat-history"),
@@ -33,344 +40,480 @@ const UI = {
   telemetry: document.getElementById("telemetry-content"),
 };
 
-const Api = {
-  async get(url, fallback) {
-    try {
-      const response = await fetch(url);
-      if (!response.ok) return fallback;
-      return await response.json();
-    } catch (error) {
-      return fallback;
-    }
-  },
-  async post(url, payload = {}) {
+function loadProfileState() {
+  const raw = localStorage.getItem(STORAGE_KEYS.profile);
+  if (!raw) {
+    return {
+      energy: 82,
+      focus: 79,
+      weeklyOutput: 12,
+      revenuePerProduct: 0,
+      productivity: 88,
+    };
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (_error) {
+    return {
+      energy: 82,
+      focus: 79,
+      weeklyOutput: 12,
+      revenuePerProduct: 0,
+      productivity: 88,
+    };
+  }
+}
+
+function saveProfileState() {
+  localStorage.setItem(STORAGE_KEYS.profile, JSON.stringify(state.profile));
+}
+
+const api = {
+  async fetchJson(url, options = {}) {
     const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+      ...options,
     });
+    const text = await response.text();
+    const data = text ? JSON.parse(text) : {};
     if (!response.ok) {
-      throw new Error(`Request failed: ${url}`);
+      throw new Error(data.error || `HTTP ${response.status}`);
     }
-    return response.json().catch(() => ({}));
+    return data;
+  },
+  getState() {
+    return this.fetchJson("/state");
+  },
+  getRecentEvents() {
+    return this.fetchJson("/events");
+  },
+  getOpportunities() {
+    return this.fetchJson("/opportunities");
+  },
+  getProductProposals() {
+    return this.fetchJson("/product_proposals");
+  },
+  getProductLaunches() {
+    return this.fetchJson("/product_launches");
+  },
+  getPerformanceSummary() {
+    return this.fetchJson("/performance/summary");
+  },
+  getStrategyRecommendations() {
+    return this.fetchJson("/strategy/recommendations");
   },
 };
 
-const Helpers = {
-  text(value, fallback = "-") {
-    if (value === null || value === undefined || value === "") return fallback;
+const helpers = {
+  t(value, fallback = "-") {
+    if (value === undefined || value === null || value === "") return fallback;
     return String(value);
   },
-  route() {
-    const hash = window.location.hash || "#/home";
-    return AppConfig.pages.find((page) => page.hash === hash)?.id || "home";
+  json(value) {
+    return `<pre>${this.escape(JSON.stringify(value, null, 2))}</pre>`;
   },
-  badgeClass(rawStatus) {
-    const status = String(rawStatus || "").toLowerCase();
-    if (["launched", "approved", "running", "ok", "success", "active"].includes(status)) return "ok";
-    if (["error", "failed", "offline", "rejected"].includes(status)) return "error";
+  escape(value) {
+    return String(value)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;");
+  },
+  badgeClass(status) {
+    const value = String(status || "").toLowerCase();
+    if (["launched", "approved", "active", "completed", "ready"].includes(value)) return "ok";
+    if (["rejected", "dismissed", "archived", "failed", "error"].includes(value)) return "error";
     return "warn";
   },
-  latestEvent() {
-    return AppState.events[0] || null;
-  },
-  latestDecision() {
-    return AppState.events.find((event) => ["StrategyDecisionMade", "OpportunityEvaluated"].includes(event.type));
-  },
 };
 
-const ControlCenter = {
-  addChat(role, text) {
-    const row = document.createElement("div");
-    row.className = `chat-row ${role}`;
-    row.textContent = text;
-    UI.chatHistory.appendChild(row);
-    UI.chatHistory.scrollTop = UI.chatHistory.scrollHeight;
+const router = {
+  resolveRoute() {
+    const hash = (window.location.hash || "").replace("#/", "").toLowerCase();
+    return CONFIG.routes.includes(hash) ? hash : CONFIG.defaultRoute;
   },
-  updateSystemStatus() {
-    const rawState = Helpers.text(AppState.system.state, "LISTENING");
-    const upper = rawState.toUpperCase();
-    let normalized = "LISTENING";
-    if (["RUNNING", "ACTIVE", "ONLINE"].includes(upper)) normalized = "RUNNING";
-    if (["ERROR", "FAILED", "OFFLINE"].includes(upper)) normalized = "ERROR";
-
-    UI.statusText.textContent = normalized;
-    UI.statusDot.classList.remove("status-running", "status-error");
-    if (normalized === "RUNNING") UI.statusDot.classList.add("status-running");
-    if (normalized === "ERROR") UI.statusDot.classList.add("status-error");
+  navigate(route) {
+    window.location.hash = `#/${route}`;
   },
-  updateEventWidgets() {
-    const latest = Helpers.latestEvent();
-    UI.lastEvent.textContent = latest
-      ? `${latest.type} · ${Helpers.text(latest.timestamp, "No timestamp")}`
-      : "No events yet.";
-
-    const stream = AppState.events.slice(0, 6).map((event) => {
-      const payload = typeof event.payload === "object" ? JSON.stringify(event.payload) : Helpers.text(event.payload, "{}");
-      return `<div class="event-log-item"><strong>${event.type}</strong><br>${payload.slice(0, 84)}</div>`;
-    }).join("");
-    UI.eventLog.innerHTML = stream || '<div class="event-log-item">Waiting for events…</div>';
-  },
-  updateTelemetry() {
-    UI.telemetry.innerHTML = `
-      <div class="metric"><span>Opportunities</span><strong>${AppState.opportunities.length}</strong></div>
-      <div class="metric"><span>Proposals</span><strong>${AppState.proposals.length}</strong></div>
-      <div class="metric"><span>Launches</span><strong>${AppState.launches.length}</strong></div>
-      <div class="metric"><span>Total revenue</span><strong>${Helpers.text(AppState.performance.total_revenue, 0)}</strong></div>
-    `;
-  },
-};
-
-const Navigation = {
   render() {
-    const route = Helpers.route();
-    UI.pageNav.innerHTML = "";
-    for (const page of AppConfig.pages) {
-      const button = document.createElement("button");
-      button.className = `nav-btn ${page.id === route ? "active" : ""}`;
-      button.textContent = page.label;
-      button.addEventListener("click", () => {
-        window.location.hash = page.hash;
-      });
-      UI.pageNav.appendChild(button);
-    }
+    state.currentRoute = this.resolveRoute();
+    renderNavigation();
+    if (state.currentRoute === "home") return views.loadHome();
+    if (state.currentRoute === "work") return views.loadWork();
+    if (state.currentRoute === "profile") return views.loadProfile();
+    if (state.currentRoute === "game") return views.loadGame();
+    return views.loadSettings();
   },
 };
 
-const Views = {
-  frame(title, subtitle, body) {
-    UI.pageContent.innerHTML = `
+const views = {
+  shell(title, subtitle, body) {
+    ui.pageContent.innerHTML = `
       <header class="page-head">
         <div>
           <h2 class="page-title">${title}</h2>
-          <span class="page-subtitle">${subtitle}</span>
+          <p class="page-subtitle">${subtitle}</p>
         </div>
       </header>
       ${body}
     `;
   },
-  statusBadge(status) {
-    const cls = Helpers.badgeClass(status);
-    return `<span class="badge ${cls}">${Helpers.text(status, "pending")}</span>`;
+
+  loadHome() {
+    this.shell("Home", "Resumen operativo de Treta", `
+      <section class="card-grid cols-2">
+        <article class="card">
+          <h3>System State</h3>
+          <div class="metric"><span>Current</span><strong>${helpers.t(state.system.state, "IDLE")}</strong></div>
+          <div class="metric"><span>Latest event</span><strong>${helpers.t(state.events[0]?.type, "none")}</strong></div>
+        </article>
+        <article class="card">
+          <h3>Quick KPIs</h3>
+          <div class="metric"><span>Opportunities</span><strong>${state.opportunities.length}</strong></div>
+          <div class="metric"><span>Proposals</span><strong>${state.proposals.length}</strong></div>
+          <div class="metric"><span>Revenue</span><strong>${helpers.t(state.performance.total_revenue, 0)}</strong></div>
+        </article>
+      </section>
+    `);
   },
-  card(title, content) {
-    return `<article class="card"><h3>${title}</h3>${content}</article>`;
+
+  loadWork() {
+    const opportunities = state.opportunities.slice(0, 10).map((item) => `
+      <article class="card row-item">
+        <h4>${helpers.t(item.title, item.id)}</h4>
+        <p>source: ${helpers.t(item.source, "-")} · status: ${helpers.t(item.status || item.decision, "pending")}</p>
+        <div class="card-actions">
+          <button data-action="eval-opp" data-id="${item.id}">Evaluate</button>
+          <button data-action="dismiss-opp" data-id="${item.id}">Dismiss</button>
+        </div>
+      </article>
+    `).join("") || "<p class='empty'>No opportunities.</p>";
+
+    const proposals = state.proposals.slice(0, 10).map((item) => `
+      <article class="card row-item">
+        <h4>${helpers.t(item.product_name, item.id)}</h4>
+        <p>
+          <span class="badge ${helpers.badgeClass(item.status)}">${helpers.t(item.status, "pending")}</span>
+          confidence: ${helpers.t(item.confidence, "-")} · price: ${helpers.t(item.price_suggestion, "-")}
+        </p>
+        <div class="card-actions wrap">
+          ${["approve", "reject", "start_build", "ready", "launch", "archive"].map((action) => `<button data-action="proposal" data-transition="${action}" data-id="${item.id}">${action}</button>`).join("")}
+        </div>
+      </article>
+    `).join("") || "<p class='empty'>No proposals.</p>";
+
+    const launches = state.launches.slice(0, 10).map((item) => `
+      <article class="card row-item">
+        <h4>${helpers.t(item.product_name, item.id)}</h4>
+        <p>
+          <span class="badge ${helpers.badgeClass(item.status)}">${helpers.t(item.status, "queued")}</span>
+          sales: ${helpers.t(item.metrics?.sales, 0)} · revenue: ${helpers.t(item.metrics?.revenue, 0)}
+        </p>
+        <div class="card-actions">
+          <button data-action="launch-sale" data-id="${item.id}">add_sale</button>
+          <button data-action="launch-status" data-id="${item.id}">status</button>
+        </div>
+      </article>
+    `).join("") || "<p class='empty'>No launches.</p>";
+
+    this.shell("Work", "Operaciones y lifecycle", `
+      <section class="stack">
+        <article class="card"><h3>Opportunities (last 10)</h3>${opportunities}</article>
+        <article class="card"><h3>Product Proposals (latest 10)</h3>${proposals}</article>
+        <article class="card"><h3>Product Launches (latest 10)</h3>${launches}</article>
+        <article class="card"><h3>Performance summary</h3>${helpers.json(state.performance)}</article>
+        <article class="card"><h3>Strategy recommendations</h3>${helpers.json(state.strategy)}</article>
+      </section>
+    `);
+    bindWorkActions();
+  },
+
+  loadProfile() {
+    const derivedRevenuePerProduct = state.launches.length
+      ? (Number(state.performance.total_revenue || 0) / state.launches.length).toFixed(2)
+      : 0;
+    if (!state.profile.revenuePerProduct) {
+      state.profile.revenuePerProduct = derivedRevenuePerProduct;
+    }
+
+    this.shell("Profile", "Ficha editable local (localStorage)", `
+      <section class="card">
+        <div class="settings-grid">
+          ${renderEditableMetric("energy", "Energy")}
+          ${renderEditableMetric("focus", "Focus")}
+          ${renderEditableMetric("weeklyOutput", "Weekly output")}
+          ${renderEditableMetric("revenuePerProduct", "Revenue per product")}
+          ${renderEditableMetric("productivity", "Productivity")}
+        </div>
+        <div class="card-actions"><button id="save-profile">Save profile</button></div>
+      </section>
+    `);
+    document.getElementById("save-profile")?.addEventListener("click", () => {
+      ["energy", "focus", "weeklyOutput", "revenuePerProduct", "productivity"].forEach((key) => {
+        const value = Number(document.getElementById(`profile-${key}`)?.value || 0);
+        state.profile[key] = value;
+      });
+      saveProfileState();
+      log("system", "Profile saved in localStorage.");
+    });
+  },
+
+  loadGame() {
+    this.shell("Game", "Vista reservada", "<section class='card center-message'>En construcción</section>");
+  },
+
+  loadSettings() {
+    this.shell("Settings", "UI runtime controls", `
+      <section class="card">
+        <div class="settings-grid">
+          <label>Debug mode <input id="debug-toggle" type="checkbox" ${state.debugMode ? "checked" : ""}></label>
+          <label>Auto-refresh interval (ms) <input id="refresh-input" type="number" min="1000" step="500" value="${state.refreshMs}"></label>
+        </div>
+        <div class="card-actions wrap">
+          <button id="sync-sales">Sync sales</button>
+          <button id="clear-cache">Clear UI cache</button>
+        </div>
+        <section id="settings-response" class="result-box">Ready.</section>
+      </section>
+    `);
+
+    document.getElementById("debug-toggle")?.addEventListener("change", (event) => {
+      state.debugMode = event.target.checked;
+      localStorage.setItem(STORAGE_KEYS.debug, String(state.debugMode));
+      log("system", `Debug mode ${state.debugMode ? "enabled" : "disabled"}.`);
+    });
+
+    document.getElementById("refresh-input")?.addEventListener("change", (event) => {
+      const next = Math.max(1000, Number(event.target.value || CONFIG.defaultRefreshMs));
+      state.refreshMs = next;
+      localStorage.setItem(STORAGE_KEYS.refreshMs, String(next));
+      startRefreshLoop();
+      log("system", `Refresh interval updated to ${next}ms.`);
+    });
+
+    document.getElementById("sync-sales")?.addEventListener("click", async () => {
+      await runAction(async () => api.fetchJson("/gumroad/sync_sales", { method: "POST", body: JSON.stringify({}) }), "settings-response");
+    });
+
+    document.getElementById("clear-cache")?.addEventListener("click", () => {
+      localStorage.clear();
+      state.debugMode = false;
+      state.refreshMs = CONFIG.defaultRefreshMs;
+      state.profile = loadProfileState();
+      document.getElementById("settings-response").textContent = "UI cache cleared.";
+      log("system", "UI cache cleared.");
+    });
   },
 };
 
-function loadHome() {
-  const latestDecision = Helpers.latestDecision();
-  const latestLaunch = AppState.launches[0] || {};
-  const activeAlerts = AppState.events.filter((event) => String(event.type).toLowerCase().includes("error")).length;
-
-  Views.frame("Home", "System overview", `
-    <section class="card-grid">
-      ${Views.card("System status card", `<div class="metric"><span>State</span><strong>${Helpers.text(AppState.system.state, "LISTENING")}</strong></div>`)}
-      ${Views.card("Latest decision", `<p>${Helpers.text(latestDecision?.type, "No strategic decision yet")}</p>`)}
-      ${Views.card("Latest launch", `<p>${Helpers.text(latestLaunch.product_name || latestLaunch.id, "No launches yet")}</p>${Views.statusBadge(latestLaunch.status || "pending")}`)}
-      ${Views.card("Revenue summary", `<div class="metric"><span>Total</span><strong>${Helpers.text(AppState.performance.total_revenue, 0)}</strong></div>`)}
-      ${Views.card("Active alerts", `<div class="metric"><span>Alerts</span><strong>${activeAlerts}</strong></div>`)}
-    </section>
-  `);
+function renderEditableMetric(key, label) {
+  return `<label>${label}<input id="profile-${key}" type="number" value="${helpers.t(state.profile[key], 0)}"></label>`;
 }
 
-function workCards(items, itemRenderer) {
-  if (!items.length) return '<article class="card"><p>No data available.</p></article>';
-  return items.map(itemRenderer).join("");
-}
+function renderNavigation() {
+  const active = state.currentRoute;
+  ui.pageNav.innerHTML = CONFIG.routes
+    .map((route) => `<button class="nav-btn ${route === active ? "active" : ""}" data-route="${route}">${route[0].toUpperCase()}${route.slice(1)}</button>`)
+    .join("");
 
-function loadWork() {
-  Views.frame("Work", "Execution pipeline", `
-    <section class="card-grid">
-      ${workCards(AppState.opportunities.slice(0, 4), (opportunity) => Views.card(
-        `Opportunity · ${Helpers.text(opportunity.id)}`,
-        `<p>${Helpers.text(opportunity.title || opportunity.summary, "Untitled opportunity")}</p>${Views.statusBadge(opportunity.status || "new")}`
-      ))}
-
-      ${workCards(AppState.proposals.slice(0, 4), (proposal) => Views.card(
-        `Proposal · ${Helpers.text(proposal.id)}`,
-        `<p>${Helpers.text(proposal.title || proposal.name, "Untitled proposal")}</p>${Views.statusBadge(proposal.status || "draft")}`
-      ))}
-
-      ${workCards(AppState.launches.slice(0, 4), (launch) => Views.card(
-        `Launch · ${Helpers.text(launch.product_name || launch.id)}`,
-        `<div class="metric"><span>Revenue</span><strong>${Helpers.text(launch.metrics?.revenue, 0)}</strong></div>${Views.statusBadge(launch.status || "queued")}`
-      ))}
-
-      ${Views.card("Performance summary", `
-        <div class="metric"><span>Total sales</span><strong>${Helpers.text(AppState.performance.total_sales, 0)}</strong></div>
-        <div class="metric"><span>Best product</span><strong>${Helpers.text(AppState.performance.best_product, "-")}</strong></div>
-      `)}
-
-      ${Views.card("Strategy recommendations", (AppState.strategyRecommendations.recommendations || []).slice(0, 3)
-        .map((rec) => `<p>${Helpers.text(rec)}</p>`)
-        .join("") || "<p>No recommendations.</p>")}
-    </section>
-  `);
-}
-
-function loadProfile() {
-  const weeklyOutput = AppState.events.length;
-  const revenuePerProduct = AppState.launches.length
-    ? (Number(AppState.performance.total_revenue || 0) / AppState.launches.length).toFixed(2)
-    : "0";
-
-  Views.frame("Profile", "Personal operating metrics", `
-    <section class="card-grid">
-      ${Views.card("Energy score", `<div class="metric"><span>Energy</span><strong>82</strong></div>`)}
-      ${Views.card("Focus score", `<div class="metric"><span>Focus</span><strong>79</strong></div>`)}
-      ${Views.card("Weekly output", `<div class="metric"><span>Events this week</span><strong>${weeklyOutput}</strong></div>`)}
-      ${Views.card("Revenue per product", `<div class="metric"><span>Average</span><strong>${revenuePerProduct}</strong></div>`)}
-      ${Views.card("Productivity score", `<div class="metric"><span>Score</span><strong>88</strong></div>`)}
-    </section>
-  `);
-}
-
-function loadGame() {
-  Views.frame("Game", "Gamification", `
-    <section class="card center-message">En construcción</section>
-  `);
-}
-
-function loadSettings() {
-  Views.frame("Settings", "Runtime controls", `
-    <section class="card">
-      <div class="settings-grid">
-        <label>Environment mode
-          <select id="environment-mode">
-            <option value="production">production</option>
-            <option value="staging">staging</option>
-            <option value="development">development</option>
-          </select>
-        </label>
-        <label>Scan hour
-          <input id="scan-hour" type="time" value="08:00" />
-        </label>
-        <label>Timezone
-          <input id="timezone" value="${Intl.DateTimeFormat().resolvedOptions().timeZone}" />
-        </label>
-        <label>API status
-          <input value="${Helpers.text(AppState.system.state, "LISTENING")}" readonly />
-        </label>
-        <label>Data path
-          <input value="data/memory/treta.sqlite" readonly />
-        </label>
-        <label>Toggle debug mode
-          <button type="button" id="toggle-debug">${AppState.debugMode ? "Disable" : "Enable"} debug mode</button>
-        </label>
-        <label>Reset data
-          <button type="button" id="reset-data">Reset data</button>
-        </label>
-      </div>
-    </section>
-  `);
-
-  const toggleButton = document.getElementById("toggle-debug");
-  const resetButton = document.getElementById("reset-data");
-
-  toggleButton.addEventListener("click", async () => {
-    AppState.debugMode = !AppState.debugMode;
-    localStorage.setItem("treta.debug", String(AppState.debugMode));
-    await Api.post("/event", {
-      type: "DebugModeToggled",
-      source: "dashboard",
-      payload: { enabled: AppState.debugMode },
-    });
-    loadSettings();
-  });
-
-  resetButton.addEventListener("click", async () => {
-    await Api.post("/event", {
-      type: "ResetDataRequested",
-      source: "dashboard",
-      payload: { requested_at: new Date().toISOString() },
-    });
-    ControlCenter.addChat("system", "Reset data event sent to backend.");
+  ui.pageNav.querySelectorAll("button[data-route]").forEach((button) => {
+    button.addEventListener("click", () => router.navigate(button.dataset.route));
   });
 }
 
-const Router = {
-  renderCurrent() {
-    Navigation.render();
-    const route = Helpers.route();
-    if (route === "home") return loadHome();
-    if (route === "work") return loadWork();
-    if (route === "profile") return loadProfile();
-    if (route === "game") return loadGame();
-    return loadSettings();
-  },
-};
+function log(role, message) {
+  state.logs.push({ role, message });
+  if (state.logs.length > 100) state.logs = state.logs.slice(-100);
+  renderChat();
+}
 
-const DataSync = {
-  async refresh() {
-    const [
-      systemData,
-      eventsData,
-      opportunitiesData,
-      proposalsData,
-      launchesData,
-      performanceData,
-      strategyRecommendations,
-    ] = await Promise.all([
-      Api.get("/state", { state: "LISTENING" }),
-      Api.get("/events", { events: [] }),
-      Api.get("/opportunities", { items: [] }),
-      Api.get("/product_proposals", { items: [] }),
-      Api.get("/product_launches", { items: [] }),
-      Api.get("/performance/summary", {}),
-      Api.get("/strategy/recommendations", { recommendations: [] }),
+function renderChat() {
+  ui.chatHistory.innerHTML = state.logs
+    .slice(-30)
+    .map((entry) => `<div class="chat-row ${entry.role}">${helpers.escape(entry.message)}</div>`)
+    .join("");
+  ui.chatHistory.scrollTop = ui.chatHistory.scrollHeight;
+}
+
+function renderControlCenter() {
+  const currentState = helpers.t(state.system.state, "IDLE").toUpperCase();
+  ui.statusText.textContent = currentState;
+  ui.statusDot.classList.remove("status-running", "status-error");
+  if (["LISTENING", "RUNNING", "ACTIVE"].includes(currentState)) ui.statusDot.classList.add("status-running");
+  if (["ERROR", "FAILED", "OFFLINE"].includes(currentState)) ui.statusDot.classList.add("status-error");
+
+  const last = state.events[0];
+  ui.lastEvent.textContent = last ? `${last.type} · ${helpers.t(last.timestamp)}` : "No events yet.";
+
+  ui.eventLog.innerHTML = state.events
+    .slice(0, CONFIG.maxEventStream)
+    .map((event) => `<div class="event-log-item"><strong>${helpers.escape(event.type)}</strong><br>${helpers.escape(JSON.stringify(event.payload || {}))}</div>`)
+    .join("") || "<div class='event-log-item'>Waiting for events…</div>";
+
+  renderChat();
+}
+
+function renderTelemetry() {
+  ui.telemetry.innerHTML = `
+    <div class="metric"><span>Opportunities</span><strong>${state.opportunities.length}</strong></div>
+    <div class="metric"><span>Proposals</span><strong>${state.proposals.length}</strong></div>
+    <div class="metric"><span>Launches</span><strong>${state.launches.length}</strong></div>
+    <div class="metric"><span>Total revenue</span><strong>${helpers.t(state.performance.total_revenue, 0)}</strong></div>
+  `;
+}
+
+async function refreshLoop() {
+  try {
+    const [systemData, eventData, oppData, proposalData, launchData, perfData, strategyData] = await Promise.all([
+      api.getState(),
+      api.getRecentEvents(),
+      api.getOpportunities(),
+      api.getProductProposals(),
+      api.getProductLaunches(),
+      api.getPerformanceSummary(),
+      api.getStrategyRecommendations(),
     ]);
 
-    AppState.system = systemData;
-    AppState.events = eventsData.events || [];
-    AppState.opportunities = opportunitiesData.items || [];
-    AppState.proposals = proposalsData.items || [];
-    AppState.launches = launchesData.items || [];
-    AppState.performance = performanceData || {};
-    AppState.strategyRecommendations = strategyRecommendations || { recommendations: [] };
+    state.system = systemData || { state: "IDLE" };
+    state.events = eventData.events || [];
+    state.opportunities = oppData.items || [];
+    state.proposals = proposalData.items || [];
+    state.launches = launchData.items || [];
+    state.performance = perfData || {};
+    state.strategy = strategyData || {};
+  } catch (error) {
+    log("system", `refresh error: ${error.message}`);
+  }
 
-    ControlCenter.updateSystemStatus();
-    ControlCenter.updateEventWidgets();
-    ControlCenter.updateTelemetry();
-    Router.renderCurrent();
-  },
-};
+  renderControlCenter();
+  renderTelemetry();
+  router.render();
+}
 
-async function runChatCommand(rawInput) {
+function startRefreshLoop() {
+  if (state.timerId) window.clearInterval(state.timerId);
+  state.timerId = window.setInterval(refreshLoop, state.refreshMs);
+}
+
+async function executeCommand(rawInput) {
   const input = rawInput.trim();
   if (!input) return;
 
-  ControlCenter.addChat("user", input);
+  log("user", input);
 
-  if (input === "/scan") {
-    await Api.post("/scan/infoproduct");
-    ControlCenter.addChat("system", "Infoproduct scan requested.");
-  } else if (input.startsWith("/evaluate ")) {
-    const id = input.replace("/evaluate", "").trim();
-    await Api.post("/opportunities/evaluate", { id });
-    ControlCenter.addChat("system", `Opportunity evaluation requested for ${id}.`);
-  } else {
-    await Api.post("/event", {
-      type: "ChatCommandReceived",
-      source: "dashboard",
-      payload: { message: input },
-    });
-    ControlCenter.addChat("system", "Command sent to system event bus.");
+  try {
+    if (input.startsWith("{")) {
+      const payload = JSON.parse(input);
+      const result = await api.fetchJson("/event", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      log("system", `POST /event => ${JSON.stringify(result)}`);
+      return refreshLoop();
+    }
+
+    if (input === "scan") {
+      const result = await api.fetchJson("/event", {
+        method: "POST",
+        body: JSON.stringify({ type: "RunInfoproductScan", payload: {} }),
+      });
+      log("system", `scan => ${JSON.stringify(result)}`);
+      return refreshLoop();
+    }
+
+    if (input === "list opps") {
+      router.navigate("work");
+      log("system", "Navigated to Work (opportunities visible).");
+      return;
+    }
+
+    if (input === "list proposals") {
+      router.navigate("work");
+      log("system", "Navigated to Work (proposals visible).");
+      return;
+    }
+
+    if (input === "sync sales") {
+      const result = await api.fetchJson("/gumroad/sync_sales", {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      log("system", `sync sales => ${JSON.stringify(result)}`);
+      return refreshLoop();
+    }
+
+    log("system", "Unknown command. Supported: scan, list opps, list proposals, sync sales, JSON payload.");
+  } catch (error) {
+    log("system", `command error: ${error.message}`);
   }
-
-  await DataSync.refresh();
 }
 
-UI.chatForm.addEventListener("submit", async (event) => {
+async function runAction(actionFn, targetId) {
+  const target = document.getElementById(targetId);
+  try {
+    const result = await actionFn();
+    if (target) target.textContent = JSON.stringify(result, null, 2);
+    log("system", `Action ok: ${JSON.stringify(result)}`);
+    await refreshLoop();
+  } catch (error) {
+    if (target) target.textContent = `error: ${error.message}`;
+    log("system", `Action failed: ${error.message}`);
+  }
+}
+
+function bindWorkActions() {
+  ui.pageContent.querySelectorAll("button[data-action='eval-opp']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await runAction(
+        () => api.fetchJson("/opportunities/evaluate", { method: "POST", body: JSON.stringify({ id: button.dataset.id }) }),
+        "settings-response"
+      );
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='dismiss-opp']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await runAction(
+        () => api.fetchJson("/opportunities/dismiss", { method: "POST", body: JSON.stringify({ id: button.dataset.id }) }),
+        "settings-response"
+      );
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='proposal']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const endpoint = `/product_proposals/${button.dataset.id}/${button.dataset.transition}`;
+      await runAction(() => api.fetchJson(endpoint, { method: "POST", body: JSON.stringify({}) }), "settings-response");
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='launch-sale']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const amount = Number(window.prompt("Sale amount", "1") || "0");
+      await runAction(
+        () => api.fetchJson(`/product_launches/${button.dataset.id}/add_sale`, { method: "POST", body: JSON.stringify({ amount }) }),
+        "settings-response"
+      );
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='launch-status']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const status = (window.prompt("New status", "active") || "").trim();
+      await runAction(
+        () => api.fetchJson(`/product_launches/${button.dataset.id}/status`, { method: "POST", body: JSON.stringify({ status }) }),
+        "settings-response"
+      );
+    });
+  });
+}
+
+ui.chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  await runChatCommand(UI.chatInput.value);
-  UI.chatInput.value = "";
+  await executeCommand(ui.chatInput.value);
+  ui.chatInput.value = "";
 });
 
-window.addEventListener("hashchange", () => Router.renderCurrent());
+window.addEventListener("hashchange", () => router.render());
 
-ControlCenter.addChat("system", "Treta OS dashboard online.");
-DataSync.refresh();
-setInterval(() => {
-  DataSync.refresh();
-}, AppConfig.refreshIntervalMs);
+startRefreshLoop();
+refreshLoop();
