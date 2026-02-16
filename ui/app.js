@@ -54,6 +54,7 @@ const state = {
     activeExecutionProposalId: "",
     plansByProposal: {},
     activePlanProposalId: "",
+    expandedStrategicAnalyses: {},
     strategyPendingActionsLoading: false,
     strategyPendingActionsLoaded: false,
   },
@@ -860,8 +861,11 @@ const views = {
                 const priority = helpers.t(action.priority, "unknown");
                 const impactScore = helpers.t(action.expected_impact_score, "-");
                 const riskLevel = helpers.t(action.risk_level, "unknown");
+                const actionId = helpers.t(action.id, "");
+                const isAnalysisExpanded = Boolean(state.workView.expandedStrategicAnalyses[actionId]);
+                const payloadJson = helpers.escape(JSON.stringify(action, null, 2));
                 return `
-                  <tr>
+                  <tr class="work-strategy-row">
                     <td>${helpers.escape(actionType)}</td>
                     <td><span class="badge ${helpers.priorityBadgeClass(priority)}">${helpers.escape(priority)}</span></td>
                     <td>${helpers.escape(impactScore)}</td>
@@ -871,6 +875,21 @@ const views = {
                       <div class="card-actions wrap no-margin">
                         <button data-action="work-strategy-execute" data-id="${helpers.escape(action.id)}">Execute</button>
                         <button class="secondary-btn" data-action="work-strategy-reject" data-id="${helpers.escape(action.id)}">Reject</button>
+                        <button class="secondary-btn work-analysis-toggle" data-action="work-strategy-toggle-analysis" data-id="${helpers.escape(action.id)}">${isAnalysisExpanded ? "Hide Analysis" : "View Analysis"}</button>
+                      </div>
+                    </td>
+                  </tr>
+                  <tr class="work-strategy-analysis-row ${isAnalysisExpanded ? "is-expanded" : ""}">
+                    <td colspan="6">
+                      <div class="work-analysis-panel" aria-hidden="${isAnalysisExpanded ? "false" : "true"}">
+                        <dl class="work-analysis-meta">
+                          <div><dt>Risk Level</dt><dd>${helpers.escape(riskLevel)}</dd></div>
+                          <div><dt>Expected Impact Score</dt><dd>${helpers.escape(impactScore)}</dd></div>
+                          <div><dt>Auto Executable</dt><dd>${action.auto_executable ? "Yes" : "No"}</dd></div>
+                          <div><dt>Priority Value</dt><dd>${helpers.escape(priority)}</dd></div>
+                        </dl>
+                        <p class="work-analysis-payload-label">Raw action payload</p>
+                        <pre class="work-analysis-payload">${payloadJson}</pre>
                       </div>
                     </td>
                   </tr>
@@ -1257,6 +1276,10 @@ async function loadWorkStrategyPendingActions() {
   try {
     const pendingData = await api.getPendingStrategyActions();
     state.strategyPendingActions = pendingData.items || pendingData.actions || pendingData.pending_actions || [];
+    const availableIds = new Set(state.strategyPendingActions.map((item) => String(item.id)));
+    state.workView.expandedStrategicAnalyses = Object.fromEntries(
+      Object.entries(state.workView.expandedStrategicAnalyses).filter(([id]) => availableIds.has(String(id)))
+    );
   } catch (error) {
     log("system", `work strategy actions error: ${error.message}`);
   } finally {
@@ -1667,6 +1690,14 @@ function bindWorkActions() {
         "Strategic action rejected."
       );
       await loadWorkStrategyPendingActions();
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='work-strategy-toggle-analysis']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const actionId = helpers.t(button.dataset.id, "");
+      state.workView.expandedStrategicAnalyses[actionId] = !state.workView.expandedStrategicAnalyses[actionId];
+      router.render();
     });
   });
 }
