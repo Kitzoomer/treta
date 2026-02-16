@@ -257,3 +257,43 @@ body[data-route="home"] .mini-status {
   grid-template-columns: 1fr 1fr;
   gap: 16px;
 }
+
+
+.work-execution {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.work-pipeline-overview {
+  display: flex;
+  justify-content: space-between;
+  padding: 16px;
+  gap: 10px;
+}
+
+.work-pipeline-overview .pipeline-step {
+  flex: 1;
+}
+
+.work-active-execution {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.work-backlog {
+  opacity: 0.85;
+}
+
+.secondary-btn {
+  background: #141b2b;
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: .78rem;
+  padding: 6px 8px;
+}
+
+.work-secondary-actions {
+  gap: 4px;
+}
