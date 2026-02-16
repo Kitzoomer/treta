@@ -414,83 +414,38 @@ const views = {
   },
 
   loadWork() {
-    const opportunitiesCount = state.opportunities.length;
-    const proposalStatuses = state.proposals.reduce((acc, item) => {
-      const status = helpers.normalizeStatus(item.status);
-      acc[status] = (acc[status] || 0) + 1;
-      return acc;
-    }, {});
-    const proposalsDraft = proposalStatuses.draft || 0;
-    const buildsInProgress = proposalStatuses.building || 0;
-    const launchedProducts = state.launches.filter((item) => helpers.normalizeStatus(item.status) === "launched").length;
+    const transitionLabels = {
+      approve: "Approve",
+      reject: "Reject",
+      start_build: "Move to Build",
+      ready: "Mark Ready",
+      launch: "Launch Product",
+      archive: "Archive",
+    };
 
     const transitionConfig = {
-      draft: [{ transition: "approve", label: "Edit" }, { transition: "reject", label: "Dismiss" }],
-      approved: [{ transition: "start_build", label: "Start Build" }, { transition: "archive", label: "Archive" }],
-      building: [{ transition: "ready", label: "Mark Ready" }],
-      ready_to_launch: [{ transition: "launch", label: "Launch Product" }],
-      ready_for_review: [{ transition: "launch", label: "Launch Product" }],
-      launched: [{ transition: "archive", label: "Archive" }],
-      rejected: [{ transition: "archive", label: "Archive" }],
+      draft: ["approve", "reject"],
+      approved: ["start_build", "archive"],
+      ready_to_review: ["launch", "archive"],
+      ready_for_review: ["launch", "archive"],
+      ready_to_launch: ["launch", "archive"],
+      building: ["ready"],
+      launched: ["archive"],
+      rejected: ["archive"],
       archived: [],
     };
 
-    const opportunities = state.opportunities.slice(0, 10).map((item) => `
-      <article class="card row-item">
-        <h4>${helpers.t(item.title, item.id)}</h4>
-        <p><span class="badge ${helpers.badgeClass(item.status || item.decision)}">${helpers.t(item.status || item.decision, "pending")}</span>source: ${helpers.t(item.source, "-")}</p>
-        <div class="card-actions work-secondary-actions">
-          <button class="secondary-btn" data-action="eval-opp" data-id="${item.id}">Evaluate</button>
-          <button class="secondary-btn" data-action="dismiss-opp" data-id="${item.id}">Dismiss</button>
-        </div>
-      </article>
-    `).join("") || "<p class='empty'>No opportunities yet. Run a scan to discover new ideas.</p>";
+    const opportunityStatus = (item) => {
+      const normalized = helpers.normalizeStatus(item.status || item.decision || "new");
+      if (["evaluated", "evaluate"].includes(normalized)) return "EVALUATED";
+      if (["dismissed", "dismiss"].includes(normalized)) return "DISMISSED";
+      return "NEW";
+    };
 
-    const activeReadyProposals = state.proposals
-      .filter((item) => helpers.normalizeStatus(item.status) === "ready")
-      .slice(0, 10)
-      .map((item) => `
-        <article class="card row-item">
-          <h4>${helpers.t(item.product_name, item.id)}</h4>
-          <p>
-            <span class="badge ${helpers.badgeClass(item.status)}">${helpers.statusLabel(item.status)}</span>
-          </p>
-          <div class="card-actions">
-            <button data-action="proposal" data-transition="launch" data-id="${item.id}">Launch Product</button>
-          </div>
-        </article>
-      `).join("") || "<p class='empty'>No ready proposals in execution.</p>";
-
-    const activeBuilds = state.proposals
-      .filter((item) => helpers.normalizeStatus(item.status) === "building")
-      .slice(0, 10)
-      .map((item) => `
-        <article class="card row-item">
-          <h4>${helpers.t(item.product_name, item.id)}</h4>
-          <p><span class="badge ${helpers.badgeClass(item.status)}">${helpers.statusLabel(item.status)}</span></p>
-          <div class="card-actions">
-            <button data-action="proposal" data-transition="ready" data-id="${item.id}">Mark Ready</button>
-          </div>
-        </article>
-      `).join("") || "<p class='empty'>No builds in progress.</p>";
-
-    const activeReadyToLaunch = state.proposals
-      .filter((item) => helpers.normalizeStatus(item.status) === "ready_to_launch")
-      .slice(0, 10)
-      .map((item) => `
-        <article class="card row-item">
-          <h4>${helpers.t(item.product_name, item.id)}</h4>
-          <p><span class="badge ${helpers.badgeClass(item.status)}">${helpers.statusLabel(item.status)}</span></p>
-          <div class="card-actions">
-            <button data-action="proposal" data-transition="launch" data-id="${item.id}">Launch Product</button>
-          </div>
-        </article>
-      `).join("") || "<p class='empty'>No products ready to launch.</p>";
-
-    const draftProposals = state.proposals.filter((item) => helpers.normalizeStatus(item.status) === "draft").slice(0, 10).map((item) => {
+    const renderProposal = (item) => {
       const status = helpers.normalizeStatus(item.status);
-      const actions = (transitionConfig[status] || []).map((action) => (
-        `<button class="secondary-btn" data-action="proposal" data-transition="${action.transition}" data-id="${item.id}">${action.label}</button>`
+      const actions = (transitionConfig[status] || []).map((transition) => (
+        `<button class="secondary-btn" data-action="proposal" data-transition="${transition}" data-id="${item.id}">${transitionLabels[transition] || helpers.statusLabel(transition)}</button>`
       )).join("");
 
       return `
@@ -505,7 +460,45 @@ const views = {
           </div>
         </article>
       `;
-    }).join("") || "<p class='empty'>No proposals yet. Evaluate opportunities to create proposals.</p>";
+    };
+
+    const opportunities = state.opportunities.slice(0, 10).map((item) => {
+      const status = opportunityStatus(item);
+      return `
+        <article class="card row-item">
+          <h4>${helpers.t(item.title, item.id)}</h4>
+          <p>
+            <span class="badge ${helpers.badgeClass(status)}">${status}</span>
+            source: ${helpers.t(item.source, "-")}
+          </p>
+          <div class="card-actions work-secondary-actions">
+            <button class="secondary-btn" data-action="eval-opp" data-id="${item.id}">Evaluate</button>
+            <button class="secondary-btn" data-action="dismiss-opp" data-id="${item.id}">Dismiss</button>
+          </div>
+        </article>
+      `;
+    }).join("") || "<p class='empty'>No opportunities yet. Run a scan to discover new ideas.</p>";
+
+    const proposalGroups = [
+      { key: "draft", title: "Draft" },
+      { key: "ready_to_review", title: "Ready to Review", aliases: ["ready_for_review"] },
+      { key: "ready_to_launch", title: "Ready to Launch" },
+      { key: "building", title: "Building" },
+    ].map((group) => {
+      const statuses = [group.key, ...(group.aliases || [])];
+      const cards = state.proposals
+        .filter((item) => statuses.includes(helpers.normalizeStatus(item.status)))
+        .slice(0, 10)
+        .map(renderProposal)
+        .join("") || `<p class='empty'>No proposals in ${group.title.toLowerCase()}.</p>`;
+
+      return `
+        <section class="work-status-group">
+          <h4>${group.title}</h4>
+          ${cards}
+        </section>
+      `;
+    }).join("");
 
     const launchesRows = state.launches.slice(0, 20).map((item) => {
       const launchId = helpers.t(item.id, "-");
@@ -520,7 +513,7 @@ const views = {
           <td>${helpers.t(item.gumroad_product_id)}</td>
           <td>${helpers.t(item.last_synced_at)}</td>
           <td>
-            <div class="inline-form-grid">
+            <div class="inline-form-grid launch-actions-inline">
               <div class="inline-control-group">
                 <label>Amount</label>
                 <input type="number" step="0.01" min="0" data-launch-input="sale" data-id="${helpers.t(item.id)}" placeholder="0.00">
@@ -584,46 +577,62 @@ const views = {
 
     this.shell("Work", "Execution pipeline with guided lifecycle", `
       <section class="work-execution">
-        <div class="card work-pipeline-overview">
-          <div class="pipeline-step"><span>Opportunities</span><strong>${opportunitiesCount}</strong></div>
-          <div class="pipeline-step"><span>Drafts</span><strong>${proposalsDraft}</strong></div>
-          <div class="pipeline-step"><span>Building</span><strong>${buildsInProgress}</strong></div>
-          <div class="pipeline-step"><span>Launched</span><strong>${launchedProducts}</strong></div>
-        </div>
+        <article class="card work-section">
+          <header class="work-section-header">
+            <h3>Opportunities</h3>
+            <p class="muted-note">New market signals detected. Evaluate or dismiss before generating products.</p>
+          </header>
+          ${opportunities}
+        </article>
 
-        <div class="work-active-execution">
-          <article class="card">
-            <h3>Ready Proposals</h3>
-            ${activeReadyProposals}
-          </article>
+        <article class="card work-section">
+          <header class="work-section-header">
+            <h3>Product Proposals</h3>
+            <p class="muted-note">Validated product concepts ready for build, launch, or archive.</p>
+          </header>
+          <div class="work-proposals-grid">
+            ${proposalGroups}
+          </div>
+        </article>
 
-          <article class="card">
-            <h3>Builds In Progress</h3>
-            ${activeBuilds}
-          </article>
-
-          <article class="card">
-            <h3>Products Ready to Launch</h3>
-            ${activeReadyToLaunch}
-          </article>
-        </div>
-
-        <div class="work-backlog card">
-          <h3>Backlog</h3>
-          <section>
-            <h4>New Opportunities</h4>
-            ${opportunities}
-          </section>
-          <section>
-            <h4>Draft Proposals</h4>
-            ${draftProposals}
-          </section>
-        </div>
-
-        <article class="card">
-          <h3>Launches</h3>
+        <article class="card work-section">
+          <header class="work-section-header">
+            <h3>Build &amp; Execution</h3>
+            <p class="muted-note">Manage product plans and generate execution packages.</p>
+          </header>
           <div class="work-table-wrap">
             <table class="work-table">
+              <thead>
+                <tr>
+                  <th>Proposal ID</th>
+                  <th>Product</th>
+                  <th>Status</th>
+                  <th>Execution package</th>
+                  <th>Plans</th>
+                </tr>
+              </thead>
+              <tbody>${proposalActionRows}</tbody>
+            </table>
+          </div>
+          <div class="work-preview-grid">
+            <section class="work-preview-panel">
+              <h3>Execution Package Preview</h3>
+              ${renderExecutionPackagePreview(selectedExecutionId, selectedExecutionPackage)}
+            </section>
+            <section class="work-preview-panel">
+              <h3>Product Plan Viewer</h3>
+              ${renderPlanPreview(selectedPlanId, selectedPlan)}
+            </section>
+          </div>
+        </article>
+
+        <article class="card work-section">
+          <header class="work-section-header">
+            <h3>Launches</h3>
+            <p class="muted-note">Live products and revenue tracking.</p>
+          </header>
+          <div class="work-table-wrap">
+            <table class="work-table work-launch-table">
               <thead>
                 <tr>
                   <th>ID</th>
@@ -639,34 +648,6 @@ const views = {
               <tbody>${launchesRows}</tbody>
             </table>
           </div>
-        </article>
-
-        <article class="card">
-          <h3>Execution Package + Plans</h3>
-          <div class="work-table-wrap">
-            <table class="work-table">
-              <thead>
-                <tr>
-                  <th>Proposal ID</th>
-                  <th>Product</th>
-                  <th>Status</th>
-                  <th>Execution package</th>
-                  <th>Plans</th>
-                </tr>
-              </thead>
-              <tbody>${proposalActionRows}</tbody>
-            </table>
-          </div>
-        </article>
-
-        <article class="card">
-          <h3>Execution Package Preview</h3>
-          ${renderExecutionPackagePreview(selectedExecutionId, selectedExecutionPackage)}
-        </article>
-
-        <article class="card">
-          <h3>Product Plan Viewer</h3>
-          ${renderPlanPreview(selectedPlanId, selectedPlan)}
         </article>
 
         <article class="card"><h3>Action output</h3><section id="work-response" class="result-box">Ready.</section></article>
