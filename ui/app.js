@@ -306,9 +306,9 @@ const views = {
       return acc;
     }, {});
 
-    const opportunitiesCount = state.opportunities.length;
     const buildsCount = state.proposals.filter((item) => ["approved", "building", "ready_to_launch", "ready_for_review"].includes(helpers.normalizeStatus(item.status))).length;
     const activeLaunches = state.launches.filter((item) => helpers.normalizeStatus(item.status) === "active").length;
+    const stalledLaunches = state.launches.filter((item) => helpers.normalizeStatus(item.status) === "stalled").length;
     const readyToLaunch = (proposalsByStatus.ready_to_launch || 0) + (proposalsByStatus.ready_for_review || 0);
     const draftCount = proposalsByStatus.draft || 0;
     const approvedCount = proposalsByStatus.approved || 0;
@@ -322,71 +322,108 @@ const views = {
       return "IDLE";
     })();
 
-    const primaryAction = (() => {
-      if (opportunitiesCount === 0) {
-        return {
-          key: "scan",
-          buttonLabel: "Run Opportunity Scan",
-        };
-      }
-      if (draftCount > 0) {
-        return {
-          key: "review",
-          buttonLabel: "Review Drafts",
-        };
-      }
-      if (approvedCount > 0) {
-        return {
-          key: "start-build",
-          buttonLabel: "Start Build",
-        };
-      }
-      if (readyToLaunch > 0) {
-        return {
-          key: "launch",
-          buttonLabel: "Launch Product",
-        };
-      }
-      return {
-        key: "scan",
-        buttonLabel: "Run Opportunity Scan",
-      };
-    })();
-
-    const strategicFocus = (() => {
-      if (activeLaunches > 0) return "Monitoring live launches.";
-      if (buildsInProgress > 0 || readyToLaunch > 0) return "Shipping current builds.";
-      if (draftCount > 0) return "Converting drafts into products.";
-      return "Acquiring new opportunities.";
-    })();
-
-    const systemHealth = (() => {
-      if (opportunitiesCount === 0 && draftCount === 0 && buildsCount === 0) {
-        return { label: "Critical", tone: "error" };
-      }
-      if (draftCount > 0 && buildsCount === 0) {
-        return { label: "Attention Needed", tone: "warn" };
-      }
-      return { label: "Healthy", tone: "ok" };
-    })();
-
-    const modeHelper = (() => {
-      if (systemMode === "LAUNCHING") return "Launches are active and being monitored.";
-      if (systemMode === "BUILDING") return "Products are moving through build execution.";
-      if (systemMode === "SCANNING") return "Opportunity discovery and proposal review are in progress.";
-      return "No active pipeline movement detected.";
-    })();
-
     const dashboardView = state.dashboardView;
     const pendingActions = dashboardView.pendingActions || [];
+    const sortedStrategicActions = [...pendingActions].sort((left, right) => {
+      const priorityRank = { high: 3, medium: 2, low: 1 };
+      const leftPriority = priorityRank[helpers.normalizeStatus(left.priority)] || 0;
+      const rightPriority = priorityRank[helpers.normalizeStatus(right.priority)] || 0;
+      if (leftPriority !== rightPriority) return rightPriority - leftPriority;
+      return helpers.actionImpactScore(right) - helpers.actionImpactScore(left);
+    });
 
-    const renderDashboardStrategyActions = () => {
+    const topStrategicActions = sortedStrategicActions.slice(0, 3);
+    const topStrategicAction = sortedStrategicActions[0] || null;
+    const highRiskAction = sortedStrategicActions.find((item) => helpers.normalizeStatus(item.risk_level) === "high");
+    const highPriorityCount = pendingActions.filter((item) => helpers.normalizeStatus(item.priority) === "high").length;
+
+    const autonomyStatus = state.strategyView.autonomyStatus || {};
+    const autonomyRaw = helpers.normalizeStatus(autonomyStatus.mode || autonomyStatus.autonomy_mode || "manual");
+    const autonomyMode = autonomyRaw.includes("partial") ? "PARTIAL-AUTO" : "MANUAL";
+
+    const pipelineHealth = (() => {
+      const hasPipeline = state.proposals.length > 0 || buildsCount > 0 || activeLaunches > 0;
+      if (highRiskAction) return { label: "ATTENTION", tone: "warn" };
+      if (hasPipeline) return { label: "GOOD", tone: "ok" };
+      return { label: "IDLE", tone: "info" };
+    })();
+
+    const activeRisk = highRiskAction
+      ? { label: "HIGH", tone: "error" }
+      : sortedStrategicActions.some((item) => helpers.normalizeStatus(item.risk_level) === "medium")
+        ? { label: "MEDIUM", tone: "warn" }
+        : sortedStrategicActions.length
+          ? { label: "LOW", tone: "ok" }
+          : { label: "NONE", tone: "info" };
+
+    const renderGlobalStatus = () => `
+      <article class="card mission-global-status">
+        <h3>Global Status</h3>
+        <div class="mission-status-strip">
+          <span class="mission-status-item">SYSTEM MODE <strong class="badge ${helpers.badgeClass(systemMode)}">${helpers.escape(systemMode)}</strong></span>
+          <span class="mission-status-item">ACTIVE RISK <strong class="badge ${activeRisk.tone}">${helpers.escape(activeRisk.label)}</strong></span>
+          <span class="mission-status-item">AUTONOMY MODE <strong class="badge info">${helpers.escape(autonomyMode)}</strong></span>
+          <span class="mission-status-item">PIPELINE HEALTH <strong class="badge ${pipelineHealth.tone}">${helpers.escape(pipelineHealth.label)}</strong></span>
+        </div>
+      </article>
+    `;
+
+    const renderAttentionBlock = () => {
+      const lines = [];
+      if (highPriorityCount > 0) lines.push(`<li><strong>${highPriorityCount}</strong> high-priority strategic action${highPriorityCount === 1 ? "" : "s"} pending.</li>`);
+      if (draftCount > 0) lines.push(`<li><strong>${draftCount}</strong> draft proposal${draftCount === 1 ? "" : "s"} awaiting review.</li>`);
+      if (stalledLaunches > 0) lines.push(`<li><strong>${stalledLaunches}</strong> launch${stalledLaunches === 1 ? "" : "es"} marked stalled.</li>`);
+
+      const resolveCta = highRiskAction
+        ? `<a class="primary-action-btn" href="#dashboard-strategic-actions">Resolve Highest Priority</a>`
+        : draftCount > 0
+          ? `<a class="primary-action-btn" href="#/work">Resolve Highest Priority</a>`
+          : `<button class="primary-action-btn" disabled>Resolve Highest Priority</button>`;
+
+      return `
+        <article class="card mission-attention">
+          <h3>🚨 WHAT NEEDS ATTENTION</h3>
+          ${lines.length ? `<ul class="mission-actionable-list">${lines.join("")}</ul>` : "<p class='empty'>No urgent items right now.</p>"}
+          <div class="card-actions">${resolveCta}</div>
+        </article>
+      `;
+    };
+
+    const renderRevenueFocus = () => {
+      const totalRevenue = Number(state.performance.total_revenue || 0);
+      const revenueTrend = totalRevenue > 0 ? "Positive" : "Flat";
+      const highConfidenceDraft = state.proposals.find((item) => {
+        const status = helpers.normalizeStatus(item.status);
+        const confidence = Number(item.confidence || 0);
+        return status === "draft" && confidence >= 0.8;
+      });
+
+      const bestLeverageAction = readyToLaunch > 0
+        ? "Launch product"
+        : highConfidenceDraft
+          ? "Approve proposal"
+          : "Run opportunity scan";
+
+      return `
+        <article class="card mission-revenue-focus">
+          <h3>💰 REVENUE FOCUS</h3>
+          <section class="card-grid cols-2">
+            <div class="metric"><span>Total revenue</span><strong>${helpers.escape(helpers.t(state.performance.total_revenue, 0))}</strong></div>
+            <div class="metric"><span>Revenue trend</span><strong>${helpers.escape(revenueTrend)}</strong></div>
+            <div class="metric"><span>Best leverage action</span><strong>${helpers.escape(bestLeverageAction)}</strong></div>
+            <div class="metric"><span>Projected impact</span><strong>${helpers.escape(helpers.t(topStrategicAction?.expected_impact_score, "-"))}</strong></div>
+          </section>
+        </article>
+      `;
+    };
+
+    const renderStrategicCompact = () => {
       if (dashboardView.loading) return "<p class='empty'>Loading pending strategic actions…</p>";
-      if (!pendingActions.length) return "<p class='empty'>No pending strategic actions.</p>";
+      if (!topStrategicActions.length) return "<p class='empty'>No pending strategic actions.</p>";
 
       return `
         <div class="dashboard-strategy-list">
-          ${pendingActions.map((item) => {
+          ${topStrategicActions.map((item) => {
             const priority = helpers.t(item.priority, "Unknown");
             const risk = helpers.t(item.risk_level, "Unknown");
             const actionType = helpers.t(item.action_type || item.type || item.title || item.name, "Unknown");
@@ -407,6 +444,7 @@ const views = {
             `;
           }).join("")}
         </div>
+        <a class="dashboard-strategy-view-all" href="#/strategy">View All in Strategy</a>
       `;
     };
 
@@ -415,52 +453,15 @@ const views = {
 
     this.shell("Dashboard", "Operational summary and next best action", `
       <section class="os-dashboard">
-        <article class="card os-system-mode">
-          <h3>System Mode</h3>
-          <div class="system-mode-badge ${helpers.badgeClass(systemMode)}">${systemMode}</div>
-          <p class="system-mode-helper">${modeHelper}</p>
-        </article>
+        ${renderGlobalStatus()}
+        ${renderAttentionBlock()}
+        ${renderRevenueFocus()}
 
-        <article class="card os-primary-action">
-          <h3>Primary Action</h3>
-          <button class="primary-action-btn" data-action="dashboard-primary" data-primary-action="${primaryAction.key}">${primaryAction.buttonLabel}</button>
-          <p>Treta recommends this as your next highest-leverage action.</p>
-        </article>
-
-        <article class="card os-strategic-focus">
-          <h3>Strategic Focus</h3>
-          <p>${strategicFocus}</p>
-        </article>
-
-        <article class="card os-system-health">
-          <span>System Health:</span>
-          <span class="badge ${systemHealth.tone}">${systemHealth.label}</span>
-        </article>
-
-        <section class="os-key-metrics">
-          <article class="card">
-            <h3>Opportunities</h3>
-            <div class="metric"><strong>${opportunitiesCount}</strong></div>
-          </article>
-          <article class="card">
-            <h3>Draft Proposals</h3>
-            <div class="metric"><strong>${draftCount}</strong></div>
-          </article>
-          <article class="card">
-            <h3>Active Builds</h3>
-            <div class="metric"><strong>${buildsCount}</strong></div>
-          </article>
-          <article class="card">
-            <h3>Total Revenue</h3>
-            <div class="metric"><strong>${helpers.t(state.performance.total_revenue, 0)}</strong></div>
-          </article>
-        </section>
-
-        <article class="card os-strategic-actions">
+        <article class="card os-strategic-actions" id="dashboard-strategic-actions">
           <h3>🧠 STRATEGIC ACTIONS</h3>
           ${strategyError}
           ${strategyFeedback}
-          ${renderDashboardStrategyActions()}
+          ${renderStrategicCompact()}
         </article>
       </section>
     `);
