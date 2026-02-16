@@ -1,5 +1,5 @@
 const CONFIG = {
-  routes: ["home", "dashboard", "work", "profile", "game", "settings"],
+  routes: ["home", "dashboard", "work", "profile", "game", "strategy", "settings"],
   defaultRoute: "home",
   defaultRefreshMs: 3000,
   maxEventStream: 10,
@@ -13,6 +13,7 @@ const STORAGE_KEYS = {
 
 const ACTION_TARGETS = {
   work: "work-response",
+  strategy: "strategy-response",
   settings: "settings-response",
 };
 
@@ -24,6 +25,15 @@ const state = {
   launches: [],
   performance: {},
   strategy: {},
+  strategyView: {
+    pendingActions: [],
+    recommendation: {},
+    autonomyStatus: {},
+    adaptiveStatus: {},
+    loading: false,
+    loaded: false,
+    error: "",
+  },
   logs: [{ role: "system", message: "Treta mini-OS online." }],
   debugMode: localStorage.getItem(STORAGE_KEYS.debug) === "true",
   refreshMs: Number(localStorage.getItem(STORAGE_KEYS.refreshMs) || CONFIG.defaultRefreshMs),
@@ -107,6 +117,21 @@ const api = {
   getStrategyRecommendations() {
     return this.fetchJson("/strategy/recommendations");
   },
+  getPendingStrategyActions() {
+    return this.fetchJson("/strategy/pending_actions");
+  },
+  executeStrategyAction(id) {
+    return this.fetchJson(`/strategy/execute_action/${id}`, { method: "POST", body: JSON.stringify({}) });
+  },
+  rejectStrategyAction(id) {
+    return this.fetchJson(`/strategy/reject_action/${id}`, { method: "POST", body: JSON.stringify({}) });
+  },
+  getAutonomyStatus() {
+    return this.fetchJson("/autonomy/status");
+  },
+  getAutonomyAdaptiveStatus() {
+    return this.fetchJson("/autonomy/adaptive_status");
+  },
 };
 
 const helpers = {
@@ -155,6 +180,7 @@ const router = {
     if (state.currentRoute === "work") return views.loadWork();
     if (state.currentRoute === "profile") return views.loadProfile();
     if (state.currentRoute === "game") return views.loadGame();
+    if (state.currentRoute === "strategy") return views.loadStrategy();
     return views.loadSettings();
   },
 };
@@ -522,7 +548,97 @@ const views = {
       log("system", "UI cache cleared.");
     });
   },
+
+  loadStrategy() {
+    const strategyView = state.strategyView;
+    const pendingActions = strategyView.pendingActions || [];
+    const recommendation = strategyView.recommendation || {};
+    const autonomyStatus = strategyView.autonomyStatus || {};
+    const adaptiveStatus = strategyView.adaptiveStatus || {};
+
+    const pendingMarkup = strategyView.loading
+      ? "<p class='empty'>Loading pending actions…</p>"
+      : pendingActions.map((item) => `
+        <article class="card row-item">
+          <h4>${helpers.t(item.title, item.id)}</h4>
+          <p>
+            <span class="badge info">Type: ${helpers.t(item.type)}</span>
+            <span class="badge ${helpers.badgeClass(item.risk_level)}">Risk: ${helpers.t(item.risk_level, "unknown")}</span>
+          </p>
+          <p>
+            <span class="badge warn">Impact: ${helpers.t(item.expected_impact_score, 0)}</span>
+            <span class="badge ${item.auto_executable ? "ok" : "warn"}">Auto executable: ${item.auto_executable ? "Yes" : "No"}</span>
+          </p>
+          <div class="card-actions wrap">
+            <button data-action="strategy-execute" data-id="${item.id}">Execute</button>
+            <button class="secondary-btn" data-action="strategy-reject" data-id="${item.id}">Reject</button>
+          </div>
+        </article>
+      `).join("") || "<p class='empty'>No pending strategic actions.</p>";
+
+    const strategyError = strategyView.error ? `<p class="empty">${helpers.escape(strategyView.error)}</p>` : "";
+
+    this.shell("Strategy", "Strategic decisions and autonomy controls", `
+      <section class="stack">
+        <article class="card">
+          <h3>Pending Strategic Actions</h3>
+          ${strategyError}
+          ${pendingMarkup}
+          <section id="strategy-response" class="result-box">Ready.</section>
+        </article>
+
+        <article class="card recommendation-card">
+          <h3>Strategy Recommendation</h3>
+          <p><strong>Focus area:</strong> ${helpers.t(recommendation.focus_area)}</p>
+          <p><strong>Summary:</strong> ${helpers.t(recommendation.summary_text || recommendation.summary)}</p>
+          <p><strong>Priority level:</strong> ${helpers.t(recommendation.priority_level)}</p>
+          <p><strong>Suggested next move:</strong> ${helpers.t(recommendation.suggested_next_move)}</p>
+        </article>
+
+        <article class="card">
+          <h3>Autonomy Status</h3>
+          <section class="card-grid cols-2">
+            <div class="metric"><span>Autonomy mode</span><strong>${helpers.t(autonomyStatus.mode || autonomyStatus.autonomy_mode)}</strong></div>
+            <div class="metric"><span>Max auto executions/day</span><strong>${helpers.t(autonomyStatus.max_auto_executions_per_day)}</strong></div>
+            <div class="metric"><span>Impact threshold</span><strong>${helpers.t(autonomyStatus.impact_threshold)}</strong></div>
+            <div class="metric"><span>Current success rate</span><strong>${helpers.t(adaptiveStatus.current_success_rate || adaptiveStatus.success_rate)}</strong></div>
+          </section>
+        </article>
+      </section>
+    `);
+
+    bindStrategyActions();
+    if (!strategyView.loading && !strategyView.loaded) {
+      loadStrategyData();
+    }
+  },
 };
+
+async function loadStrategyData() {
+  state.strategyView.loading = true;
+  state.strategyView.error = "";
+  if (state.currentRoute === "strategy") router.render();
+  try {
+    const [pendingData, recommendationData, autonomyData, adaptiveData] = await Promise.all([
+      api.getPendingStrategyActions(),
+      api.getStrategyRecommendations(),
+      api.getAutonomyStatus(),
+      api.getAutonomyAdaptiveStatus(),
+    ]);
+
+    state.strategyView.pendingActions = pendingData.items || pendingData.actions || pendingData.pending_actions || [];
+    state.strategyView.recommendation = recommendationData || {};
+    state.strategyView.autonomyStatus = autonomyData || {};
+    state.strategyView.adaptiveStatus = adaptiveData || {};
+  } catch (error) {
+    state.strategyView.error = `strategy data error: ${error.message}`;
+    log("system", state.strategyView.error);
+  } finally {
+    state.strategyView.loading = false;
+    state.strategyView.loaded = true;
+    if (state.currentRoute === "strategy") router.render();
+  }
+}
 
 function renderEditableMetric(key, label) {
   return `<label>${label}<input id="profile-${key}" type="number" value="${helpers.t(state.profile[key], 0)}"></label>`;
@@ -743,6 +859,22 @@ function bindDashboardActions() {
         router.navigate("work");
         log("system", "Navigated to Work to complete the recommended action.");
       }
+    });
+  });
+}
+
+function bindStrategyActions() {
+  ui.pageContent.querySelectorAll("button[data-action='strategy-execute']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await runAction(() => api.executeStrategyAction(button.dataset.id), ACTION_TARGETS.strategy);
+      await loadStrategyData();
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='strategy-reject']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await runAction(() => api.rejectStrategyAction(button.dataset.id), ACTION_TARGETS.strategy);
+      await loadStrategyData();
     });
   });
 }
