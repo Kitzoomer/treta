@@ -383,9 +383,9 @@ function renderAttentionBlock(stateSnapshot) {
     <div class="card attention-card">
       <h3>What Needs Attention</h3>
       <p>${decision.label}</p>
-      <button 
+      <button
         class="btn btn-primary"
-        data-route="${decision.route}"
+        data-route="#/${decision.route}"
       >
         ${decision.cta}
       </button>
@@ -1087,12 +1087,8 @@ function renderEditableMetric(key, label) {
 function renderNavigation() {
   const active = state.currentRoute;
   ui.pageNav.innerHTML = CONFIG.routes
-    .map((route) => `<button class="nav-btn ${route === active ? "active" : ""}" data-route="${route}">${route[0].toUpperCase()}${route.slice(1)}</button>`)
+    .map((route) => `<button class="nav-btn ${route === active ? "active" : ""}" data-route="#/${route}">${route[0].toUpperCase()}${route.slice(1)}</button>`)
     .join("");
-
-  ui.pageNav.querySelectorAll("button[data-route]").forEach((button) => {
-    button.addEventListener("click", () => router.navigate(button.dataset.route));
-  });
 }
 
 function log(role, message) {
@@ -1609,8 +1605,11 @@ function bindStrategyActions() {
 }
 
 document.addEventListener("click", (e) => {
-  const route = e.target.dataset.route;
-  if (route) {
+  const el = e.target.closest("[data-route]");
+  if (!el) return;
+
+  const route = el.dataset.route;
+  if (route && location.hash !== route) {
     location.hash = route;
   }
 });
