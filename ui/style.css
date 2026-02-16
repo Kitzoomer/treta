@@ -341,6 +341,71 @@ pre { white-space: pre-wrap; background: #0b1020; border: 1px solid var(--border
   gap: 16px;
 }
 
+.os-strategic-actions {
+  padding: 16px;
+}
+
+.dashboard-strategy-list {
+  display: grid;
+  gap: 10px;
+}
+
+.dashboard-strategy-card {
+  border: 1px solid rgba(217,31,51,.28);
+  border-radius: 8px;
+  padding: 10px;
+  background: #0b1020;
+}
+
+.dashboard-strategy-card p {
+  margin: 6px 0;
+}
+
+.dashboard-strategy-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.dashboard-risk-badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: .75rem;
+  border: 1px solid transparent;
+}
+
+.dashboard-risk-badge.risk-high {
+  color: #ffb3b0;
+  background: rgba(239,83,80,.2);
+  border-color: rgba(239,83,80,.35);
+}
+
+.dashboard-risk-badge.risk-medium {
+  color: #ffe39b;
+  background: rgba(245,201,56,.18);
+  border-color: rgba(245,201,56,.35);
+}
+
+.dashboard-risk-badge.risk-low {
+  color: #a8ffd8;
+  background: rgba(48,196,141,.18);
+  border-color: rgba(48,196,141,.35);
+}
+
+.dashboard-risk-badge.risk-neutral {
+  color: #c7cfdf;
+  background: rgba(110,122,140,.22);
+  border-color: rgba(110,122,140,.35);
+}
+
+.dashboard-strategy-feedback {
+  margin: 4px 0 10px;
+  color: #9ee7bf;
+  font-size: .82rem;
+}
+
 
 
 .work-execution {
