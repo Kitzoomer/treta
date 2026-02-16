@@ -482,9 +482,16 @@ pre { white-space: pre-wrap; background: #0b1020; border: 1px solid var(--border
   margin-bottom: 0;
 }
 
+.work-stage-counters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
 .work-proposals-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   min-width: 0;
 }
@@ -499,6 +506,18 @@ pre { white-space: pre-wrap; background: #0b1020; border: 1px solid var(--border
 
 .work-status-group h4 {
   margin-bottom: 10px;
+}
+
+@media (max-width: 1200px) {
+  .work-proposals-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .work-proposals-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .work-preview-grid {
