@@ -297,3 +297,21 @@ body[data-route="home"] .mini-status {
 .work-secondary-actions {
   gap: 4px;
 }
+
+
+.strategy-health-card {
+  border-color: rgba(217,31,51,.45);
+}
+
+.strategy-group-block {
+  margin-top: 10px;
+}
+
+.strategy-group-title {
+  margin: 0 0 6px;
+  color: #ffd7dc;
+}
+
+.strategy-action-card {
+  border-color: rgba(217,31,51,.35);
+}
