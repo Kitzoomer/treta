@@ -254,67 +254,58 @@ const helpers = {
 };
 
 function computePrimaryAttention(stateSnapshot) {
-  const priorityRank = { high: 3, medium: 2, low: 1 };
-  const pendingActions = Array.isArray(stateSnapshot.strategyPendingActions) ? stateSnapshot.strategyPendingActions : [];
-  const proposals = Array.isArray(stateSnapshot.proposals) ? stateSnapshot.proposals : [];
-  const launches = Array.isArray(stateSnapshot.launches) ? stateSnapshot.launches : [];
-  const opportunities = Array.isArray(stateSnapshot.opportunities) ? stateSnapshot.opportunities : [];
+  const {
+    strategyPendingActions = [],
+    proposals = [],
+    launches = [],
+    opportunities = [],
+    systemMode,
+  } = stateSnapshot || {};
 
-  const sortedActions = [...pendingActions].sort((left, right) => {
-    const leftPriority = priorityRank[helpers.normalizeStatus(left?.priority)] || 0;
-    const rightPriority = priorityRank[helpers.normalizeStatus(right?.priority)] || 0;
-    if (leftPriority !== rightPriority) return rightPriority - leftPriority;
-    return helpers.actionImpactScore(right) - helpers.actionImpactScore(left);
-  });
+  if (strategyPendingActions.length > 0) {
+    const sorted = [...strategyPendingActions].sort((a, b) => {
+      const pDiff = (b.priority || 0) - (a.priority || 0);
+      if (pDiff !== 0) return pDiff;
+      return (b.expected_impact_score || 0) - (a.expected_impact_score || 0);
+    });
 
-  if (sortedActions.length > 0) {
-    const topAction = sortedActions[0];
-    const topPriority = priorityRank[helpers.normalizeStatus(topAction?.priority)] || 0;
     return {
       type: "strategy",
-      priorityScore: topPriority * 100 + helpers.actionImpactScore(topAction),
+      priorityScore: sorted[0].priority || 0,
       label: "High-priority strategic action requires review",
       route: "#/strategy",
       cta: "Review Strategic Action",
     };
   }
 
-  const draftProposals = proposals.filter((item) => helpers.normalizeStatus(item?.status) === "draft");
-  if (draftProposals.length > 0) {
+  const drafts = proposals.filter((p) => p.status === "draft");
+  if (drafts.length > 0) {
     return {
       type: "draft",
-      priorityScore: 300,
+      priorityScore: 2,
       label: "Draft proposals awaiting approval",
       route: "#/work",
       cta: "Review Drafts",
     };
   }
 
-  const readyLaunches = launches.filter((item) => {
-    const status = helpers.normalizeStatus(item?.status);
-    if (status === "launched") return false;
-    if (Boolean(item?.ready)) return true;
-    return ["ready", "ready_to_launch", "ready_for_review"].includes(status);
-  });
-  if (readyLaunches.length > 0) {
+  const launchReady = launches.filter((l) => l.status && l.status !== "launched");
+
+  if (launchReady.length > 0) {
     return {
       type: "launch",
-      priorityScore: 200,
+      priorityScore: 1,
       label: "Launch-ready product pending release",
       route: "#/work",
       cta: "Finalize Launch",
     };
   }
 
-  const hasOpportunities = opportunities.length > 0;
-  const hasEvaluatedOpportunity = opportunities.some((item) => {
-    const status = helpers.normalizeStatus(item?.status || item?.decision);
-    return ["evaluated", "evaluate"].includes(status);
-  });
-  if (hasOpportunities && !hasEvaluatedOpportunity) {
+  const newOpps = opportunities.filter((o) => o.status === "new");
+  if (newOpps.length > 0) {
     return {
       type: "scan",
-      priorityScore: 100,
+      priorityScore: 0,
       label: "New opportunities detected",
       route: "#/work",
       cta: "Evaluate Opportunities",
@@ -322,6 +313,35 @@ function computePrimaryAttention(stateSnapshot) {
   }
 
   return null;
+}
+
+function renderAttentionBlock(stateSnapshot) {
+  const decision = computePrimaryAttention(stateSnapshot);
+
+  if (!decision) {
+    return `
+      <div class="card attention-card">
+        <h3>What Needs Attention</h3>
+        <p>System operating within normal parameters.</p>
+        <button class="btn btn-primary" disabled>
+          No Immediate Action Required
+        </button>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="card attention-card">
+      <h3>What Needs Attention</h3>
+      <p>${decision.label}</p>
+      <button 
+        class="btn btn-primary"
+        data-route="${decision.route}"
+      >
+        ${decision.cta}
+      </button>
+    </div>
+  `;
 }
 
 const router = {
@@ -437,27 +457,12 @@ const views = {
       </article>
     `;
 
-    const primaryAttention = computePrimaryAttention({
+    const attentionState = {
       strategyPendingActions: pendingActions,
       proposals: state.proposals,
       launches: state.launches,
       opportunities: state.opportunities,
       systemMode,
-    });
-
-    const renderAttentionBlock = () => {
-      const label = primaryAttention?.label || "System operating within normal parameters.";
-      const cta = primaryAttention
-        ? `<a class="primary-action-btn" href="${helpers.escape(primaryAttention.route)}">${helpers.escape(primaryAttention.cta)}</a>`
-        : '<button class="primary-action-btn" disabled>No Immediate Action Required</button>';
-
-      return `
-        <article class="card mission-attention">
-          <h3>🚨 WHAT NEEDS ATTENTION</h3>
-          <p>${helpers.escape(label)}</p>
-          <div class="card-actions">${cta}</div>
-        </article>
-      `;
     };
 
     const renderRevenueFocus = () => {
@@ -525,7 +530,7 @@ const views = {
     this.shell("Dashboard", "Operational summary and next best action", `
       <section class="os-dashboard">
         ${renderGlobalStatus()}
-        ${renderAttentionBlock()}
+        ${renderAttentionBlock(attentionState)}
         ${renderRevenueFocus()}
 
         <article class="card os-strategic-actions" id="dashboard-strategic-actions">
@@ -1553,6 +1558,13 @@ function bindStrategyActions() {
     });
   });
 }
+
+document.addEventListener("click", (e) => {
+  const route = e.target.dataset.route;
+  if (route) {
+    location.hash = route;
+  }
+});
 
 ui.chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
