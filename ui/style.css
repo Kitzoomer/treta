@@ -227,3 +227,33 @@ body[data-route="home"] .mini-status {
   opacity: .65;
   background: linear-gradient(135deg, #394157, #242b3e);
 }
+
+.os-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.os-system-mode {
+  padding: 20px;
+}
+
+.os-primary-action {
+  padding: 20px;
+}
+
+.os-strategic-focus {
+  padding: 16px;
+  opacity: 0.9;
+}
+
+.os-system-health {
+  font-size: 14px;
+  opacity: 0.7;
+}
+
+.os-key-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
