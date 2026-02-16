@@ -364,30 +364,50 @@ function computePrimaryAttention(stateSnapshot) {
   return decision;
 }
 
-function renderAttentionBlock(stateSnapshot) {
-  const decision = computePrimaryAttention(stateSnapshot);
+function computeSystemStatus(stateSnapshot) {
+  const primary = computePrimaryAttention(stateSnapshot);
 
-  if (!decision) {
-    return `
+  const hasStrategy = stateSnapshot.strategyPendingActions?.length > 0;
+  const hasDrafts = stateSnapshot.proposals?.some((proposal) => proposal.status === "draft");
+  const hasLaunchReady = stateSnapshot.proposals?.some((proposal) => proposal.status === "ready_to_launch");
+  const hasNewOpps = stateSnapshot.opportunities?.some((opportunity) => opportunity.status === "new");
+
+  return {
+    primaryDecision: primary,
+    mode: primary ? "FOCUSED" : "STABLE",
+    flags: {
+      hasStrategy,
+      hasDrafts,
+      hasLaunchReady,
+      hasNewOpps,
+    },
+  };
+}
+
+function renderMissionControl(systemStatus) {
+  const container = document.getElementById("attention-block");
+  if (!container) return;
+
+  if (!systemStatus.primaryDecision) {
+    container.innerHTML = `
       <div class="card attention-card">
-        <h3>What Needs Attention</h3>
+        <h3>Mission Control</h3>
         <p>System operating within normal parameters.</p>
         <button class="btn btn-primary" disabled>
           No Immediate Action Required
         </button>
       </div>
     `;
+    return;
   }
 
-  return `
+  const d = systemStatus.primaryDecision;
+  container.innerHTML = `
     <div class="card attention-card">
-      <h3>What Needs Attention</h3>
-      <p>${decision.label}</p>
-      <button
-        class="btn btn-primary"
-        data-route="#/${decision.route}"
-      >
-        ${decision.cta}
+      <h3>Mission Control</h3>
+      <p>${d.label}</p>
+      <button class="btn btn-primary" data-route="${d.route}">
+        ${d.cta}
       </button>
     </div>
   `;
@@ -506,13 +526,15 @@ const views = {
       </article>
     `;
 
-    const attentionState = {
+    const appState = {
       strategyPendingActions: pendingActions,
       proposals: state.proposals,
       launches: state.launches,
       opportunities: state.opportunities,
       systemMode,
+      autonomyStatus: state.strategyView.autonomyStatus,
     };
+    const systemStatus = computeSystemStatus(appState);
 
     const renderRevenueFocus = () => {
       const totalRevenue = Number(state.performance.total_revenue || 0);
@@ -579,7 +601,7 @@ const views = {
     this.shell("Dashboard", "Operational summary and next best action", `
       <section class="os-dashboard">
         ${renderGlobalStatus()}
-        ${renderAttentionBlock(attentionState)}
+        <div id="attention-block"></div>
         ${renderRevenueFocus()}
 
         <article class="card os-strategic-actions" id="dashboard-strategic-actions">
@@ -590,6 +612,7 @@ const views = {
         </article>
       </section>
     `);
+    renderMissionControl(systemStatus);
     bindDashboardActions();
     if (!dashboardView.loading && !dashboardView.loaded) {
       loadDashboardPendingActions();
