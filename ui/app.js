@@ -365,17 +365,21 @@ function computePrimaryAttention(stateSnapshot) {
 }
 
 function computeSystemStatus(stateSnapshot) {
-  const primary = computePrimaryAttention(stateSnapshot);
+  const primaryDecision = computePrimaryAttention(stateSnapshot);
+  const strategyPendingActions = stateSnapshot?.strategyPendingActions || [];
+  const proposals = stateSnapshot?.proposals || [];
+  const launches = stateSnapshot?.launches || [];
+  const opportunities = stateSnapshot?.opportunities || [];
 
-  const hasStrategy = stateSnapshot.strategyPendingActions?.length > 0;
-  const hasDrafts = stateSnapshot.proposals?.some((proposal) => proposal.status === "draft");
-  const hasLaunchReady = stateSnapshot.proposals?.some((proposal) => proposal.status === "ready_to_launch");
-  const hasNewOpps = stateSnapshot.opportunities?.some((opportunity) => opportunity.status === "new");
+  const hasStrategy = strategyPendingActions.length > 0;
+  const hasDrafts = proposals.some((proposal) => helpers.normalizeStatus(proposal.status) === "draft");
+  const hasLaunchReady = launches.some((launch) => helpers.normalizeStatus(launch.status) !== "launched");
+  const hasNewOpps = opportunities.some((opportunity) => helpers.normalizeStatus(opportunity.status) === "new");
 
   return {
-    primaryDecision: primary,
-    mode: primary ? "FOCUSED" : "STABLE",
-    flags: {
+    mode: primaryDecision ? "FOCUSED" : "STABLE",
+    primaryDecision,
+    indicators: {
       hasStrategy,
       hasDrafts,
       hasLaunchReady,
@@ -388,26 +392,28 @@ function renderMissionControl(systemStatus) {
   const container = document.getElementById("attention-block");
   if (!container) return;
 
-  if (!systemStatus.primaryDecision) {
+  const decision = systemStatus?.primaryDecision;
+  const mode = systemStatus?.mode || "STABLE";
+
+  if (mode === "FOCUSED" && decision) {
     container.innerHTML = `
-      <div class="card attention-card">
+      <div class="card attention-card" style="min-height: 172px;">
         <h3>Mission Control</h3>
-        <p>System operating within normal parameters.</p>
-        <button class="btn btn-primary" disabled>
-          No Immediate Action Required
+        <p>${helpers.escape(decision.label)}</p>
+        <button class="btn btn-primary" data-route="${helpers.escape(decision.route)}">
+          ${helpers.escape(decision.cta)}
         </button>
       </div>
     `;
     return;
   }
 
-  const d = systemStatus.primaryDecision;
   container.innerHTML = `
-    <div class="card attention-card">
+    <div class="card attention-card" style="min-height: 172px;">
       <h3>Mission Control</h3>
-      <p>${d.label}</p>
-      <button class="btn btn-primary" data-route="${d.route}">
-        ${d.cta}
+      <p>System operating within optimal parameters.</p>
+      <button class="btn btn-primary" disabled>
+        No Immediate Action Required
       </button>
     </div>
   `;
