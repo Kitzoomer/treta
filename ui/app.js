@@ -26,6 +26,7 @@ const state = {
   plans: [],
   performance: {},
   strategy: {},
+  strategyPendingActions: [],
   strategyView: {
     pendingActions: [],
     recommendation: {},
@@ -53,6 +54,8 @@ const state = {
     activeExecutionProposalId: "",
     plansByProposal: {},
     activePlanProposalId: "",
+    strategyPendingActionsLoading: false,
+    strategyPendingActionsLoaded: false,
   },
   timerId: null,
 };
@@ -828,6 +831,57 @@ const views = {
       ""
     );
 
+    const strategyPendingActions = state.strategyPendingActions || [];
+
+    const renderStrategicCommandQueue = () => {
+      if (state.workView.strategyPendingActionsLoading && !strategyPendingActions.length) {
+        return "<p class='empty'>Loading strategic actions…</p>";
+      }
+      if (!strategyPendingActions.length) {
+        return "<p class='empty'>System stable. No strategic actions pending.</p>";
+      }
+
+      return `
+        <div class="work-table-wrap">
+          <table class="work-table">
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Priority</th>
+                <th>Expected impact score</th>
+                <th>Risk level</th>
+                <th>Auto executable</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${strategyPendingActions.map((action) => {
+                const actionType = helpers.t(action.type || action.action_type || action.title || action.name, "-");
+                const priority = helpers.t(action.priority, "unknown");
+                const impactScore = helpers.t(action.expected_impact_score, "-");
+                const riskLevel = helpers.t(action.risk_level, "unknown");
+                return `
+                  <tr>
+                    <td>${helpers.escape(actionType)}</td>
+                    <td><span class="badge ${helpers.priorityBadgeClass(priority)}">${helpers.escape(priority)}</span></td>
+                    <td>${helpers.escape(impactScore)}</td>
+                    <td><span class="dashboard-risk-badge ${helpers.riskBadgeClass(riskLevel)}">${helpers.escape(riskLevel)}</span></td>
+                    <td>${action.auto_executable ? '<span class="badge ok">Yes</span>' : '<span class="badge info">No</span>'}</td>
+                    <td>
+                      <div class="card-actions wrap no-margin">
+                        <button data-action="work-strategy-execute" data-id="${helpers.escape(action.id)}">Execute</button>
+                        <button class="secondary-btn" data-action="work-strategy-reject" data-id="${helpers.escape(action.id)}">Reject</button>
+                      </div>
+                    </td>
+                  </tr>
+                `;
+              }).join("")}
+            </tbody>
+          </table>
+        </div>
+      `;
+    };
+
     const hasFinancialData = Boolean(
       state.performance.total_revenue !== undefined
       || state.performance.total_sales !== undefined
@@ -936,12 +990,20 @@ const views = {
               <div class="metric"><span>Latest recommendation</span><strong>${helpers.t(latestRecommendationSummary, "No recommendation yet")}</strong></div>
             </div>
           ` : "<p class='empty'>No financial performance or strategy recommendations available yet.</p>"}
+
+          <article class="card">
+            <h3>Strategic Command Queue</h3>
+            ${renderStrategicCommandQueue()}
+          </article>
         </article>
 
         <article class="card"><h3>Action output</h3><section id="work-response" class="result-box">Ready.</section></article>
       </section>
     `);
     bindWorkActions();
+    if (!state.workView.strategyPendingActionsLoading && !state.workView.strategyPendingActionsLoaded) {
+      loadWorkStrategyPendingActions();
+    }
   },
 
   loadProfile() {
@@ -1154,7 +1216,9 @@ async function loadStrategyData() {
       api.getAutonomyAdaptiveStatus(),
     ]);
 
-    state.strategyView.pendingActions = pendingData.items || pendingData.actions || pendingData.pending_actions || [];
+    const pendingActions = pendingData.items || pendingData.actions || pendingData.pending_actions || [];
+    state.strategyPendingActions = pendingActions;
+    state.strategyView.pendingActions = pendingActions;
     state.strategyView.recommendation = recommendationData || {};
     state.strategyView.autonomyStatus = autonomyData || {};
     state.strategyView.adaptiveStatus = adaptiveData || {};
@@ -1174,7 +1238,9 @@ async function loadDashboardPendingActions() {
   if (state.currentRoute === "dashboard") router.render();
   try {
     const pendingData = await api.getPendingStrategyActions();
-    state.dashboardView.pendingActions = pendingData.items || pendingData.actions || pendingData.pending_actions || [];
+    const pendingActions = pendingData.items || pendingData.actions || pendingData.pending_actions || [];
+    state.strategyPendingActions = pendingActions;
+    state.dashboardView.pendingActions = pendingActions;
   } catch (error) {
     state.dashboardView.error = `strategy actions error: ${error.message}`;
     log("system", state.dashboardView.error);
@@ -1182,6 +1248,21 @@ async function loadDashboardPendingActions() {
     state.dashboardView.loading = false;
     state.dashboardView.loaded = true;
     if (state.currentRoute === "dashboard") router.render();
+  }
+}
+
+async function loadWorkStrategyPendingActions() {
+  state.workView.strategyPendingActionsLoading = true;
+  if (state.currentRoute === "work") router.render();
+  try {
+    const pendingData = await api.getPendingStrategyActions();
+    state.strategyPendingActions = pendingData.items || pendingData.actions || pendingData.pending_actions || [];
+  } catch (error) {
+    log("system", `work strategy actions error: ${error.message}`);
+  } finally {
+    state.workView.strategyPendingActionsLoading = false;
+    state.workView.strategyPendingActionsLoaded = true;
+    if (state.currentRoute === "work") router.render();
   }
 }
 
@@ -1337,7 +1418,9 @@ async function refreshLoop() {
     state.plans = planData.items || [];
     state.performance = perfData || {};
     state.strategy = strategyData || {};
-    state.dashboardView.pendingActions = pendingData.items || pendingData.actions || pendingData.pending_actions || [];
+    const pendingActions = pendingData.items || pendingData.actions || pendingData.pending_actions || [];
+    state.strategyPendingActions = pendingActions;
+    state.dashboardView.pendingActions = pendingActions;
     state.dashboardView.loaded = true;
     state.dashboardView.loading = false;
     state.dashboardView.error = "";
@@ -1561,6 +1644,29 @@ function bindWorkActions() {
         },
         `Plan ${planId} loaded.`
       );
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='work-strategy-execute']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await runWorkInlineAction(
+        `strategy-${button.dataset.id}`,
+        () => api.executeStrategyAction(button.dataset.id),
+        "Strategic action executed."
+      );
+      await loadWorkStrategyPendingActions();
+      await loadDashboardPendingActions();
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='work-strategy-reject']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await runWorkInlineAction(
+        `strategy-${button.dataset.id}`,
+        () => api.rejectStrategyAction(button.dataset.id),
+        "Strategic action rejected."
+      );
+      await loadWorkStrategyPendingActions();
     });
   });
 }
