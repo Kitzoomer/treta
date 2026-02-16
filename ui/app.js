@@ -259,60 +259,109 @@ function computePrimaryAttention(stateSnapshot) {
     proposals = [],
     launches = [],
     opportunities = [],
-    systemMode,
   } = stateSnapshot || {};
 
-  if (strategyPendingActions.length > 0) {
-    const sorted = [...strategyPendingActions].sort((a, b) => {
-      const pDiff = (b.priority || 0) - (a.priority || 0);
-      if (pDiff !== 0) return pDiff;
-      return (b.expected_impact_score || 0) - (a.expected_impact_score || 0);
-    });
+  const toNumber = (value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
 
-    return {
-      type: "strategy",
-      priorityScore: sorted[0].priority || 0,
-      label: "High-priority strategic action requires review",
-      route: "#/strategy",
-      cta: "Review Strategic Action",
-    };
+  const priorityToNumeric = (priority) => {
+    const normalized = helpers.normalizeStatus(priority);
+    if (normalized === "high") return 3;
+    if (normalized === "medium") return 2;
+    if (normalized === "low") return 1;
+    return toNumber(priority);
+  };
+
+  const autonomyStatus = stateSnapshot?.autonomy?.status
+    || stateSnapshot?.autonomyStatus
+    || state.strategyView.autonomyStatus
+    || {};
+  const autoExecutable = Boolean(autonomyStatus.auto_executable);
+
+  const candidates = [];
+
+  if (strategyPendingActions.length > 0) {
+    const topStrategicAction = strategyPendingActions.reduce((best, action) => {
+      const currentPriority = priorityToNumeric(action?.priority);
+      const currentImpact = toNumber(action?.expected_impact_score);
+      const currentScore = (currentPriority * 100) + (currentImpact * 10);
+      if (!best || currentScore > best.score) {
+        return { action, score: currentScore };
+      }
+      return best;
+    }, null);
+
+    if (topStrategicAction) {
+      const autonomyBonus = autoExecutable ? 25 : 0;
+      candidates.push({
+        type: "strategy",
+        priorityScore: topStrategicAction.score + autonomyBonus,
+        label: "Review Strategic Action",
+        route: "#/strategy",
+        cta: "Review Strategic Action",
+      });
+    }
   }
 
-  const drafts = proposals.filter((p) => p.status === "draft");
-  if (drafts.length > 0) {
-    return {
+  const draftProposals = proposals.filter((proposal) => helpers.normalizeStatus(proposal.status) === "draft");
+  if (draftProposals.length > 0) {
+    const topDraftUrgency = draftProposals.reduce((maxScore, proposal) => {
+      const confidence = toNumber(proposal.confidence_level ?? proposal.confidence);
+      const score = 50 + confidence;
+      return Math.max(maxScore, score);
+    }, 0);
+
+    candidates.push({
       type: "draft",
-      priorityScore: 2,
-      label: "Draft proposals awaiting approval",
+      priorityScore: topDraftUrgency,
+      label: "Review Drafts",
       route: "#/work",
       cta: "Review Drafts",
-    };
+    });
   }
 
-  const launchReady = launches.filter((l) => l.status && l.status !== "launched");
+  const launchReadyItems = launches.filter((launch) => helpers.normalizeStatus(launch.status) !== "launched");
+  if (launchReadyItems.length > 0) {
+    const launchScore = launchReadyItems.reduce((maxScore, launch) => {
+      const revenueEstimate = toNumber(launch.revenue_estimate ?? launch.projected_revenue ?? launch.target_revenue);
+      const score = 40 + (revenueEstimate * 0.1);
+      return Math.max(maxScore, score);
+    }, 0);
 
-  if (launchReady.length > 0) {
-    return {
+    candidates.push({
       type: "launch",
-      priorityScore: 1,
-      label: "Launch-ready product pending release",
+      priorityScore: launchScore,
+      label: "Finalize Launch",
       route: "#/work",
       cta: "Finalize Launch",
-    };
+    });
   }
 
-  const newOpps = opportunities.filter((o) => o.status === "new");
-  if (newOpps.length > 0) {
-    return {
+  const newOpportunities = opportunities.filter((opportunity) => helpers.normalizeStatus(opportunity.status) === "new");
+  if (newOpportunities.length > 0) {
+    candidates.push({
       type: "scan",
-      priorityScore: 0,
-      label: "New opportunities detected",
+      priorityScore: 20 + newOpportunities.length,
+      label: "Evaluate Opportunities",
       route: "#/work",
       cta: "Evaluate Opportunities",
-    };
+    });
   }
 
-  return null;
+  if (!candidates.length) return null;
+
+  const decision = candidates.reduce((best, candidate) => {
+    if (!best || candidate.priorityScore > best.priorityScore) {
+      return candidate;
+    }
+    return best;
+  }, null);
+
+  if (!decision || decision.priorityScore < 10) return null;
+
+  return decision;
 }
 
 function renderAttentionBlock(stateSnapshot) {
