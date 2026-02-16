@@ -674,7 +674,7 @@ const views = {
       `;
     };
 
-    const opportunities = state.opportunities.slice(0, 10).map((item) => {
+    const renderOpportunityCard = (item) => {
       const status = opportunityStatus(item);
       return `
         <article class="card row-item">
@@ -689,13 +689,28 @@ const views = {
           </div>
         </article>
       `;
-    }).join("") || "<p class='empty'>No opportunities yet. Run a scan to discover new ideas.</p>";
+    };
 
-    const proposalGroups = [
+    const radarBuckets = [
+      { key: "NEW", title: "New" },
+      { key: "EVALUATED", title: "Evaluated" },
+      { key: "DISMISSED", title: "Dismissed" },
+    ].map((group) => {
+      const items = state.opportunities
+        .filter((item) => opportunityStatus(item) === group.key)
+        .slice(0, 10);
+
+      return {
+        ...group,
+        count: items.length,
+        content: items.map(renderOpportunityCard).join("") || `<p class='empty'>No ${group.title.toLowerCase()} opportunities.</p>`,
+      };
+    });
+
+    const incubationGroups = [
       { key: "draft", title: "Draft" },
-      { key: "ready_to_review", title: "Ready to Review", aliases: ["ready_for_review"] },
-      { key: "ready_to_launch", title: "Ready to Launch" },
-      { key: "building", title: "Building" },
+      { key: "approved", title: "Approved" },
+      { key: "ready_for_review", title: "Ready for Review", aliases: ["ready_to_review"] },
     ].map((group) => {
       const statuses = [group.key, ...(group.aliases || [])];
       const cards = state.proposals
@@ -787,31 +802,74 @@ const views = {
     const selectedPlanId = state.workView.activePlanProposalId;
     const selectedPlan = state.workView.plansByProposal[selectedPlanId] || null;
 
-    this.shell("Work", "Execution pipeline with guided lifecycle", `
+    const productPlans = state.plans.slice(0, 20).map((plan) => `
+      <article class="card row-item">
+        <h4>Plan ${helpers.t(plan.id)}</h4>
+        <p>
+          <span class="badge ${helpers.badgeClass(plan.status)}">${helpers.statusLabel(plan.status)}</span>
+          proposal: ${helpers.t(plan.proposal_id, "-")}
+        </p>
+        <p class="muted-note">updated: ${helpers.t(plan.updated_at || plan.created_at, "-")}</p>
+      </article>
+    `).join("") || "<p class='empty'>No active build plans.</p>";
+
+    const readyToLaunchProposals = state.proposals
+      .filter((item) => helpers.normalizeStatus(item.status) === "ready_to_launch")
+      .slice(0, 10)
+      .map(renderProposal)
+      .join("") || "<p class='empty'>No products ready to launch.</p>";
+
+    const latestRecommendationSummary = helpers.t(
+      state.strategy.summary
+      || state.strategy.summary_text
+      || state.strategy.recommendation_summary
+      || state.strategy.latest_recommendation
+      || state.strategy.recommendation,
+      ""
+    );
+
+    const hasFinancialData = Boolean(
+      state.performance.total_revenue !== undefined
+      || state.performance.total_sales !== undefined
+      || latestRecommendationSummary
+    );
+
+    this.shell("Work", "Product factory pipeline", `
       <section class="work-execution">
         <article class="card work-section">
           <header class="work-section-header">
-            <h3>Opportunities</h3>
-            <p class="muted-note">New market signals detected. Evaluate or dismiss before generating products.</p>
+            <h3>Radar — Market Detection</h3>
+            <p class="muted-note">Detected market signals and opportunity intake.</p>
           </header>
-          ${opportunities}
-        </article>
-
-        <article class="card work-section">
-          <header class="work-section-header">
-            <h3>Product Proposals</h3>
-            <p class="muted-note">Validated product concepts ready for build, launch, or archive.</p>
-          </header>
+          <div class="work-stage-counters">
+            ${radarBuckets.map((bucket) => `<span class="badge info">${bucket.title}: ${bucket.count}</span>`).join("")}
+          </div>
           <div class="work-proposals-grid">
-            ${proposalGroups}
+            ${radarBuckets.map((bucket) => `
+              <section class="work-status-group">
+                <h4>${bucket.title}</h4>
+                ${bucket.content}
+              </section>
+            `).join("")}
           </div>
         </article>
 
         <article class="card work-section">
           <header class="work-section-header">
-            <h3>Build &amp; Execution</h3>
-            <p class="muted-note">Manage product plans and generate execution packages.</p>
+            <h3>Incubation — Product Drafts</h3>
+            <p class="muted-note">Concepts generated from validated market signals.</p>
           </header>
+          <div class="work-proposals-grid">
+            ${incubationGroups}
+          </div>
+        </article>
+
+        <article class="card work-section">
+          <header class="work-section-header">
+            <h3>Blueprint — Build Plans</h3>
+            <p class="muted-note">Structured product architecture and build instructions.</p>
+          </header>
+          ${productPlans}
           <div class="work-table-wrap">
             <table class="work-table">
               <thead>
@@ -840,9 +898,13 @@ const views = {
 
         <article class="card work-section">
           <header class="work-section-header">
-            <h3>Launches</h3>
-            <p class="muted-note">Live products and revenue tracking.</p>
+            <h3>Launch Engine — Go To Market</h3>
+            <p class="muted-note">Products preparing for release or currently active.</p>
           </header>
+          <section class="work-status-group">
+            <h4>Ready to Launch</h4>
+            ${readyToLaunchProposals}
+          </section>
           <div class="work-table-wrap">
             <table class="work-table work-launch-table">
               <thead>
@@ -860,6 +922,20 @@ const views = {
               <tbody>${launchesRows}</tbody>
             </table>
           </div>
+        </article>
+
+        <article class="card work-section">
+          <header class="work-section-header">
+            <h3>Financial Core — Performance &amp; Strategy</h3>
+            <p class="muted-note">Revenue intelligence and strategic direction.</p>
+          </header>
+          ${hasFinancialData ? `
+            <div class="metrics-grid">
+              <div class="metric"><span>Total revenue</span><strong>${helpers.t(state.performance.total_revenue, 0)}</strong></div>
+              <div class="metric"><span>Total sales</span><strong>${helpers.t(state.performance.total_sales, 0)}</strong></div>
+              <div class="metric"><span>Latest recommendation</span><strong>${helpers.t(latestRecommendationSummary, "No recommendation yet")}</strong></div>
+            </div>
+          ` : "<p class='empty'>No financial performance or strategy recommendations available yet.</p>"}
         </article>
 
         <article class="card"><h3>Action output</h3><section id="work-response" class="result-box">Ready.</section></article>
