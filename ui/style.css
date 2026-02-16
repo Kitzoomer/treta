@@ -297,12 +297,16 @@ pre { white-space: pre-wrap; background: #0b1020; border: 1px solid var(--border
 }
 
 .primary-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 280px;
   min-height: 46px;
   font-size: 1rem;
   font-weight: 700;
   letter-spacing: .02em;
   border: 1px solid rgba(255,255,255,.18);
+  text-decoration: none;
 }
 
 .primary-action-btn:disabled {
@@ -343,6 +347,40 @@ pre { white-space: pre-wrap; background: #0b1020; border: 1px solid var(--border
 
 .os-strategic-actions {
   padding: 16px;
+}
+
+.mission-global-status,
+.mission-attention,
+.mission-revenue-focus {
+  padding: 16px;
+}
+
+.mission-status-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mission-status-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(217,31,51,.24);
+  border-radius: 8px;
+  background: #0b1020;
+  padding: 8px 10px;
+  font-size: .76rem;
+  color: var(--muted);
+}
+
+.mission-actionable-list {
+  margin: 8px 0 12px;
+  padding-left: 18px;
+}
+
+.mission-actionable-list li {
+  margin: 4px 0;
 }
 
 .dashboard-strategy-list {
@@ -404,6 +442,23 @@ pre { white-space: pre-wrap; background: #0b1020; border: 1px solid var(--border
   margin: 4px 0 10px;
   color: #9ee7bf;
   font-size: .82rem;
+}
+
+.dashboard-strategy-view-all {
+  margin-top: 10px;
+  display: inline-block;
+}
+
+@media (max-width: 1100px) {
+  .mission-status-strip {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .mission-status-strip {
+    grid-template-columns: 1fr;
+  }
 }
 
 
