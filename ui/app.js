@@ -35,6 +35,13 @@ const state = {
     loaded: false,
     error: "",
   },
+  dashboardView: {
+    pendingActions: [],
+    loading: false,
+    loaded: false,
+    feedback: "",
+    error: "",
+  },
   expandedTimelineEvents: {},
   debugMode: localStorage.getItem(STORAGE_KEYS.debug) === "true",
   refreshMs: Number(localStorage.getItem(STORAGE_KEYS.refreshMs) || CONFIG.defaultRefreshMs),
@@ -200,6 +207,13 @@ const helpers = {
     if (value === "low") return "ok";
     return "info";
   },
+  riskBadgeClass(risk) {
+    const value = this.normalizeStatus(risk);
+    if (value === "high") return "risk-high";
+    if (value === "medium") return "risk-medium";
+    if (value === "low") return "risk-low";
+    return "risk-neutral";
+  },
   strategyGroup(type) {
     const normalized = this.normalizeActionType(type);
     if (["scale", "new_product"].includes(normalized)) return "Growth";
@@ -363,6 +377,42 @@ const views = {
       return "No active pipeline movement detected.";
     })();
 
+    const dashboardView = state.dashboardView;
+    const pendingActions = dashboardView.pendingActions || [];
+
+    const renderDashboardStrategyActions = () => {
+      if (dashboardView.loading) return "<p class='empty'>Loading pending strategic actions…</p>";
+      if (!pendingActions.length) return "<p class='empty'>No pending strategic actions.</p>";
+
+      return `
+        <div class="dashboard-strategy-list">
+          ${pendingActions.map((item) => {
+            const priority = helpers.t(item.priority, "Unknown");
+            const risk = helpers.t(item.risk_level, "Unknown");
+            const actionType = helpers.t(item.action_type || item.type || item.title || item.name, "Unknown");
+            const impactScore = helpers.t(item.expected_impact_score, "-");
+            return `
+              <article class="dashboard-strategy-card">
+                <div class="dashboard-strategy-meta">
+                  <span class="badge ${helpers.priorityBadgeClass(priority)}">${helpers.escape(priority)}</span>
+                  <span class="dashboard-risk-badge ${helpers.riskBadgeClass(risk)}">Risk: ${helpers.escape(risk)}</span>
+                </div>
+                <p><strong>Action type:</strong> ${helpers.escape(actionType)}</p>
+                <p><strong>Expected impact score:</strong> ${helpers.escape(impactScore)}</p>
+                <div class="card-actions">
+                  <button data-action="dashboard-strategy-execute" data-id="${helpers.escape(item.id)}">Execute</button>
+                  <button class="secondary-btn" data-action="dashboard-strategy-reject" data-id="${helpers.escape(item.id)}">Reject</button>
+                </div>
+              </article>
+            `;
+          }).join("")}
+        </div>
+      `;
+    };
+
+    const strategyFeedback = dashboardView.feedback ? `<p class="dashboard-strategy-feedback">${helpers.escape(dashboardView.feedback)}</p>` : "";
+    const strategyError = dashboardView.error ? `<p class="empty">${helpers.escape(dashboardView.error)}</p>` : "";
+
     this.shell("Dashboard", "Operational summary and next best action", `
       <section class="os-dashboard">
         <article class="card os-system-mode">
@@ -405,9 +455,19 @@ const views = {
             <div class="metric"><strong>${helpers.t(state.performance.total_revenue, 0)}</strong></div>
           </article>
         </section>
+
+        <article class="card os-strategic-actions">
+          <h3>🧠 STRATEGIC ACTIONS</h3>
+          ${strategyError}
+          ${strategyFeedback}
+          ${renderDashboardStrategyActions()}
+        </article>
       </section>
     `);
     bindDashboardActions();
+    if (!dashboardView.loading && !dashboardView.loaded) {
+      loadDashboardPendingActions();
+    }
   },
 
   loadWork() {
@@ -877,6 +937,23 @@ async function loadStrategyData() {
   }
 }
 
+async function loadDashboardPendingActions() {
+  state.dashboardView.loading = true;
+  state.dashboardView.error = "";
+  if (state.currentRoute === "dashboard") router.render();
+  try {
+    const pendingData = await api.getPendingStrategyActions();
+    state.dashboardView.pendingActions = pendingData.items || pendingData.actions || pendingData.pending_actions || [];
+  } catch (error) {
+    state.dashboardView.error = `strategy actions error: ${error.message}`;
+    log("system", state.dashboardView.error);
+  } finally {
+    state.dashboardView.loading = false;
+    state.dashboardView.loaded = true;
+    if (state.currentRoute === "dashboard") router.render();
+  }
+}
+
 function renderEditableMetric(key, label) {
   return `<label>${label}<input id="profile-${key}" type="number" value="${helpers.t(state.profile[key], 0)}"></label>`;
 }
@@ -1013,7 +1090,7 @@ function renderTelemetry() {
 
 async function refreshLoop() {
   try {
-    const [systemData, eventData, oppData, proposalData, launchData, planData, perfData, strategyData] = await Promise.all([
+    const [systemData, eventData, oppData, proposalData, launchData, planData, perfData, strategyData, pendingData] = await Promise.all([
       api.getState(),
       api.getRecentEvents(),
       api.getOpportunities(),
@@ -1022,6 +1099,7 @@ async function refreshLoop() {
       api.getProductPlans(),
       api.getPerformanceSummary(),
       api.getStrategyRecommendations(),
+      api.getPendingStrategyActions(),
     ]);
 
     state.system = systemData || { state: "IDLE" };
@@ -1032,6 +1110,10 @@ async function refreshLoop() {
     state.plans = planData.items || [];
     state.performance = perfData || {};
     state.strategy = strategyData || {};
+    state.dashboardView.pendingActions = pendingData.items || pendingData.actions || pendingData.pending_actions || [];
+    state.dashboardView.loaded = true;
+    state.dashboardView.loading = false;
+    state.dashboardView.error = "";
   } catch (error) {
     log("system", `refresh error: ${error.message}`);
   }
@@ -1353,6 +1435,35 @@ function bindDashboardActions() {
       }
     });
   });
+
+  ui.pageContent.querySelectorAll("button[data-action='dashboard-strategy-execute']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await runDashboardStrategyAction(
+        () => api.executeStrategyAction(button.dataset.id),
+        "Action executed successfully."
+      );
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='dashboard-strategy-reject']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await runDashboardStrategyAction(
+        () => api.rejectStrategyAction(button.dataset.id),
+        "Action rejected successfully."
+      );
+    });
+  });
+}
+
+async function runDashboardStrategyAction(actionFn, successMessage) {
+  try {
+    await actionFn();
+    state.dashboardView.feedback = successMessage;
+    await loadDashboardPendingActions();
+  } catch (error) {
+    state.dashboardView.feedback = `Error: ${error.message}`;
+    if (state.currentRoute === "dashboard") router.render();
+  }
 }
 
 function bindStrategyActions() {
