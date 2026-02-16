@@ -9,6 +9,7 @@ const STORAGE_KEYS = {
   debug: "treta.debug",
   refreshMs: "treta.refreshMs",
   profile: "treta.profile",
+  autonomyEnabled: "treta_autonomy_enabled",
 };
 
 const ACTION_TARGETS = {
@@ -47,6 +48,7 @@ const state = {
   debugMode: localStorage.getItem(STORAGE_KEYS.debug) === "true",
   refreshMs: Number(localStorage.getItem(STORAGE_KEYS.refreshMs) || CONFIG.defaultRefreshMs),
   profile: loadProfileState(),
+  autonomyEnabled: localStorage.getItem(STORAGE_KEYS.autonomyEnabled) === "true",
   currentRoute: CONFIG.defaultRoute,
   workView: {
     messages: {},
@@ -97,6 +99,10 @@ function loadProfileState() {
 
 function saveProfileState() {
   localStorage.setItem(STORAGE_KEYS.profile, JSON.stringify(state.profile));
+}
+
+function saveAutonomyEnabledState() {
+  localStorage.setItem(STORAGE_KEYS.autonomyEnabled, state.autonomyEnabled ? "true" : "false");
 }
 
 const api = {
@@ -398,15 +404,35 @@ function renderMissionControl(systemStatus) {
 
   const decision = systemStatus?.primaryDecision;
   const mode = systemStatus?.mode || "STABLE";
+  const autonomyEnabled = Boolean(state.autonomyEnabled);
+
+  const missionControlCta = (() => {
+    if (!decision) return "No Immediate Action Required";
+    if (autonomyEnabled && ["scan", "draft"].includes(decision.type)) {
+      return "Auto-run safe step";
+    }
+    if (decision.type === "strategy") return "Review Strategic Action";
+    if (decision.type === "launch") return "Review Launch Plan";
+    return decision.cta;
+  })();
 
   if (mode === "FOCUSED" && decision) {
+    const renderAutonomyScanAction = autonomyEnabled && decision.type === "scan"
+      ? `
+        <button class="secondary-btn" data-action="dashboard-primary" data-primary-action="scan">
+          Run scan now
+        </button>
+      `
+      : "";
+
     container.innerHTML = `
       <div class="card attention-card" style="min-height: 172px;">
         <h3>Mission Control</h3>
         <p>${helpers.escape(decision.label)}</p>
         <button class="btn btn-primary" data-route="${helpers.escape(decision.route)}">
-          ${helpers.escape(decision.cta)}
+          ${helpers.escape(missionControlCta)}
         </button>
+        ${renderAutonomyScanAction}
       </div>
     `;
     return;
@@ -536,6 +562,35 @@ const views = {
       </article>
     `;
 
+    const renderAutonomyControls = () => {
+      const autonomyEnabled = Boolean(state.autonomyEnabled);
+      return `
+        <article class="card mission-autonomy-toggle">
+          <h3>Autonomy</h3>
+          <div class="card-actions">
+            <button
+              class="btn ${autonomyEnabled ? "btn-primary" : "secondary-btn"}"
+              data-action="toggle-autonomy"
+              aria-pressed="${autonomyEnabled ? "true" : "false"}"
+            >
+              ${autonomyEnabled ? "ON (Autonomous)" : "OFF (Manual)"}
+            </button>
+          </div>
+          <p class="control-helper">
+            ${autonomyEnabled
+    ? "Treta can execute safe actions automatically (guarded)."
+    : "Treta recommends. You approve execution."}
+          </p>
+        </article>
+        <article class="card mission-guardrails">
+          <h3>Guardrails</h3>
+          <p class="control-helper"><strong>Max auto actions per session:</strong> 3</p>
+          <p class="control-helper"><strong>Allowed:</strong> Scan, Generate draft</p>
+          <p class="control-helper"><strong>Requires confirmation:</strong> Launch, Pricing changes, Publishing</p>
+        </article>
+      `;
+    };
+
     const appState = {
       strategyPendingActions: pendingActions,
       proposals: state.proposals,
@@ -611,6 +666,7 @@ const views = {
     this.shell("Dashboard", "Operational summary and next best action", `
       <section class="os-dashboard">
         ${renderGlobalStatus()}
+        ${renderAutonomyControls()}
         <div id="attention-block"></div>
         ${renderRevenueFocus()}
 
@@ -1782,6 +1838,16 @@ function renderPlanPreview(proposalId, plan) {
 }
 
 function bindDashboardActions() {
+  ui.pageContent.querySelectorAll("button[data-action='toggle-autonomy']").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.autonomyEnabled = !state.autonomyEnabled;
+      saveAutonomyEnabledState();
+      if (state.currentRoute === "dashboard") {
+        router.render();
+      }
+    });
+  });
+
   ui.pageContent.querySelectorAll("button[data-action='dashboard-primary']").forEach((button) => {
     button.addEventListener("click", async () => {
       const action = button.dataset.primaryAction;
