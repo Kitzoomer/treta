@@ -33,17 +33,98 @@ const state = {
 };
 
 const ui = {
-  pageContent: document.getElementById("page-content"),
-  pageNav: document.getElementById("page-nav"),
-  chatHistory: document.getElementById("chat-history"),
-  chatForm: document.getElementById("chat-form"),
-  chatInput: document.getElementById("chat-input"),
-  statusDot: document.getElementById("status-dot"),
-  statusText: document.getElementById("system-status"),
-  eventLog: document.getElementById("event-log"),
-  lastEvent: document.getElementById("last-event"),
-  telemetry: document.getElementById("telemetry-content"),
+  appRoot: document.getElementById("app-root"),
+  pageContent: null,
+  pageNav: null,
+  chatHistory: null,
+  chatForm: null,
+  chatInput: null,
+  statusDot: null,
+  statusText: null,
+  eventLog: null,
+  lastEvent: null,
+  telemetry: null,
 };
+
+function cacheUIElements() {
+  ui.pageContent = document.getElementById("page-content");
+  ui.pageNav = document.getElementById("page-nav");
+  ui.chatHistory = document.getElementById("chat-history");
+  ui.chatForm = document.getElementById("chat-form");
+  ui.chatInput = document.getElementById("chat-input");
+  ui.statusDot = document.getElementById("status-dot");
+  ui.statusText = document.getElementById("system-status");
+  ui.eventLog = document.getElementById("event-log");
+  ui.lastEvent = document.getElementById("last-event");
+  ui.telemetry = document.getElementById("telemetry-content");
+}
+
+function bindShellEvents() {
+  ui.chatForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await executeCommand(ui.chatInput.value);
+    ui.chatInput.value = "";
+  });
+}
+
+function renderLayout({ centerContent }) {
+  ui.appRoot.innerHTML = `
+    <main class="app-layout">
+      <aside class="panel panel-left" aria-label="Control center">
+        <header class="panel-header">
+          <h1>Control Center</h1>
+          <div class="system-status" id="system-indicator">
+            <span class="status-dot" id="status-dot"></span>
+            <span id="system-status">LISTENING</span>
+          </div>
+        </header>
+
+        <section class="control-card chat-panel">
+          <h2>Chat</h2>
+          <p class="control-helper">Ask for actions in plain language. Treta translates quick commands into pipeline events.</p>
+          <section id="chat-history" class="chat-history chat-messages" aria-live="polite"></section>
+
+          <form id="chat-form" class="chat-controls chat-input-row">
+            <input id="chat-input" type="text" placeholder="Try: 'scan for opportunities' or 'show me proposals ready to launch'" autocomplete="off" />
+            <button type="submit">Execute</button>
+          </form>
+        </section>
+
+        <section class="control-card mini-status">
+          <h2>Last event executed</h2>
+          <p id="last-event" class="last-event">No events yet.</p>
+        </section>
+
+        <section class="control-card mini-log">
+          <h2>Event stream</h2>
+          <div id="event-log" class="event-log"></div>
+        </section>
+      </aside>
+
+      <section class="panel panel-center">
+        <div id="page-content" class="page-content">${centerContent}</div>
+      </section>
+
+      <aside class="panel panel-right" aria-label="Navigation and telemetry">
+        <section class="control-card">
+          <h2>Navigation</h2>
+          <nav id="page-nav" class="page-nav" aria-label="Main navigation"></nav>
+        </section>
+
+        <section class="control-card" id="telemetry-panel">
+          <h2>Live telemetry</h2>
+          <div id="telemetry-content" class="telemetry-content"></div>
+        </section>
+      </aside>
+    </main>
+  `;
+
+  cacheUIElements();
+  bindShellEvents();
+  renderNavigation();
+  renderControlCenter();
+  renderTelemetry();
+}
 
 function loadProfileState() {
   const raw = localStorage.getItem(STORAGE_KEYS.profile);
@@ -149,7 +230,6 @@ const router = {
   render() {
     state.currentRoute = this.resolveRoute();
     document.body.dataset.route = state.currentRoute;
-    renderNavigation();
     if (state.currentRoute === "home") return views.loadHome();
     if (state.currentRoute === "dashboard") return views.loadDashboard();
     if (state.currentRoute === "work") return views.loadWork();
@@ -161,26 +241,30 @@ const router = {
 
 const views = {
   shell(title, subtitle, body) {
-    ui.pageContent.innerHTML = `
-      <header class="page-head">
-        <div>
-          <h2 class="page-title">${title}</h2>
-          <p class="page-subtitle">${subtitle}</p>
-        </div>
-      </header>
-      ${body}
-    `;
+    renderLayout({
+      centerContent: `
+        <header class="page-head">
+          <div>
+            <h2 class="page-title">${title}</h2>
+            <p class="page-subtitle">${subtitle}</p>
+          </div>
+        </header>
+        ${body}
+      `,
+    });
   },
 
   loadHome() {
-    ui.pageContent.innerHTML = `
-      <section class="home-identity" aria-label="Treta identity">
-        <h1 class="treta-title" aria-label="TRETA">
-          <span class="treta-title-text">TRETA</span>
-          <span class="treta-wave" aria-hidden="true"></span>
-        </h1>
-      </section>
-    `;
+    renderLayout({
+      centerContent: `
+        <section class="home-identity" aria-label="Treta identity">
+          <h1 class="treta-title" aria-label="TRETA">
+            <span class="treta-title-text">TRETA</span>
+            <span class="treta-wave" aria-hidden="true"></span>
+          </h1>
+        </section>
+      `,
+    });
   },
 
   loadDashboard() {
@@ -510,6 +594,7 @@ function renderEditableMetric(key, label) {
 }
 
 function renderNavigation() {
+  if (!ui.pageNav) return;
   const active = state.currentRoute;
   ui.pageNav.innerHTML = CONFIG.routes
     .map((route) => `<button class="nav-btn ${route === active ? "active" : ""}" data-route="${route}">${route[0].toUpperCase()}${route.slice(1)}</button>`)
@@ -527,6 +612,7 @@ function log(role, message) {
 }
 
 function renderChat() {
+  if (!ui.chatHistory) return;
   ui.chatHistory.innerHTML = state.logs
     .slice(-30)
     .map((entry) => `<div class="chat-row ${entry.role}">${helpers.escape(entry.message)}</div>`)
@@ -535,6 +621,7 @@ function renderChat() {
 }
 
 function renderControlCenter() {
+  if (!ui.statusText || !ui.statusDot || !ui.lastEvent || !ui.eventLog) return;
   const currentState = helpers.t(state.system.state, "IDLE").toUpperCase();
   ui.statusText.textContent = currentState;
   ui.statusDot.classList.remove("status-running", "status-error");
@@ -553,6 +640,7 @@ function renderControlCenter() {
 }
 
 function renderTelemetry() {
+  if (!ui.telemetry) return;
   ui.telemetry.innerHTML = `
     <div class="metric"><span>Opportunities</span><strong>${state.opportunities.length}</strong></div>
     <div class="metric"><span>Proposals</span><strong>${state.proposals.length}</strong></div>
@@ -584,8 +672,6 @@ async function refreshLoop() {
     log("system", `refresh error: ${error.message}`);
   }
 
-  renderControlCenter();
-  renderTelemetry();
   router.render();
 }
 
@@ -707,12 +793,6 @@ function bindWorkActions() {
     });
   });
 }
-
-ui.chatForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  await executeCommand(ui.chatInput.value);
-  ui.chatInput.value = "";
-});
 
 window.addEventListener("hashchange", () => router.render());
 
