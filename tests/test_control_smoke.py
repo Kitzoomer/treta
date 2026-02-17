@@ -122,14 +122,52 @@ class ControlSmokeTest(unittest.TestCase):
         gumroad_client.get_sales.assert_called_once_with()
         gumroad_client.get_balance.assert_called_once_with()
 
+
+    def test_opportunity_detected_filters_non_aligned_opportunity(self):
+        control = Control()
+
+        payload = {
+            "id": "opp-filter",
+            "source": "scanner",
+            "title": "General productivity app idea",
+            "summary": "Build a broad social consumer app",
+            "opportunity": {"money": 2, "growth": 2, "confidence": 3},
+        }
+
+        actions = control.consume(Event(type="OpportunityDetected", payload=payload, source="test"))
+        self.assertEqual(actions, [])
+
+        listed = control.consume(Event(type="ListOpportunities", payload={}, source="test"))
+        items = {item["id"]: item for item in listed[0].payload["items"]}
+        self.assertEqual(items["opp-filter"]["status"], "strategically_filtered")
+
+    def test_opportunity_detected_stores_alignment_metadata_on_generated_proposal(self):
+        control = Control()
+
+        payload = {
+            "id": "opp-aligned",
+            "source": "scanner",
+            "title": "Client onboarding system kit for creators",
+            "summary": "Automation that improves client acquisition and revenue",
+            "opportunity": {"confidence": 8},
+        }
+
+        actions = control.consume(Event(type="OpportunityDetected", payload=payload, source="test"))
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0].type, "ProductProposalGenerated")
+        proposal = actions[0].payload["proposal"]
+        self.assertIn("alignment_score", proposal)
+        self.assertIn("alignment_reason", proposal)
+        self.assertGreaterEqual(proposal["alignment_score"], 60)
+
     def test_opportunity_store_flow_detect_list_evaluate_and_dismiss(self):
         control = Control()
 
         first_payload = {
             "id": "opp-1",
             "source": "scanner",
-            "title": "Opportunity A",
-            "summary": "First summary",
+            "title": "Client onboarding system kit for creators",
+            "summary": "Automation template that improves revenue and client acquisition",
             "opportunity": {
                 "money": 8,
                 "growth": 7,
@@ -142,8 +180,8 @@ class ControlSmokeTest(unittest.TestCase):
         second_payload = {
             "id": "opp-2",
             "source": "scanner",
-            "title": "Opportunity B",
-            "summary": "Second summary",
+            "title": "Freelance proposal template pack",
+            "summary": "Template system for service professionals to increase client acquisition",
             "opportunity": {
                 "money": 3,
                 "growth": 4,

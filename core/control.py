@@ -10,6 +10,7 @@ from core.opportunity_store import OpportunityStore
 from core.bus import event_bus
 from core.opportunity_sources.infoproduct_signals import InfoproductSignals
 from core.product_engine import ProductEngine
+from core.alignment_engine import AlignmentEngine
 from core.product_proposal_store import ProductProposalStore
 from core.product_builder import ProductBuilder
 from core.product_plan_store import ProductPlanStore
@@ -36,6 +37,7 @@ class Control:
         opportunity_store: OpportunityStore | None = None,
         product_engine: ProductEngine | None = None,
         product_proposal_store: ProductProposalStore | None = None,
+        alignment_engine: AlignmentEngine | None = None,
         product_builder: ProductBuilder | None = None,
         product_plan_store: ProductPlanStore | None = None,
         execution_engine: ExecutionEngine | None = None,
@@ -48,6 +50,7 @@ class Control:
         self.opportunity_store = opportunity_store or OpportunityStore()
         self.product_engine = product_engine or ProductEngine()
         self.product_proposal_store = product_proposal_store or ProductProposalStore()
+        self.alignment_engine = alignment_engine or AlignmentEngine()
         self.product_builder = product_builder or ProductBuilder()
         self.product_plan_store = product_plan_store or ProductPlanStore()
         self.execution_engine = execution_engine or ExecutionEngine()
@@ -163,7 +166,20 @@ class Control:
                 summary=str(event.payload.get("summary", "")),
                 opportunity=dict(event.payload.get("opportunity", {})),
             )
+
+            alignment = self.alignment_engine.evaluate(
+                created,
+                {
+                    "recent_proposals": self.product_proposal_store.list()[:5],
+                },
+            )
+            if not alignment["aligned"]:
+                self.opportunity_store.set_status(created["id"], "strategically_filtered")
+                return []
+
             proposal = self.product_engine.generate(created)
+            proposal["alignment_score"] = alignment["alignment_score"]
+            proposal["alignment_reason"] = alignment["reason"]
             self.product_proposal_store.add(proposal)
             return [
                 Action(
