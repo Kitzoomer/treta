@@ -28,6 +28,13 @@ const state = {
   performance: {},
   strategy: {},
   strategyPendingActions: [],
+  dailyLoop: {
+    phase: "IDLE",
+    summary: "System operating normally.",
+    next_action_label: "No Immediate Action",
+    route: null,
+    timestamp: null,
+  },
   strategyView: {
     pendingActions: [],
     recommendation: {},
@@ -177,6 +184,9 @@ const api = {
   },
   getAutonomyAdaptiveStatus() {
     return this.fetchJson("/autonomy/adaptive_status");
+  },
+  getDailyLoopStatus() {
+    return this.fetchJson("/daily_loop/status");
   },
 };
 
@@ -398,52 +408,23 @@ function computeSystemStatus(stateSnapshot) {
   };
 }
 
-function renderMissionControl(systemStatus) {
+function renderMissionControl(loopState) {
   const container = document.getElementById("attention-block");
   if (!container) return;
 
-  const decision = systemStatus?.primaryDecision;
-  const mode = systemStatus?.mode || "STABLE";
-  const autonomyEnabled = Boolean(state.autonomyEnabled);
-
-  const missionControlCta = (() => {
-    if (!decision) return "No Immediate Action Required";
-    if (autonomyEnabled && ["scan", "draft"].includes(decision.type)) {
-      return "Auto-run safe step";
-    }
-    if (decision.type === "strategy") return "Review Strategic Action";
-    if (decision.type === "launch") return "Review Launch Plan";
-    return decision.cta;
-  })();
-
-  if (mode === "FOCUSED" && decision) {
-    const renderAutonomyScanAction = autonomyEnabled && decision.type === "scan"
-      ? `
-        <button class="secondary-btn" data-action="dashboard-primary" data-primary-action="scan">
-          Run scan now
-        </button>
-      `
-      : "";
-
-    container.innerHTML = `
-      <div class="card attention-card" style="min-height: 172px;">
-        <h3>Mission Control</h3>
-        <p>${helpers.escape(decision.label)}</p>
-        <button class="btn btn-primary" data-route="${helpers.escape(decision.route)}">
-          ${helpers.escape(missionControlCta)}
-        </button>
-        ${renderAutonomyScanAction}
-      </div>
-    `;
-    return;
-  }
+  const phase = helpers.t(loopState?.phase, "IDLE").toUpperCase();
+  const summary = helpers.t(loopState?.summary, "System operating normally.");
+  const route = loopState?.route || "";
+  const actionLabel = helpers.t(loopState?.next_action_label, "No Immediate Action");
+  const disabled = !route || phase === "IDLE";
 
   container.innerHTML = `
     <div class="card attention-card" style="min-height: 172px;">
-      <h3>Mission Control</h3>
-      <p>System operating within optimal parameters.</p>
-      <button class="btn btn-primary" disabled>
-        No Immediate Action Required
+      <h3>OS Status</h3>
+      <p><strong>Phase:</strong> <span class="badge info">${helpers.escape(phase)}</span></p>
+      <p>${helpers.escape(summary)}</p>
+      <button class="btn btn-primary" ${disabled ? "disabled" : `data-route="${helpers.escape(route)}"`}>
+        ${helpers.escape(actionLabel)}
       </button>
     </div>
   `;
@@ -473,7 +454,11 @@ const router = {
 
 const views = {
   shell(title, subtitle, body) {
+    const phase = helpers.t(state.dailyLoop?.phase, "IDLE").toUpperCase();
     ui.pageContent.innerHTML = `
+      <div class="card" style="margin-bottom: 12px; padding: 10px 14px;">
+        <strong>Daily Loop Phase:</strong> <span class="badge info">${helpers.escape(phase)}</span>
+      </div>
       <header class="page-head">
         <div>
           <h2 class="page-title">${title}</h2>
@@ -485,7 +470,11 @@ const views = {
   },
 
   loadHome() {
+    const phase = helpers.t(state.dailyLoop?.phase, "IDLE").toUpperCase();
     ui.pageContent.innerHTML = `
+      <div class="card" style="margin-bottom: 12px; padding: 10px 14px;">
+        <strong>Daily Loop Phase:</strong> <span class="badge info">${helpers.escape(phase)}</span>
+      </div>
       <section class="home-identity" aria-label="Treta identity">
         <h1 class="treta-title" aria-label="TRETA">
           <span class="treta-title-text">TRETA</span>
@@ -591,16 +580,6 @@ const views = {
       `;
     };
 
-    const appState = {
-      strategyPendingActions: pendingActions,
-      proposals: state.proposals,
-      launches: state.launches,
-      opportunities: state.opportunities,
-      systemMode,
-      autonomyStatus: state.strategyView.autonomyStatus,
-    };
-    const systemStatus = computeSystemStatus(appState);
-
     const renderRevenueFocus = () => {
       const totalRevenue = Number(state.performance.total_revenue || 0);
       const revenueTrend = totalRevenue > 0 ? "Positive" : "Flat";
@@ -678,7 +657,7 @@ const views = {
         </article>
       </section>
     `);
-    renderMissionControl(systemStatus);
+    renderMissionControl(state.dailyLoop);
     bindDashboardActions();
     if (!dashboardView.loading && !dashboardView.loaded) {
       loadDashboardPendingActions();
@@ -1333,7 +1312,7 @@ function renderTelemetry() {
 
 async function refreshLoop() {
   try {
-    const [systemData, eventData, oppData, proposalData, launchData, planData, perfData, strategyData, pendingData] = await Promise.all([
+    const [systemData, eventData, oppData, proposalData, launchData, planData, perfData, strategyData, pendingData, dailyLoopData] = await Promise.all([
       api.getState(),
       api.getRecentEvents(),
       api.getOpportunities(),
@@ -1343,6 +1322,7 @@ async function refreshLoop() {
       api.getPerformanceSummary(),
       api.getStrategyRecommendations(),
       api.getPendingStrategyActions(),
+      api.getDailyLoopStatus(),
     ]);
 
     state.system = systemData || { state: "IDLE" };
@@ -1359,6 +1339,7 @@ async function refreshLoop() {
     state.dashboardView.loaded = true;
     state.dashboardView.loading = false;
     state.dashboardView.error = "";
+    state.dailyLoop = dailyLoopData || state.dailyLoop;
   } catch (error) {
     log("system", `refresh error: ${error.message}`);
   }
