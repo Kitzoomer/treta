@@ -18,6 +18,9 @@ class RedditSignalRepository:
         now = datetime.now(timezone.utc).isoformat()
         payload = dict(signal_data)
         payload.setdefault("status", "pending")
+        payload.setdefault("karma", 0)
+        payload.setdefault("replies", 0)
+        payload.setdefault("performance_score", 0)
         payload.setdefault("created_at", now)
         payload["updated_at"] = now
 
@@ -27,8 +30,9 @@ class RedditSignalRepository:
                 INSERT INTO reddit_signals (
                     id, subreddit, post_url, post_text, detected_pain_type,
                     opportunity_score, intent_level, suggested_action,
-                    generated_reply, status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    generated_reply, status, created_at, updated_at,
+                    karma, replies, performance_score
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     payload["id"],
@@ -43,6 +47,9 @@ class RedditSignalRepository:
                     payload["status"],
                     payload["created_at"],
                     payload["updated_at"],
+                    payload["karma"],
+                    payload["replies"],
+                    payload["performance_score"],
                 ),
             )
             conn.commit()
@@ -76,6 +83,42 @@ class RedditSignalRepository:
             )
             conn.commit()
         return self.find_signal_by_id(signal_id)
+
+    def update_feedback(self, signal_id: str, karma: int, replies: int) -> Signal | None:
+        self.ensure_initialized()
+        now = datetime.now(timezone.utc).isoformat()
+        karma_value = int(karma)
+        replies_value = int(replies)
+        performance_score = karma_value + (replies_value * 2)
+
+        with get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE reddit_signals
+                SET karma = ?, replies = ?, performance_score = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (karma_value, replies_value, performance_score, now, signal_id),
+            )
+            conn.commit()
+
+        return self.find_signal_by_id(signal_id)
+
+    def get_average_performance_by_intent(self, intent_level: str) -> float:
+        self.ensure_initialized()
+        with get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT AVG(performance_score) AS avg_performance
+                FROM reddit_signals
+                WHERE intent_level = ?
+                """,
+                (intent_level,),
+            ).fetchone()
+
+        if row is None or row["avg_performance"] is None:
+            return 0
+        return float(row["avg_performance"])
 
     def find_signal_by_id(self, signal_id: str) -> Signal | None:
         self.ensure_initialized()

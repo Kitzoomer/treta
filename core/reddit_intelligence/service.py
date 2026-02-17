@@ -68,6 +68,9 @@ class RedditIntelligenceService:
     def update_status(self, signal_id: str, status: str) -> Dict[str, Any] | None:
         return self.repository.update_signal_status(signal_id=signal_id, status=status)
 
+    def update_feedback(self, signal_id: str, karma: int, replies: int) -> Dict[str, Any] | None:
+        return self.repository.update_feedback(signal_id=signal_id, karma=karma, replies=replies)
+
     def _build_reply(self, suggested_action: str, subreddit: str) -> str:
         if suggested_action == "value_plus_mention":
             return (
