@@ -35,7 +35,8 @@ class RedditIntelligenceTestCase(unittest.TestCase):
         )
 
         self.assertEqual(signal["intent_level"], "direct")
-        self.assertEqual(signal["suggested_action"], "value_plus_mention")
+        self.assertEqual(signal["suggested_action"], "value")
+        self.assertIn("Suggested action adapted based on historical engagement performance.", signal["reasoning"])
         self.assertGreaterEqual(signal["opportunity_score"], 80)
 
     def test_implicit_classification(self):
@@ -115,6 +116,29 @@ class RedditIntelligenceTestCase(unittest.TestCase):
                 reverse=True,
             ),
         )
+
+
+    def test_action_adapts_based_on_performance(self):
+        baseline_implicit = self.service.analyze_post(
+            subreddit="creators",
+            post_text="I'm struggling with client outreach",
+            post_url="https://reddit.com/r/creators/implicit-baseline",
+        )
+        self.service.update_feedback(signal_id=baseline_implicit["id"], karma=20, replies=5)
+
+        adapted_implicit = self.service.analyze_post(
+            subreddit="creators",
+            post_text="I'm struggling to close brand deals",
+            post_url="https://reddit.com/r/creators/implicit-adapted",
+        )
+        self.assertEqual(adapted_implicit["suggested_action"], "value_plus_mention")
+
+        adapted_direct = self.service.analyze_post(
+            subreddit="freelance",
+            post_text="Does anyone have a template for a media kit?",
+            post_url="https://reddit.com/r/freelance/direct-adapted",
+        )
+        self.assertEqual(adapted_direct["suggested_action"], "value")
 
     def test_update_status(self):
         signal = self.service.analyze_post(
