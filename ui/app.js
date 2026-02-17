@@ -793,7 +793,8 @@ const views = {
           <p>
             score: ${helpers.escape(getOpportunityScore(item))}
           </p>
-          ${renderNextActionBlock("New Opportunity", "Evaluate or Dismiss")}
+          <p><strong>Status:</strong> New Opportunity</p>
+          <p class="muted-note" style="display: inline-block; padding: 2px 8px; border-radius: 999px; background: rgba(88, 166, 255, 0.12);"><strong>Next Action:</strong> Evaluate or Dismiss</p>
           <div class="card-actions work-secondary-actions">
             <button class="secondary-btn" data-action="eval-opp" data-id="${helpers.escape(helpers.t(item.id, ""))}">Evaluate</button>
             <button class="secondary-btn" data-action="dismiss-opp" data-id="${helpers.escape(helpers.t(item.id, ""))}">Dismiss</button>
@@ -802,7 +803,7 @@ const views = {
       `;
     };
 
-    const renderProposalCard = (item, transitions, stageInfo = null) => {
+    const renderProposalCard = (item, transitions, statusLabel, nextActionLabel) => {
       const proposalId = helpers.t(item.id, "");
       const actionButtons = transitions.map((transition) => {
         if (transition === "generate_execution_package") {
@@ -830,7 +831,8 @@ const views = {
             <span class="badge ${helpers.badgeClass(item.status)}">${helpers.escape(helpers.statusLabel(item.status))}</span>
             audience: ${helpers.escape(helpers.t(item.target_audience, "-"))}
           </p>
-          ${stageInfo ? renderNextActionBlock(stageInfo.status, stageInfo.nextAction) : ""}
+          <p><strong>Status:</strong> ${helpers.escape(statusLabel)}</p>
+          <p class="muted-note" style="display: inline-block; padding: 2px 8px; border-radius: 999px; background: rgba(88, 166, 255, 0.12);"><strong>Next Action:</strong> ${helpers.escape(nextActionLabel)}</p>
           <p>price suggestion: ${helpers.escape(helpers.t(item.price_suggestion, "-"))} · confidence: ${helpers.escape(helpers.t(item.confidence, "-"))}</p>
           ${hasExecutionPackage ? "<p class='muted-note'>Execution package generated.</p>" : ""}
           <div class="card-actions wrap work-secondary-actions">
@@ -854,12 +856,16 @@ const views = {
       const launchId = helpers.t(item.id, "");
       const metrics = item.metrics || {};
       const sales = helpers.t(metrics.sales ?? item.sales, 0);
+      const salesCount = Number(metrics.sales ?? item.sales ?? 0);
       const revenue = helpers.t(metrics.revenue ?? item.revenue, 0);
       const salesCount = Number(metrics.sales ?? item.sales);
       const launchNextAction = Number.isFinite(salesCount) && salesCount > 0
         ? "Monitor performance or adjust pricing"
         : "Add first sale to start tracking performance";
       const message = state.workView.messages[`launch-${launchId}`] || "";
+      const nextActionLabel = salesCount === 0
+        ? "Add first sale to start tracking performance"
+        : "Monitor performance or adjust pricing";
 
       return `
         <article class="card row-item">
@@ -868,7 +874,8 @@ const views = {
             <span class="badge ${helpers.badgeClass(item.status)}">${helpers.escape(helpers.statusLabel(item.status))}</span>
             sales: ${helpers.escape(sales)} · revenue: ${helpers.escape(revenue)}
           </p>
-          ${renderNextActionBlock("Launch Active", launchNextAction)}
+          <p><strong>Status:</strong> Launch Active</p>
+          <p class="muted-note" style="display: inline-block; padding: 2px 8px; border-radius: 999px; background: rgba(88, 166, 255, 0.12);"><strong>Next Action:</strong> ${helpers.escape(nextActionLabel)}</p>
           <div class="inline-form-grid launch-actions-inline">
             <div class="inline-control-group">
               <label>Amount</label>
@@ -912,10 +919,7 @@ const views = {
             <p class="muted-note">Concepts waiting for an approval decision.</p>
           </header>
           <section class="work-status-group">
-            ${draftProposals.length ? draftProposals.map((item) => renderProposalCard(item, ["approve", "reject"], {
-              status: "Draft",
-              nextAction: "Approve to begin building",
-            })).join("") : emptyStageMessage}
+            ${draftProposals.length ? draftProposals.map((item) => renderProposalCard(item, ["approve", "reject"], "Draft", "Approve to begin building")).join("") : emptyStageMessage}
           </section>
         </article>
 
@@ -925,10 +929,7 @@ const views = {
             <p class="muted-note">Products currently being built.</p>
           </header>
           <section class="work-status-group">
-            ${buildingProposals.length ? buildingProposals.map((item) => renderProposalCard(item, ["ready"], {
-              status: "Building",
-              nextAction: "Mark ready when assets complete",
-            })).join("") : emptyStageMessage}
+            ${buildingProposals.length ? buildingProposals.map((item) => renderProposalCard(item, ["ready"], "Building", "Mark ready when assets complete")).join("") : emptyStageMessage}
           </section>
         </article>
 
@@ -948,10 +949,7 @@ const views = {
                 || item.execution_package_id
               );
               const transitions = ["launch", ...(hasExecutionPackage ? [] : ["generate_execution_package"])];
-              return renderProposalCard(item, transitions, {
-                status: "Ready to Launch",
-                nextAction: "Launch product",
-              });
+              return renderProposalCard(item, transitions, "Ready to Launch", "Launch product");
             }).join("") : emptyStageMessage}
           </section>
         </article>
