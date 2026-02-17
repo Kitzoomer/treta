@@ -43,19 +43,47 @@ class RedditIntelligenceRouter:
 
     def handle_patch(self, path: str, payload: Dict[str, Any]) -> Tuple[int, Dict[str, Any]] | None:
         marker = "/reddit/signals/"
-        suffix = "/status"
-        if not path.startswith(marker) or not path.endswith(suffix):
+        if not path.startswith(marker):
             return None
 
-        signal_id = path[len(marker):-len(suffix)].strip()
-        status = str(payload.get("status", "")).strip()
-        if not signal_id:
-            return 400, {"ok": False, "error": "missing_id"}
+        status_suffix = "/status"
+        feedback_suffix = "/feedback"
 
-        if status not in {"approved", "rejected", "published"}:
-            return 400, {"ok": False, "error": "invalid_status"}
+        if path.endswith(status_suffix):
+            signal_id = path[len(marker):-len(status_suffix)].strip()
+            status = str(payload.get("status", "")).strip()
+            if not signal_id:
+                return 400, {"ok": False, "error": "missing_id"}
 
-        updated = self._service_instance().update_status(signal_id=signal_id, status=status)
-        if updated is None:
-            return 404, {"ok": False, "error": "not_found"}
-        return 200, updated
+            if status not in {"approved", "rejected", "published"}:
+                return 400, {"ok": False, "error": "invalid_status"}
+
+            updated = self._service_instance().update_status(signal_id=signal_id, status=status)
+            if updated is None:
+                return 404, {"ok": False, "error": "not_found"}
+            return 200, updated
+
+        if path.endswith(feedback_suffix):
+            signal_id = path[len(marker):-len(feedback_suffix)].strip()
+            if not signal_id:
+                return 400, {"ok": False, "error": "missing_id"}
+
+            if "karma" not in payload or "replies" not in payload:
+                return 400, {"ok": False, "error": "missing_feedback_fields"}
+
+            try:
+                karma = int(payload.get("karma", 0))
+                replies = int(payload.get("replies", 0))
+            except (TypeError, ValueError):
+                return 400, {"ok": False, "error": "invalid_feedback_values"}
+
+            updated = self._service_instance().update_feedback(
+                signal_id=signal_id,
+                karma=karma,
+                replies=replies,
+            )
+            if updated is None:
+                return 404, {"ok": False, "error": "not_found"}
+            return 200, updated
+
+        return None

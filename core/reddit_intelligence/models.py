@@ -35,8 +35,25 @@ def initialize_sqlite() -> None:
                 generated_reply TEXT,
                 status TEXT DEFAULT 'pending',
                 created_at TEXT,
-                updated_at TEXT
+                updated_at TEXT,
+                karma INTEGER DEFAULT 0,
+                replies INTEGER DEFAULT 0,
+                performance_score INTEGER DEFAULT 0
             )
             """
         )
+
+        existing_cols = {
+            row[1]
+            for row in cur.execute("PRAGMA table_info(reddit_signals)").fetchall()
+        }
+        migrations = {
+            "karma": "ALTER TABLE reddit_signals ADD COLUMN karma INTEGER DEFAULT 0",
+            "replies": "ALTER TABLE reddit_signals ADD COLUMN replies INTEGER DEFAULT 0",
+            "performance_score": "ALTER TABLE reddit_signals ADD COLUMN performance_score INTEGER DEFAULT 0",
+        }
+        for column_name, ddl in migrations.items():
+            if column_name not in existing_cols:
+                cur.execute(ddl)
+
         conn.commit()

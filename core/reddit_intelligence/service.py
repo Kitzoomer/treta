@@ -5,6 +5,7 @@ import uuid
 from typing import Any, Dict, List
 
 from core.reddit_intelligence.repository import RedditSignalRepository
+from core.reddit_intelligence.sales_insight import SalesInsightService
 
 
 class RedditIntelligenceService:
@@ -22,16 +23,40 @@ class RedditIntelligenceService:
             intent_level = "direct"
             opportunity_score = random.randint(80, 95)
             suggested_action = "value_plus_mention"
+            reasoning = "Detected explicit buying/help-seeking intent in post text."
         elif any(keyword in text_lower for keyword in implicit_keywords):
             detected_pain_type = "implicit"
             intent_level = "implicit"
             opportunity_score = random.randint(50, 75)
             suggested_action = "value"
+            reasoning = "Detected pain/problem language with indirect intent."
         else:
             detected_pain_type = "trend"
             intent_level = "trend"
             opportunity_score = random.randint(30, 60)
             suggested_action = "ignore"
+            reasoning = "Detected general discussion without clear purchase intent."
+
+        try:
+            high_performing_keywords = SalesInsightService().get_high_performing_keywords()
+            if any(keyword in text_lower for keyword in high_performing_keywords):
+                boost = random.randint(10, 20)
+                opportunity_score = min(100, opportunity_score + boost)
+                reasoning += " Boosted score due to alignment with high-performing product keywords."
+        except Exception:
+            pass
+
+        try:
+            avg_performance = self.repository.get_average_performance_by_intent(intent_level)
+            if avg_performance > 10:
+                opportunity_score += 5
+                reasoning += " Adjusted based on historical Reddit performance."
+            elif avg_performance < 2:
+                opportunity_score -= 5
+                reasoning += " Adjusted based on historical Reddit performance."
+            opportunity_score = max(0, min(100, opportunity_score))
+        except Exception:
+            pass
 
         generated_reply = self._build_reply(suggested_action, subreddit)
 
@@ -45,6 +70,7 @@ class RedditIntelligenceService:
             "intent_level": intent_level,
             "suggested_action": suggested_action,
             "generated_reply": generated_reply,
+            "reasoning": reasoning,
         }
         return self.repository.save_signal(signal)
 
@@ -53,6 +79,9 @@ class RedditIntelligenceService:
 
     def update_status(self, signal_id: str, status: str) -> Dict[str, Any] | None:
         return self.repository.update_signal_status(signal_id=signal_id, status=status)
+
+    def update_feedback(self, signal_id: str, karma: int, replies: int) -> Dict[str, Any] | None:
+        return self.repository.update_feedback(signal_id=signal_id, karma=karma, replies=replies)
 
     def _build_reply(self, suggested_action: str, subreddit: str) -> str:
         if suggested_action == "value_plus_mention":

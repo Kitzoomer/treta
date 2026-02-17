@@ -1,133 +1,214 @@
-import json
 import os
+import sqlite3
 import tempfile
 import unittest
-from pathlib import Path
-from urllib.request import Request, urlopen
+from unittest.mock import patch
 
-from core.ipc_http import start_http_server
-
-
-class RedditIntelligenceEndpointTest(unittest.TestCase):
-    def test_create_list_and_update_signal_status(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            root = Path(tmp_dir)
-            previous_data_dir = os.environ.get("TRETA_DATA_DIR")
-            os.environ["TRETA_DATA_DIR"] = str(root)
-            server = start_http_server(host="127.0.0.1", port=0)
-            try:
-                create_request = Request(
-                    f"http://127.0.0.1:{server.server_port}/reddit/signals",
-                    data=json.dumps(
-                        {
-                            "subreddit": "freelance",
-                            "post_url": "https://reddit.com/r/freelance/post-1",
-                            "post_text": "Need help with a template to pitch clients",
-                        }
-                    ).encode("utf-8"),
-                    method="POST",
-                    headers={"Content-Type": "application/json"},
-                )
-                with urlopen(create_request, timeout=2) as response:
-                    created = json.loads(response.read().decode("utf-8"))
-
-                self.assertEqual(created["subreddit"], "freelance")
-                self.assertEqual(created["detected_pain_type"], "direct")
-                self.assertEqual(created["intent_level"], "direct")
-                self.assertEqual(created["suggested_action"], "value_plus_mention")
-                self.assertEqual(created["status"], "pending")
-
-                with urlopen(
-                    f"http://127.0.0.1:{server.server_port}/reddit/signals?limit=20",
-                    timeout=2,
-                ) as response:
-                    listed = json.loads(response.read().decode("utf-8"))
-                self.assertEqual(len(listed["items"]), 1)
-
-                patch_request = Request(
-                    f"http://127.0.0.1:{server.server_port}/reddit/signals/{created['id']}/status",
-                    data=json.dumps({"status": "approved"}).encode("utf-8"),
-                    method="PATCH",
-                    headers={"Content-Type": "application/json"},
-                )
-                with urlopen(patch_request, timeout=2) as response:
-                    updated = json.loads(response.read().decode("utf-8"))
-                self.assertEqual(updated["status"], "approved")
-
-                with urlopen(
-                    f"http://127.0.0.1:{server.server_port}/reddit/signals?limit=20",
-                    timeout=2,
-                ) as response:
-                    listed_after_update = json.loads(response.read().decode("utf-8"))
-                self.assertEqual(listed_after_update["items"], [])
-            finally:
-                if previous_data_dir is None:
-                    os.environ.pop("TRETA_DATA_DIR", None)
-                else:
-                    os.environ["TRETA_DATA_DIR"] = previous_data_dir
-                server.shutdown()
-                server.server_close()
-
-    def test_list_respects_limit_and_score_order(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            root = Path(tmp_dir)
-            previous_data_dir = os.environ.get("TRETA_DATA_DIR")
-            os.environ["TRETA_DATA_DIR"] = str(root)
-            server = start_http_server(host="127.0.0.1", port=0)
-            try:
-                for idx in range(25):
-                    text = "Need help with template" if idx % 2 == 0 else "I am struggling with offer"
-                    create_request = Request(
-                        f"http://127.0.0.1:{server.server_port}/reddit/signals",
-                        data=json.dumps(
-                            {
-                                "subreddit": "entrepreneur",
-                                "post_url": f"https://reddit.com/r/entrepreneur/{idx}",
-                                "post_text": text,
-                            }
-                        ).encode("utf-8"),
-                        method="POST",
-                        headers={"Content-Type": "application/json"},
-                    )
-                    with urlopen(create_request, timeout=2):
-                        pass
-
-                with urlopen(
-                    f"http://127.0.0.1:{server.server_port}/reddit/signals?limit=20",
-                    timeout=2,
-                ) as response:
-                    payload = json.loads(response.read().decode("utf-8"))
-
-                items = payload["items"]
-                self.assertEqual(len(items), 20)
-                scores = [item["opportunity_score"] for item in items]
-                self.assertEqual(scores, sorted(scores, reverse=True))
-            finally:
-                if previous_data_dir is None:
-                    os.environ.pop("TRETA_DATA_DIR", None)
-                else:
-                    os.environ["TRETA_DATA_DIR"] = previous_data_dir
-                server.shutdown()
-                server.server_close()
+from core.reddit_intelligence.models import get_db_path, initialize_sqlite
+from core.reddit_intelligence.router import RedditIntelligenceRouter
+from core.reddit_intelligence.service import RedditIntelligenceService
 
 
+class RedditIntelligenceTestCase(unittest.TestCase):
+    def setUp(self):
+        self._tmp_dir = tempfile.TemporaryDirectory()
+        self._previous_data_dir = os.environ.get("TRETA_DATA_DIR")
+        os.environ["TRETA_DATA_DIR"] = self._tmp_dir.name
+        initialize_sqlite()
+        self.service = RedditIntelligenceService()
 
+    def tearDown(self):
+        db_path = get_db_path()
+        if db_path.exists():
+            db_path.unlink()
 
-class RedditIntelligenceModelPathTest(unittest.TestCase):
-    def test_default_db_path_uses_local_relative_fallback(self):
-        from core.reddit_intelligence.models import get_db_path
-
-        previous_data_dir = os.environ.get("TRETA_DATA_DIR")
-        try:
+        if self._previous_data_dir is None:
             os.environ.pop("TRETA_DATA_DIR", None)
-            db_path = get_db_path()
-            self.assertEqual(db_path.name, "reddit_intelligence.db")
-            self.assertFalse(db_path.is_absolute())
+        else:
+            os.environ["TRETA_DATA_DIR"] = self._previous_data_dir
+
+        self._tmp_dir.cleanup()
+
+    def test_direct_classification(self):
+        signal = self.service.analyze_post(
+            subreddit="freelance",
+            post_text="Does anyone have a template for a media kit?",
+            post_url="https://reddit.com/r/freelance/direct-1",
+        )
+
+        self.assertEqual(signal["intent_level"], "direct")
+        self.assertEqual(signal["suggested_action"], "value_plus_mention")
+        self.assertGreaterEqual(signal["opportunity_score"], 75)
+
+    def test_implicit_classification(self):
+        signal = self.service.analyze_post(
+            subreddit="creators",
+            post_text="I'm struggling to close brand deals",
+            post_url="https://reddit.com/r/creators/implicit-1",
+        )
+
+        self.assertEqual(signal["intent_level"], "implicit")
+        self.assertEqual(signal["suggested_action"], "value")
+        self.assertGreaterEqual(signal["opportunity_score"], 45)
+        self.assertLessEqual(signal["opportunity_score"], 70)
+
+    def test_trend_classification(self):
+        signal = self.service.analyze_post(
+            subreddit="creators",
+            post_text="Interesting discussion about creators",
+            post_url="https://reddit.com/r/creators/trend-1",
+        )
+
+        self.assertEqual(signal["intent_level"], "trend")
+        self.assertEqual(signal["suggested_action"], "ignore")
+
+    def test_persistence(self):
+        signal = self.service.analyze_post(
+            subreddit="startups",
+            post_text="Need help choosing a pricing model",
+            post_url="https://reddit.com/r/startups/persist-1",
+        )
+
+        conn = sqlite3.connect(get_db_path())
+        try:
+            row = conn.execute(
+                "SELECT id, subreddit, status FROM reddit_signals WHERE id = ?",
+                (signal["id"],),
+            ).fetchone()
         finally:
-            if previous_data_dir is None:
-                os.environ.pop("TRETA_DATA_DIR", None)
-            else:
-                os.environ["TRETA_DATA_DIR"] = previous_data_dir
+            conn.close()
+
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], signal["id"])
+        self.assertEqual(row[1], "startups")
+        self.assertEqual(row[2], "pending")
+
+        conn = sqlite3.connect(get_db_path())
+        try:
+            feedback_row = conn.execute(
+                "SELECT karma, replies, performance_score FROM reddit_signals WHERE id = ?",
+                (signal["id"],),
+            ).fetchone()
+        finally:
+            conn.close()
+
+        self.assertEqual(feedback_row[0], 0)
+        self.assertEqual(feedback_row[1], 0)
+        self.assertEqual(feedback_row[2], 0)
+
+    def test_list_top_pending(self):
+        low = self.service.analyze_post(
+            subreddit="entrepreneur",
+            post_text="Interesting discussion about creators",
+            post_url="https://reddit.com/r/entrepreneur/low",
+        )
+        medium = self.service.analyze_post(
+            subreddit="entrepreneur",
+            post_text="I'm struggling to close brand deals",
+            post_url="https://reddit.com/r/entrepreneur/medium",
+        )
+        high = self.service.analyze_post(
+            subreddit="entrepreneur",
+            post_text="Does anyone have a template for a media kit?",
+            post_url="https://reddit.com/r/entrepreneur/high",
+        )
+
+        ordered = self.service.list_top_pending(limit=3)
+
+        self.assertEqual(
+            [item["id"] for item in ordered],
+            [high["id"], medium["id"], low["id"]],
+        )
+        self.assertEqual(
+            [item["opportunity_score"] for item in ordered],
+            sorted(
+                [
+                    low["opportunity_score"],
+                    medium["opportunity_score"],
+                    high["opportunity_score"],
+                ],
+                reverse=True,
+            ),
+        )
+
+
+    def test_sales_boost_applied(self):
+        with patch("core.reddit_intelligence.service.SalesInsightService.get_high_performing_keywords", return_value=["media", "kit"]), patch("core.reddit_intelligence.service.random.randint", side_effect=[90, 15]):
+            signal = self.service.analyze_post(
+                subreddit="freelance",
+                post_text="Does anyone have a template for a media kit?",
+                post_url="https://reddit.com/r/freelance/boost-1",
+            )
+
+        self.assertGreaterEqual(signal["opportunity_score"], 95)
+        self.assertLessEqual(signal["opportunity_score"], 100)
+        self.assertIn(
+            "Boosted score due to alignment with high-performing product keywords.",
+            signal.get("reasoning", ""),
+        )
+
+    def test_feedback_learning_adjusts_score(self):
+        with patch(
+            "core.reddit_intelligence.service.SalesInsightService.get_high_performing_keywords",
+            return_value=[],
+        ), patch("core.reddit_intelligence.service.random.randint", return_value=80):
+            first_signal = self.service.analyze_post(
+                subreddit="freelance",
+                post_text="Does anyone have a template for a media kit?",
+                post_url="https://reddit.com/r/freelance/feedback-base",
+            )
+
+            updated_feedback = self.service.update_feedback(
+                signal_id=first_signal["id"],
+                karma=12,
+                replies=4,
+            )
+
+            second_signal = self.service.analyze_post(
+                subreddit="freelance",
+                post_text="Need help with a template for brand outreach",
+                post_url="https://reddit.com/r/freelance/feedback-next",
+            )
+
+        self.assertIsNotNone(updated_feedback)
+        self.assertEqual(updated_feedback["performance_score"], 20)
+        self.assertGreater(second_signal["opportunity_score"], first_signal["opportunity_score"])
+        self.assertIn(
+            "Adjusted based on historical Reddit performance.",
+            second_signal.get("reasoning", ""),
+        )
+
+    def test_feedback_patch_endpoint(self):
+        signal = self.service.analyze_post(
+            subreddit="freelance",
+            post_text="Need help with a template",
+            post_url="https://reddit.com/r/freelance/feedback-endpoint",
+        )
+
+        router = RedditIntelligenceRouter(service=self.service)
+        status, payload = router.handle_patch(
+            f"/reddit/signals/{signal['id']}/feedback",
+            {"karma": 5, "replies": 3},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["karma"], 5)
+        self.assertEqual(payload["replies"], 3)
+        self.assertEqual(payload["performance_score"], 11)
+
+    def test_update_status(self):
+        signal = self.service.analyze_post(
+            subreddit="saas",
+            post_text="Need help with a sales template",
+            post_url="https://reddit.com/r/saas/update-1",
+        )
+
+        updated = self.service.update_status(signal_id=signal["id"], status="approved")
+
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["id"], signal["id"])
+        self.assertEqual(updated["status"], "approved")
+
 
 if __name__ == "__main__":
     unittest.main()
