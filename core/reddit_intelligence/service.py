@@ -69,6 +69,16 @@ class RedditIntelligenceService:
         except Exception:
             pass
 
+        subreddit_avg = self.repository.get_average_performance_by_subreddit(subreddit)
+        if subreddit_avg > 15:
+            opportunity_score += 8
+            reasoning += " Boosted due to high-performing subreddit."
+        elif subreddit_avg < 3 and subreddit_avg != 0:
+            opportunity_score -= 5
+            reasoning += " Reduced due to low-performing subreddit."
+
+        opportunity_score = max(0, min(100, opportunity_score))
+
         generated_reply = self._build_reply(suggested_action, subreddit)
 
         signal = {

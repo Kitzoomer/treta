@@ -121,6 +121,23 @@ class RedditSignalRepository:
             return 0
         return float(row["avg_performance"])
 
+    def get_average_performance_by_subreddit(self, subreddit: str) -> float:
+        self.ensure_initialized()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        with get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT AVG(performance_score) AS avg_performance
+                FROM reddit_signals
+                WHERE subreddit = ? AND created_at >= ?
+                """,
+                (subreddit, cutoff),
+            ).fetchone()
+
+        if row is None or row["avg_performance"] is None:
+            return 0
+        return float(row["avg_performance"])
+
     def find_signal_by_id(self, signal_id: str) -> Signal | None:
         self.ensure_initialized()
         with get_connection() as conn:
