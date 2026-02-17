@@ -800,3 +800,49 @@ pre { white-space: pre-wrap; background: #0b1020; border: 1px solid var(--border
   text-transform: uppercase;
   margin-bottom: 4px;
 }
+
+.chat-card {
+  background: rgba(76,141,255,.12);
+  border-color: rgba(76,141,255,.35);
+}
+
+.chat-card h4 {
+  margin: 0 0 4px;
+  color: #dbe6ff;
+  text-transform: none;
+  font-size: .84rem;
+}
+
+.chat-card p {
+  margin: 0;
+}
+
+.chat-card small {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: .72rem;
+}
+
+.chat-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.chat-confirmation-card {
+  background: rgba(245,165,36,.12);
+  border-color: rgba(245,165,36,.38);
+}
+
+.chat-mode-toggle {
+  float: right;
+  display: inline-flex;
+  gap: 4px;
+}
+
+.chat-mode-toggle .secondary-btn {
+  padding: 4px 8px;
+  font-size: .72rem;
+}

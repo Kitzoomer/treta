@@ -10,6 +10,7 @@ const STORAGE_KEYS = {
   refreshMs: "treta.refreshMs",
   profile: "treta.profile",
   autonomyEnabled: "treta_autonomy_enabled",
+  chatMode: "treta_chat_mode",
 };
 
 const ACTION_TARGETS = {
@@ -22,6 +23,7 @@ const state = {
   system: { state: "IDLE" },
   events: [],
   chatHistory: [],
+  chatCards: [],
   opportunities: [],
   proposals: [],
   launches: [],
@@ -57,6 +59,7 @@ const state = {
   refreshMs: Number(localStorage.getItem(STORAGE_KEYS.refreshMs) || CONFIG.defaultRefreshMs),
   profile: loadProfileState(),
   autonomyEnabled: localStorage.getItem(STORAGE_KEYS.autonomyEnabled) === "true",
+  chatMode: localStorage.getItem(STORAGE_KEYS.chatMode) === "auto" ? "auto" : "manual",
   currentRoute: CONFIG.defaultRoute,
   workView: {
     messages: {},
@@ -77,6 +80,7 @@ const ui = {
   chatForm: document.getElementById("chat-form"),
   chatInput: document.getElementById("chat-input"),
   chatHistory: document.getElementById("chat-history"),
+  chatPanel: document.getElementById("chat-panel"),
   systemStatusPanel: document.getElementById("system-status-panel"),
   activityTimelinePanel: document.getElementById("activity-timeline-panel"),
   telemetry: document.getElementById("telemetry-content"),
@@ -112,6 +116,10 @@ function saveProfileState() {
 
 function saveAutonomyEnabledState() {
   localStorage.setItem(STORAGE_KEYS.autonomyEnabled, state.autonomyEnabled ? "true" : "false");
+}
+
+function saveChatModeState() {
+  localStorage.setItem(STORAGE_KEYS.chatMode, state.chatMode);
 }
 
 const api = {
@@ -1297,7 +1305,7 @@ function renderActivityTimeline() {
 
 function renderConversation() {
   if (!ui.chatHistory) return;
-  const messages = state.chatHistory || [];
+  const messages = state.chatCards || [];
   if (!messages.length) {
     ui.chatHistory.innerHTML = "<p class='empty'>No messages yet.</p>";
     return;
@@ -1305,22 +1313,352 @@ function renderConversation() {
 
   ui.chatHistory.innerHTML = messages
     .map((item) => {
-      const role = helpers.escape(helpers.t(item.role, "assistant"));
-      const text = helpers.escape(helpers.t(item.text, ""));
+      if (item.type === "user") {
+        const text = helpers.escape(helpers.t(item.text, ""));
+        return `
+          <article class="chat-message user">
+            <div class="chat-role">user</div>
+            <div>${text}</div>
+          </article>
+        `;
+      }
+
+      if (item.type === "confirm") {
+        const title = helpers.escape(helpers.t(item.title, "Confirmation required"));
+        const summary = helpers.escape(helpers.t(item.summary, ""));
+        return `
+          <article class="chat-message assistant chat-card chat-confirmation-card">
+            <div class="chat-role">assistant</div>
+            <h4>${title}</h4>
+            <p>${summary}</p>
+            <div class="card-actions">
+              <button type="button" data-action="chat-confirm" data-id="${helpers.escape(item.id)}">Confirm</button>
+              <button type="button" class="secondary-btn" data-action="chat-cancel" data-id="${helpers.escape(item.id)}">Cancel</button>
+            </div>
+          </article>
+        `;
+      }
+
+      const card = item.card || {};
+      const title = helpers.escape(helpers.t(card.title, "Treta"));
+      const summary = helpers.escape(helpers.t(card.summary, ""));
+      const details = card.details ? `<small>${helpers.escape(helpers.t(card.details, ""))}</small>` : "";
+      const cta = card.cta
+        ? `<button type="button" data-action="chat-cta" data-run="${card.cta.run ? "1" : ""}" data-route="${helpers.escape(card.cta.route || "")}" data-id="${helpers.escape(item.id)}">${helpers.escape(helpers.t(card.cta.label, "Run"))}</button>`
+        : "";
+      const chips = Array.isArray(card.chips) && card.chips.length
+        ? `<div class="chat-chips">${card.chips
+            .map((chip) => `<button type="button" class="secondary-btn" data-action="chat-chip" data-route="${helpers.escape(chip.route || "")}" data-run="${chip.run ? "1" : ""}" data-id="${helpers.escape(item.id)}">${helpers.escape(helpers.t(chip.label, "Option"))}</button>`)
+            .join("")}</div>`
+        : "";
       return `
-        <article class="chat-message ${role}">
-          <div class="chat-role">${role}</div>
-          <div>${text}</div>
+        <article class="chat-message assistant chat-card">
+          <div class="chat-role">assistant</div>
+          <h4>${title}</h4>
+          <p>${summary}</p>
+          ${details}
+          ${cta ? `<div class="card-actions">${cta}</div>` : ""}
+          ${chips}
         </article>
       `;
     })
     .join("");
+
+  ui.chatHistory.querySelectorAll("button[data-action='chat-confirm']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const entry = state.chatCards.find((item) => item.id === button.dataset.id);
+      if (!entry?.decision) return;
+      state.chatCards = state.chatCards.filter((item) => item.id !== entry.id);
+      await executeDecision(entry.decision);
+    });
+  });
+
+  ui.chatHistory.querySelectorAll("button[data-action='chat-cancel']").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.chatCards = state.chatCards.filter((item) => item.id !== button.dataset.id);
+      state.chatCards.push({
+        id: `assistant-${Date.now()}`,
+        type: "assistant",
+        card: {
+          title: "Command canceled",
+          summary: "No action was executed.",
+        },
+      });
+      renderConversation();
+    });
+  });
+
+  ui.chatHistory.querySelectorAll("button[data-action='chat-cta'], button[data-action='chat-chip']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const route = button.dataset.route || "";
+      const run = button.dataset.run === "1";
+      if (route) router.navigate(route.replace("#/", ""));
+      if (run) {
+        const entry = state.chatCards.find((item) => item.id === button.dataset.id);
+        if (entry?.decision) await executeDecision({ ...entry.decision, requires_confirmation: false });
+      }
+    });
+  });
+
   ui.chatHistory.scrollTop = ui.chatHistory.scrollHeight;
 }
 
 function renderCommandBar() {
   if (!ui.chatForm) return;
   ui.chatForm.classList.add("quick-command-bar");
+  if (!ui.chatPanel) return;
+  const title = ui.chatPanel.querySelector("h2");
+  if (!title) return;
+  title.innerHTML = `Conversation <span class="chat-mode-toggle"><button type="button" class="secondary-btn ${state.chatMode === "manual" ? "active" : ""}" data-action="chat-mode" data-mode="manual">Manual</button><button type="button" class="secondary-btn ${state.chatMode === "auto" ? "active" : ""}" data-action="chat-mode" data-mode="auto">Auto</button></span>`;
+  title.querySelectorAll("button[data-action='chat-mode']").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.chatMode = button.dataset.mode === "auto" ? "auto" : "manual";
+      saveChatModeState();
+      renderCommandBar();
+    });
+  });
+}
+
+function getChatStateSnapshot() {
+  return {
+    opportunities: state.opportunities,
+    proposals: state.proposals,
+    launches: state.launches,
+    strategyPendingActions: state.strategyPendingActions,
+    performanceSummary: state.performance,
+    autonomyStatus: state.strategyView.autonomyStatus,
+    systemMode: state.system,
+    events: state.events,
+  };
+}
+
+function commandNeedsConfirmation(rawText, chatMode, confidence) {
+  const trimmed = rawText.trim().toLowerCase();
+  if (chatMode === "manual") return !(trimmed.startsWith("!") || trimmed.startsWith("run ") || trimmed.startsWith("execute "));
+  return confidence < 0.8;
+}
+
+function mapNavigationRoute(command) {
+  const normalized = command.toLowerCase();
+  if (normalized.includes("dashboard")) return "dashboard";
+  if (normalized.includes("work")) return "work";
+  if (normalized.includes("strategy")) return "strategy";
+  if (normalized.includes("settings")) return "settings";
+  if (normalized.includes("profile")) return "profile";
+  if (normalized.includes("game")) return "game";
+  if (normalized.includes("home")) return "home";
+  return "home";
+}
+
+function computeChatIntentDecision(rawText, stateSnapshot, settings) {
+  const text = helpers.t(rawText, "").trim();
+  const lower = text.toLowerCase();
+  const decision = {
+    intent: "unknown",
+    confidence: 0.45,
+    requires_confirmation: false,
+    action: { kind: "no_op", calls: [] },
+    ui: {
+      title: "Need clarification",
+      summary: "I can run commands, query the pipeline, or navigate to a page.",
+      chips: [
+        { label: "Scan opportunities", run: true },
+        { label: "Show drafts", run: true },
+        { label: "Go strategy", route: "#/strategy" },
+      ],
+    },
+    telemetry: { raw_text: rawText, matched_rule: "unknown" },
+  };
+
+  const executeMatch = lower.match(/(?:execute strategy|ejecuta accion)\s+([a-z0-9_-]+)/i);
+  const rejectMatch = lower.match(/(?:reject strategy|rechaza accion)\s+([a-z0-9_-]+)/i);
+  const isHelp = /\b(help|ayuda|comandos)\b/.test(lower);
+  const isNavigate = /\b(go|ir|navigate)\b/.test(lower) && /(home|dashboard|work|strategy|settings|profile|game)/.test(lower);
+  const isScan = /(opportunity scan|scan|escanea|buscar oportunidades)/.test(lower);
+  const isSyncSales = /(sync gumroad|sync sales|sincroniza ventas)/.test(lower);
+  const isStatus = /\b(status|estado|como vamos)\b/.test(lower);
+  const isOpps = /\b(opportunities|oportunidades)\b/.test(lower);
+  const isProposals = /\b(proposals|drafts|propuestas)\b/.test(lower);
+  const isLaunches = /\b(launches|lanzamientos)\b/.test(lower);
+  const isStrategy = /\b(strategy|acciones|cola)\b/.test(lower);
+
+  if (isHelp) {
+    return {
+      ...decision,
+      intent: "help",
+      confidence: 0.99,
+      telemetry: { raw_text: rawText, matched_rule: "help" },
+      ui: {
+        title: "Available commands",
+        summary: "Use scan, sync sales, strategy execute/reject, status, drafts, launches, or go <route>.",
+        chips: [
+          { label: "scan", run: true },
+          { label: "status", run: true },
+          { label: "go work", route: "#/work" },
+        ],
+      },
+    };
+  }
+
+  if (isNavigate) {
+    const route = mapNavigationRoute(lower);
+    return {
+      ...decision,
+      intent: "navigate",
+      confidence: 0.95,
+      telemetry: { raw_text: rawText, matched_rule: "navigate" },
+      action: { kind: "no_op", calls: [] },
+      ui: {
+        title: "Navigation",
+        summary: `Opening ${route}.`,
+        cta: { label: "Open", route: `#/${route}` },
+      },
+    };
+  }
+
+  if (executeMatch || rejectMatch || isScan || isSyncSales) {
+    const calls = [];
+    let matchedRule = "command.scan";
+    let summary = "Ready to execute command.";
+    if (executeMatch) {
+      const id = executeMatch[1];
+      calls.push({ method: "POST", path: `/strategy/execute_action/${id}`, body: {} });
+      matchedRule = "command.strategy.execute";
+      summary = `Execute strategy action ${id}.`;
+    } else if (rejectMatch) {
+      const id = rejectMatch[1];
+      calls.push({ method: "POST", path: `/strategy/reject_action/${id}`, body: {} });
+      matchedRule = "command.strategy.reject";
+      summary = `Reject strategy action ${rejectMatch[1]}.`;
+    } else if (isSyncSales) {
+      calls.push({ method: "POST", path: "/gumroad/sync_sales", body: {} });
+      matchedRule = "command.sync_sales";
+      summary = "Sync Gumroad sales.";
+    } else {
+      calls.push({ method: "POST", path: "/scan/infoproduct", body: {} });
+      matchedRule = "command.scan";
+      summary = "Run infoproduct opportunity scan.";
+    }
+
+    const confidence = executeMatch || rejectMatch ? 0.98 : 0.9;
+    return {
+      ...decision,
+      intent: "command",
+      confidence,
+      requires_confirmation: commandNeedsConfirmation(text, settings.chatMode, confidence),
+      action: { kind: "api_call", calls },
+      telemetry: { raw_text: rawText, matched_rule: matchedRule },
+      ui: {
+        title: "Command ready",
+        summary,
+        cta: { label: "Run", run: true },
+      },
+    };
+  }
+
+  if (isStatus || isOpps || isProposals || isLaunches || isStrategy) {
+    let calls = [];
+    let matchedRule = "query.status";
+    let summary = "Pipeline query prepared.";
+    let cta = null;
+    if (isStatus) {
+      calls = [{ method: "GET", path: "/state" }, { method: "GET", path: "/performance/summary" }];
+      summary = `Mode: ${helpers.t(stateSnapshot.systemMode?.state, "unknown")}. Revenue: ${helpers.t(stateSnapshot.performanceSummary?.total_revenue, 0)}.`;
+      cta = { label: "Open dashboard", route: "#/dashboard" };
+      matchedRule = "query.status";
+    } else if (isOpps) {
+      calls = [{ method: "GET", path: "/opportunities" }];
+      summary = `${(stateSnapshot.opportunities || []).length} opportunities loaded.`;
+      cta = { label: "Open work", route: "#/work" };
+      matchedRule = "query.opportunities";
+    } else if (isProposals) {
+      calls = [{ method: "GET", path: "/product_proposals" }];
+      summary = `${(stateSnapshot.proposals || []).length} proposals/drafts loaded.`;
+      cta = { label: "Open work", route: "#/work" };
+      matchedRule = "query.proposals";
+    } else if (isLaunches) {
+      calls = [{ method: "GET", path: "/product_launches" }];
+      summary = `${(stateSnapshot.launches || []).length} launches loaded.`;
+      cta = { label: "Open work", route: "#/work" };
+      matchedRule = "query.launches";
+    } else {
+      calls = [{ method: "GET", path: "/strategy/pending_actions" }, { method: "GET", path: "/strategy/recommendations" }];
+      summary = `${(stateSnapshot.strategyPendingActions || []).length} pending strategy actions.`;
+      cta = { label: "Open strategy", route: "#/strategy" };
+      matchedRule = "query.strategy";
+    }
+
+    return {
+      ...decision,
+      intent: "query",
+      confidence: 0.92,
+      action: { kind: calls.length > 1 ? "multi_call" : "api_call", calls },
+      telemetry: { raw_text: rawText, matched_rule: matchedRule },
+      ui: {
+        title: "Query ready",
+        summary,
+        cta,
+      },
+    };
+  }
+
+  return decision;
+}
+
+async function executeDecision(decision) {
+  if (!decision) return;
+  if (decision.intent === "navigate") {
+    const route = decision.ui?.cta?.route;
+    if (route) router.navigate(route.replace("#/", ""));
+    state.chatCards.push({ id: `assistant-${Date.now()}`, type: "assistant", decision, card: { ...decision.ui, details: "Navigation applied." } });
+    renderConversation();
+    return;
+  }
+
+  if (decision.action.kind === "no_op") {
+    state.chatCards.push({ id: `assistant-${Date.now()}`, type: "assistant", decision, card: decision.ui });
+    renderConversation();
+    return;
+  }
+
+  try {
+    const callResults = [];
+    for (const call of decision.action.calls || []) {
+      const options = { method: call.method };
+      if (call.method === "POST") options.body = JSON.stringify(call.body || {});
+      const result = await api.fetchJson(call.path, options);
+      callResults.push({ path: call.path, result });
+    }
+
+    await refreshLoop();
+    if (decision.action.calls.some((call) => call.path.includes("/strategy/"))) {
+      await loadStrategyData();
+      await loadDashboardPendingActions();
+    }
+
+    state.chatCards.push({
+      id: `assistant-${Date.now()}`,
+      type: "assistant",
+      decision,
+      card: {
+        title: decision.ui?.title || "Done",
+        summary: `${decision.intent === "query" ? "Query completed" : "Command executed"}.`,
+        details: helpers.t(callResults[0] ? JSON.stringify(callResults[0].result) : "OK", "OK"),
+        cta: decision.ui?.cta,
+      },
+    });
+  } catch (error) {
+    state.chatCards.push({
+      id: `assistant-${Date.now()}`,
+      type: "assistant",
+      decision,
+      card: {
+        title: "Execution error",
+        summary: error.message,
+      },
+    });
+  }
+  renderConversation();
 }
 
 function renderControlCenter() {
@@ -1795,16 +2133,24 @@ ui.chatForm.addEventListener("submit", async (event) => {
   const input = ui.chatInput.value.trim();
   if (!input) return;
 
-  await api.fetchJson("/event", {
-    method: "POST",
-    body: JSON.stringify({
-      type: "UserMessageSubmitted",
-      payload: { text: input, source: "ui" },
-      source: "ui",
-    }),
-  });
+  const snapshot = getChatStateSnapshot();
+  const decision = computeChatIntentDecision(input, snapshot, { chatMode: state.chatMode });
+  state.chatCards.push({ id: `user-${Date.now()}`, type: "user", text: input });
+
+  if (decision.requires_confirmation) {
+    state.chatCards.push({
+      id: `confirm-${Date.now()}`,
+      type: "confirm",
+      title: decision.ui?.title || "Confirm command",
+      summary: decision.ui?.summary || "Do you want to execute this command?",
+      decision,
+    });
+  } else {
+    await executeDecision(decision);
+  }
+
   ui.chatInput.value = "";
-  await refreshLoop();
+  renderConversation();
 });
 
 window.addEventListener("hashchange", () => router.render());
