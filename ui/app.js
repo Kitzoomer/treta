@@ -63,6 +63,7 @@ const state = {
   currentRoute: CONFIG.defaultRoute,
   workView: {
     messages: {},
+    traceFilter: "all",
     executionPackages: {},
     activeExecutionProposalId: "",
     plansByProposal: {},
@@ -285,6 +286,86 @@ const helpers = {
     };
   },
 };
+
+function buildPipelineTrace(stateSnapshot) {
+  const opportunities = Array.isArray(stateSnapshot?.opportunities) ? stateSnapshot.opportunities : [];
+  const proposals = Array.isArray(stateSnapshot?.proposals) ? stateSnapshot.proposals : [];
+  const plans = Array.isArray(stateSnapshot?.plans) ? stateSnapshot.plans : [];
+  const launches = Array.isArray(stateSnapshot?.launches) ? stateSnapshot.launches : [];
+
+  const normalize = (value) => helpers.normalizeStatus(value);
+  const toId = (value) => (value === undefined || value === null || value === "" ? null : String(value));
+
+  const opportunitiesById = new Map(opportunities.map((item) => [toId(item.id), item]).filter(([id]) => id));
+  const opportunitiesByTitle = new Map(opportunities.map((item) => [normalize(item.title), item]).filter(([title]) => title));
+  const planByProposalId = new Map(plans.map((item) => [toId(item.proposal_id), item]).filter(([proposalId]) => proposalId));
+  const launchByProposalId = new Map(launches.map((item) => [toId(item.proposal_id), item]).filter(([proposalId]) => proposalId));
+
+  return proposals.map((proposal, idx) => {
+    const proposalId = toId(proposal.id);
+    const explicitOpportunityId = toId(proposal.opportunity_id);
+    const inferredOpportunity = explicitOpportunityId
+      ? opportunitiesById.get(explicitOpportunityId)
+      : opportunitiesByTitle.get(normalize(proposal.opportunity_title || proposal.title || proposal.product_name));
+    const opportunity = explicitOpportunityId
+      ? opportunitiesById.get(explicitOpportunityId) || null
+      : inferredOpportunity || null;
+
+    const plan = planByProposalId.get(proposalId) || null;
+    const launch = launchByProposalId.get(proposalId) || null;
+
+    const proposalStatus = normalize(proposal.status) || null;
+    const launchStatus = normalize(launch?.status);
+    const isReady = ["ready_to_launch", "ready_for_review"].includes(proposalStatus);
+
+    let primaryAction = { label: "View details", route: "#/work", run: null };
+    if (proposalId && proposalStatus === "draft") {
+      primaryAction = { label: "Approve", route: "#/work", run: { method: "POST", path: `/product_proposals/${proposalId}/approve`, body: {} } };
+    } else if (proposalId && proposalStatus === "approved" && !plan) {
+      primaryAction = { label: "Build plan", route: "#/work", run: { method: "POST", path: "/product_plans/build", body: { proposal_id: proposalId } } };
+    } else if (proposalId && plan && !isReady && !["launched", "archived"].includes(proposalStatus)) {
+      primaryAction = { label: "Mark ready", route: "#/work", run: { method: "POST", path: `/product_proposals/${proposalId}/ready`, body: {} } };
+    } else if (proposalId && isReady && !launch) {
+      primaryAction = { label: "Launch", route: "#/work", run: { method: "POST", path: `/product_proposals/${proposalId}/launch`, body: {} } };
+    } else if (launch?.id && launchStatus && launchStatus !== "launched") {
+      primaryAction = { label: "Set status launched", route: "#/work", run: { method: "POST", path: `/product_launches/${launch.id}/status`, body: { status: "launched" } } };
+    }
+
+    const secondaryActions = [];
+    if (proposalId && proposalStatus === "approved" && !plan) {
+      secondaryActions.push({ label: "Start build", run: { method: "POST", path: `/product_proposals/${proposalId}/start_build`, body: {} } });
+    }
+    if (proposalId && proposalStatus !== "archived") {
+      secondaryActions.push({ label: "Archive", run: { method: "POST", path: `/product_proposals/${proposalId}/archive`, body: {} } });
+    }
+
+    return {
+      key: proposalId || `trace-${idx}`,
+      title: helpers.t(proposal.product_name || proposal.title || proposal.name, `Proposal ${idx + 1}`),
+      stage: launch ? "LAUNCH" : plan ? "PLAN" : proposalId ? "PROPOSAL" : "OPPORTUNITY",
+      status: {
+        opportunity: opportunity ? normalize(opportunity.status || opportunity.decision?.status || "new") : null,
+        proposal: proposalStatus,
+        plan: plan ? "present" : "missing",
+        launch: launch ? normalize(launch.status || "active") : null,
+      },
+      ids: {
+        opportunity_id: toId(opportunity?.id) || explicitOpportunityId,
+        proposal_id: proposalId,
+        plan_id: toId(plan?.id || plan?.plan_id),
+        launch_id: toId(launch?.id),
+      },
+      metrics: {
+        confidence: Number.isFinite(Number(proposal.confidence)) ? Number(proposal.confidence) : null,
+        price: Number.isFinite(Number(proposal.price_suggestion)) ? Number(proposal.price_suggestion) : null,
+        sales: Number.isFinite(Number(launch?.metrics?.sales ?? launch?.sales)) ? Number(launch?.metrics?.sales ?? launch?.sales) : null,
+        revenue: Number.isFinite(Number(launch?.metrics?.revenue ?? launch?.revenue)) ? Number(launch?.metrics?.revenue ?? launch?.revenue) : null,
+      },
+      primaryAction,
+      secondaryActions,
+    };
+  });
+}
 
 function computePrimaryAttention(stateSnapshot) {
   const {
@@ -725,6 +806,73 @@ const views = {
       return `${textValue.slice(0, 137)}...`;
     };
 
+    const traceFilters = [
+      { key: "all", label: "All" },
+      { key: "needs_action", label: "Needs action" },
+      { key: "draft", label: "Drafts" },
+      { key: "ready_to_launch", label: "Ready to launch" },
+      { key: "launched", label: "Launched" },
+    ];
+
+    const traceItems = buildPipelineTrace({
+      opportunities: state.opportunities,
+      proposals: state.proposals,
+      plans: state.plans,
+      launches: state.launches,
+    });
+
+    const activeTraceFilter = state.workView.traceFilter || "all";
+    const filteredTraceItems = traceItems.filter((item) => {
+      if (activeTraceFilter === "all") return true;
+      if (activeTraceFilter === "needs_action") return Boolean(item.primaryAction?.run);
+      if (activeTraceFilter === "draft") return helpers.normalizeStatus(item.status.proposal) === "draft";
+      if (activeTraceFilter === "ready_to_launch") {
+        const status = helpers.normalizeStatus(item.status.proposal);
+        return status === "ready_to_launch" || status === "ready_for_review";
+      }
+      if (activeTraceFilter === "launched") {
+        return helpers.normalizeStatus(item.status.launch) === "launched"
+          || helpers.normalizeStatus(item.status.proposal) === "launched";
+      }
+      return true;
+    });
+
+    const formatMetric = (value, prefix = "") => {
+      if (!Number.isFinite(Number(value))) return "-";
+      return `${prefix}${Number(value).toFixed(2)}`;
+    };
+
+    const traceRows = filteredTraceItems.map((item) => {
+      const statusKey = `trace-${item.key}`;
+      const message = state.workView.messages[statusKey] || "";
+      const proposalId = helpers.t(item.ids.proposal_id, "");
+      const disablePrimary = !item.primaryAction?.run;
+      return `
+        <article class="trace-row">
+          <div class="trace-item-main">
+            <h4>${helpers.escape(item.title)}</h4>
+            <p class="muted-note">Opportunity: ${helpers.escape(helpers.t(item.ids.opportunity_id, "unknown"))} · Proposal: ${helpers.escape(helpers.t(proposalId, "-"))}</p>
+          </div>
+          <div class="trace-badges">
+            <span class="badge ${helpers.badgeClass(item.status.opportunity || "new")}">Opp: ${helpers.escape(helpers.t(item.status.opportunity, "unknown"))}</span>
+            <span class="badge ${helpers.badgeClass(item.status.proposal || "pending")}">Prop: ${helpers.escape(helpers.t(item.status.proposal, "pending"))}</span>
+            <span class="badge ${item.status.plan === "present" ? "ok" : "warn"}">Plan: ${helpers.escape(helpers.t(item.status.plan, "missing"))}</span>
+            <span class="badge ${helpers.badgeClass(item.status.launch || "pending")}">Launch: ${helpers.escape(helpers.t(item.status.launch, "pending"))}</span>
+          </div>
+          <div class="trace-metrics muted-note">
+            conf ${helpers.escape(formatMetric(item.metrics.confidence))} · price ${helpers.escape(formatMetric(item.metrics.price, "$"))} · sales ${helpers.escape(formatMetric(item.metrics.sales))} · revenue ${helpers.escape(formatMetric(item.metrics.revenue, "$"))}
+          </div>
+          <div class="trace-actions">
+            <button ${disablePrimary ? "disabled" : ""} data-action="trace-primary" data-key="${helpers.escape(item.key)}">${helpers.escape(item.primaryAction?.label || "View details")}</button>
+            ${(item.secondaryActions || []).map((action, idx) => `
+              <button class="secondary-btn" data-action="trace-secondary" data-key="${helpers.escape(item.key)}" data-secondary-index="${idx}">${helpers.escape(action.label)}</button>
+            `).join("")}
+          </div>
+          ${message ? `<p class="muted-note">${helpers.escape(message)}</p>` : ""}
+        </article>
+      `;
+    }).join("") || "<p class='empty'>No pipeline items in this filter.</p>";
+
     const renderOpportunityCard = (item) => {
       const status = getOpportunityStatus(item);
       return `
@@ -874,6 +1022,24 @@ const views = {
 
     this.shell("Work", "Revenue Console", `
       <section class="work-execution">
+        <article class="card work-section">
+          <header class="work-section-header">
+            <h3>PIPELINE TRACE</h3>
+            <p class="muted-note">Opportunity → Proposal → Plan → Launch</p>
+          </header>
+          <div class="card-actions wrap trace-filters">
+            ${traceFilters.map((filter) => `
+              <button class="${activeTraceFilter === filter.key ? "active" : "secondary-btn"}" data-action="trace-filter" data-filter="${helpers.escape(filter.key)}">${helpers.escape(filter.label)}</button>
+            `).join("")}
+          </div>
+          <div class="trace-table-head muted-note">
+            <span>Item</span><span>Stages</span><span>Metrics</span><span>Actions</span>
+          </div>
+          <div class="trace-table-wrap">
+            ${traceRows}
+          </div>
+        </article>
+
         <article class="card work-section">
           <header class="work-section-header">
             <h3>1) Opportunities</h3>
@@ -1791,6 +1957,64 @@ async function runAction(actionFn, targetId) {
 }
 
 function bindWorkActions() {
+  const traceItems = buildPipelineTrace({
+    opportunities: state.opportunities,
+    proposals: state.proposals,
+    plans: state.plans,
+    launches: state.launches,
+  });
+  const traceByKey = new Map(traceItems.map((item) => [String(item.key), item]));
+
+  ui.pageContent.querySelectorAll("button[data-action='trace-filter']").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.workView.traceFilter = helpers.t(button.dataset.filter, "all");
+      router.render();
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='trace-primary']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const item = traceByKey.get(String(button.dataset.key || ""));
+      if (!item) return;
+      const key = `trace-${item.key}`;
+      if (!item.primaryAction?.run) {
+        state.workView.messages[key] = "Done: review below in Work sections.";
+        router.render();
+        return;
+      }
+      state.workView.messages[key] = "Running...";
+      router.render();
+      await runWorkInlineAction(
+        key,
+        () => api.fetchJson(item.primaryAction.run.path, {
+          method: item.primaryAction.run.method,
+          body: JSON.stringify(item.primaryAction.run.body || {}),
+        }),
+        "Done"
+      );
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='trace-secondary']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const item = traceByKey.get(String(button.dataset.key || ""));
+      if (!item) return;
+      const action = item.secondaryActions?.[Number(button.dataset.secondaryIndex || "-1")];
+      if (!action?.run) return;
+      const key = `trace-${item.key}`;
+      state.workView.messages[key] = "Running...";
+      router.render();
+      await runWorkInlineAction(
+        key,
+        () => api.fetchJson(action.run.path, {
+          method: action.run.method,
+          body: JSON.stringify(action.run.body || {}),
+        }),
+        "Done"
+      );
+    });
+  });
+
   ui.pageContent.querySelectorAll("button[data-action='eval-opp']").forEach((button) => {
     button.addEventListener("click", async () => {
       await runAction(

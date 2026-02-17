@@ -508,9 +508,72 @@ pre { white-space: pre-wrap; background: #0b1020; border: 1px solid var(--border
   margin-bottom: 10px;
 }
 
+.trace-filters button {
+  min-width: 0;
+}
+
+.trace-table-head {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: 1.2fr 1.4fr 1fr 1fr;
+  gap: 10px;
+  font-size: .75rem;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.trace-table-wrap {
+  margin-top: 8px;
+  display: grid;
+  gap: 10px;
+}
+
+.trace-row {
+  border: 1px solid var(--border);
+  background: #0b1020;
+  border-radius: 8px;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: 1.2fr 1.4fr 1fr 1fr;
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+}
+
+.trace-item-main,
+.trace-badges,
+.trace-actions,
+.trace-metrics {
+  min-width: 0;
+}
+
+.trace-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.trace-metrics {
+  font-size: .8rem;
+}
+
+.trace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 @media (max-width: 1200px) {
   .work-proposals-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .trace-table-head {
+    display: none;
+  }
+
+  .trace-row {
+    grid-template-columns: 1fr;
   }
 }
 
