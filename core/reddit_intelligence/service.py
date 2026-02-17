@@ -22,20 +22,32 @@ class RedditIntelligenceService:
             detected_pain_type = "direct"
             intent_level = "direct"
             opportunity_score = random.randint(80, 95)
-            suggested_action = "value_plus_mention"
+            base_action = "value_plus_mention"
             reasoning = "Detected explicit buying/help-seeking intent in post text."
         elif any(keyword in text_lower for keyword in implicit_keywords):
             detected_pain_type = "implicit"
             intent_level = "implicit"
             opportunity_score = random.randint(50, 75)
-            suggested_action = "value"
+            base_action = "value"
             reasoning = "Detected pain/problem language with indirect intent."
         else:
             detected_pain_type = "trend"
             intent_level = "trend"
             opportunity_score = random.randint(30, 60)
-            suggested_action = "ignore"
+            base_action = "ignore"
             reasoning = "Detected general discussion without clear purchase intent."
+
+        avg_perf = self.repository.get_average_performance_by_intent(intent_level)
+
+        if intent_level == "direct":
+            suggested_action = "value" if avg_perf < 3 else "value_plus_mention"
+        elif intent_level == "implicit":
+            suggested_action = "value_plus_mention" if avg_perf > 15 else "value"
+        else:
+            suggested_action = "ignore"
+
+        if suggested_action != base_action:
+            reasoning += " Suggested action adapted based on historical engagement performance."
 
         try:
             high_performing_keywords = SalesInsightService().get_high_performing_keywords()
