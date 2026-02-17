@@ -1206,39 +1206,31 @@ const views = {
 
     const renderActionQueue = () => {
       if (strategyView.loading) return "<p class='empty'>Loading pending actions…</p>";
-      if (!pendingActions.length) return "<p class='empty'>No pending actions right now. Queue is clear.</p>";
+      if (!pendingActions.length) return "<p class='empty'>No strategic actions pending.</p>";
 
       return `
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Action name</th>
-                <th>Priority</th>
-                <th>Risk</th>
-                <th>Expected impact</th>
-                <th>Auto executable</th>
-                <th>Controls</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${pendingActions.map((item) => `
-                <tr>
-                  <td>${helpers.escape(helpers.t(item.title || item.name, item.id))}</td>
-                  <td><span class="badge ${helpers.priorityBadgeClass(item.priority)}">${helpers.t(item.priority, "unknown")}</span></td>
-                  <td><span class="badge ${helpers.badgeClass(item.risk_level)}">${helpers.t(item.risk_level, "unknown")}</span></td>
-                  <td>${helpers.escape(helpers.t(item.expected_impact || item.expected_impact_score, "Not specified"))}</td>
-                  <td>${item.auto_executable ? '<span class="badge ok">Auto</span>' : '<span class="badge info">Manual</span>'}</td>
-                  <td>
-                    <div class="card-actions wrap">
-                      <button data-action="strategy-execute" data-id="${item.id}">Execute</button>
-                      <button class="secondary-btn" data-action="strategy-reject" data-id="${item.id}">Reject</button>
-                    </div>
-                  </td>
-                </tr>
-              `).join("")}
-            </tbody>
-          </table>
+        <div class="stack">
+          ${pendingActions.map((item) => {
+            const actionId = String(item.action_id ?? item.id ?? "");
+            const actionIdLabel = actionId || "-";
+            const escapedActionId = helpers.escape(actionIdLabel);
+            return `
+              <article class="card">
+                <section class="card-grid cols-2">
+                  <div class="metric"><span>action_id</span><strong>${escapedActionId}</strong></div>
+                  <div class="metric"><span>action_type</span><strong>${helpers.escape(helpers.t(item.action_type, "unknown"))}</strong></div>
+                  <div class="metric"><span>priority</span><strong><span class="badge ${helpers.priorityBadgeClass(item.priority)}">${helpers.escape(helpers.t(item.priority, "unknown"))}</span></strong></div>
+                  <div class="metric"><span>risk_level</span><strong><span class="badge ${helpers.riskBadgeClass(item.risk_level)}">${helpers.escape(helpers.t(item.risk_level, "unknown"))}</span></strong></div>
+                  <div class="metric"><span>expected_impact_score</span><strong>${helpers.escape(helpers.t(item.expected_impact_score, "-"))}</strong></div>
+                  <div class="metric"><span>auto_executable</span><strong>${item.auto_executable ? "true" : "false"}</strong></div>
+                </section>
+                <div class="card-actions wrap" style="margin-top: 12px;">
+                  <button data-action="strategy-execute" data-id="${actionId}">Execute</button>
+                  <button class="secondary-btn" data-action="strategy-reject" data-id="${actionId}">Reject</button>
+                </div>
+              </article>
+            `;
+          }).join("")}
         </div>
       `;
     };
