@@ -759,30 +759,11 @@ const views = {
   },
 
   loadWork() {
-    const proposalGroups = [
-      { key: "draft", title: "Draft" },
-      { key: "approved", title: "Approved" },
-      { key: "building", title: "Building" },
-      { key: "ready_to_launch", title: "Ready to Launch" },
-      { key: "launched", title: "Launched" },
-      { key: "archived", title: "Archived" },
-    ];
-
     const transitionLabels = {
       approve: "Approve",
-      start_build: "Start Build",
+      reject: "Reject",
       ready: "Mark Ready",
       launch: "Launch",
-      archive: "Archive",
-    };
-
-    const transitionByStatus = {
-      draft: ["approve", "archive"],
-      approved: ["start_build", "archive"],
-      building: ["ready", "archive"],
-      ready_to_launch: ["launch", "archive"],
-      launched: ["archive"],
-      archived: [],
     };
 
     const getOpportunityStatus = (item) => {
@@ -798,91 +779,13 @@ const views = {
       return score === undefined ? "-" : helpers.t(score);
     };
 
-    const getOpportunityReasoning = (item) => {
-      const raw = item.reasoning || item.summary || item.decision?.reasoning || item.decision?.rationale || "";
-      const textValue = String(raw || "").trim();
-      if (!textValue) return "No reasoning available yet.";
-      if (textValue.length <= 140) return textValue;
-      return `${textValue.slice(0, 137)}...`;
-    };
-
-    const traceFilters = [
-      { key: "all", label: "All" },
-      { key: "needs_action", label: "Needs action" },
-      { key: "draft", label: "Drafts" },
-      { key: "ready_to_launch", label: "Ready to launch" },
-      { key: "launched", label: "Launched" },
-    ];
-
-    const traceItems = buildPipelineTrace({
-      opportunities: state.opportunities,
-      proposals: state.proposals,
-      plans: state.plans,
-      launches: state.launches,
-    });
-
-    const activeTraceFilter = state.workView.traceFilter || "all";
-    const filteredTraceItems = traceItems.filter((item) => {
-      if (activeTraceFilter === "all") return true;
-      if (activeTraceFilter === "needs_action") return Boolean(item.primaryAction?.run);
-      if (activeTraceFilter === "draft") return helpers.normalizeStatus(item.status.proposal) === "draft";
-      if (activeTraceFilter === "ready_to_launch") {
-        const status = helpers.normalizeStatus(item.status.proposal);
-        return status === "ready_to_launch" || status === "ready_for_review";
-      }
-      if (activeTraceFilter === "launched") {
-        return helpers.normalizeStatus(item.status.launch) === "launched"
-          || helpers.normalizeStatus(item.status.proposal) === "launched";
-      }
-      return true;
-    });
-
-    const formatMetric = (value, prefix = "") => {
-      if (!Number.isFinite(Number(value))) return "-";
-      return `${prefix}${Number(value).toFixed(2)}`;
-    };
-
-    const traceRows = filteredTraceItems.map((item) => {
-      const statusKey = `trace-${item.key}`;
-      const message = state.workView.messages[statusKey] || "";
-      const proposalId = helpers.t(item.ids.proposal_id, "");
-      const disablePrimary = !item.primaryAction?.run;
-      return `
-        <article class="trace-row">
-          <div class="trace-item-main">
-            <h4>${helpers.escape(item.title)}</h4>
-            <p class="muted-note">Opportunity: ${helpers.escape(helpers.t(item.ids.opportunity_id, "unknown"))} · Proposal: ${helpers.escape(helpers.t(proposalId, "-"))}</p>
-          </div>
-          <div class="trace-badges">
-            <span class="badge ${helpers.badgeClass(item.status.opportunity || "new")}">Opp: ${helpers.escape(helpers.t(item.status.opportunity, "unknown"))}</span>
-            <span class="badge ${helpers.badgeClass(item.status.proposal || "pending")}">Prop: ${helpers.escape(helpers.t(item.status.proposal, "pending"))}</span>
-            <span class="badge ${item.status.plan === "present" ? "ok" : "warn"}">Plan: ${helpers.escape(helpers.t(item.status.plan, "missing"))}</span>
-            <span class="badge ${helpers.badgeClass(item.status.launch || "pending")}">Launch: ${helpers.escape(helpers.t(item.status.launch, "pending"))}</span>
-          </div>
-          <div class="trace-metrics muted-note">
-            conf ${helpers.escape(formatMetric(item.metrics.confidence))} · price ${helpers.escape(formatMetric(item.metrics.price, "$"))} · sales ${helpers.escape(formatMetric(item.metrics.sales))} · revenue ${helpers.escape(formatMetric(item.metrics.revenue, "$"))}
-          </div>
-          <div class="trace-actions">
-            <button ${disablePrimary ? "disabled" : ""} data-action="trace-primary" data-key="${helpers.escape(item.key)}">${helpers.escape(item.primaryAction?.label || "View details")}</button>
-            ${(item.secondaryActions || []).map((action, idx) => `
-              <button class="secondary-btn" data-action="trace-secondary" data-key="${helpers.escape(item.key)}" data-secondary-index="${idx}">${helpers.escape(action.label)}</button>
-            `).join("")}
-          </div>
-          ${message ? `<p class="muted-note">${helpers.escape(message)}</p>` : ""}
-        </article>
-      `;
-    }).join("") || "<p class='empty'>No pipeline items in this filter.</p>";
-
     const renderOpportunityCard = (item) => {
-      const status = getOpportunityStatus(item);
       return `
         <article class="card row-item">
           <h4>${helpers.escape(helpers.t(item.title, item.id))}</h4>
           <p>
-            <span class="badge ${helpers.badgeClass(status)}">${helpers.escape(helpers.statusLabel(status))}</span>
             score: ${helpers.escape(getOpportunityScore(item))}
           </p>
-          <p>${helpers.escape(getOpportunityReasoning(item))}</p>
           <div class="card-actions work-secondary-actions">
             <button class="secondary-btn" data-action="eval-opp" data-id="${helpers.escape(helpers.t(item.id, ""))}">Evaluate</button>
             <button class="secondary-btn" data-action="dismiss-opp" data-id="${helpers.escape(helpers.t(item.id, ""))}">Dismiss</button>
@@ -891,36 +794,36 @@ const views = {
       `;
     };
 
-    const opportunitiesByGroup = [
-      { key: "new", title: "New" },
-      { key: "evaluated", title: "Evaluated" },
-      { key: "dismissed", title: "Dismissed" },
-    ].map((group) => {
-      const items = state.opportunities.filter((item) => getOpportunityStatus(item) === group.key);
-      return {
-        ...group,
-        count: items.length,
-        cards: items.map(renderOpportunityCard).join("") || `<p class='empty'>No ${group.title.toLowerCase()} opportunities.</p>`,
-      };
-    });
+    const renderProposalCard = (item, transitions) => {
+      const proposalId = helpers.t(item.id, "");
+      const actionButtons = transitions.map((transition) => {
+        if (transition === "generate_execution_package") {
+          return `<button class="secondary-btn" data-action="generate-execution-package" data-id="${helpers.escape(proposalId)}">Generate Execution Package</button>`;
+        }
+        return `
+          <button class="secondary-btn" data-action="proposal" data-transition="${helpers.escape(transition)}" data-id="${helpers.escape(proposalId)}">
+            ${helpers.escape(transitionLabels[transition] || helpers.statusLabel(transition))}
+          </button>
+        `;
+      }).join("");
 
-    const renderProposalCard = (item) => {
-      const status = helpers.normalizeStatus(item.status);
-      const transitions = transitionByStatus[status] || [];
-      const actionButtons = transitions.map((transition) => (`
-        <button class="secondary-btn" data-action="proposal" data-transition="${helpers.escape(transition)}" data-id="${helpers.escape(helpers.t(item.id, ""))}">
-          ${helpers.escape(transitionLabels[transition] || helpers.statusLabel(transition))}
-        </button>
-      `)).join("");
+      const hasExecutionPackage = Boolean(
+        state.workView.executionPackages[proposalId]
+        || item.execution_package
+        || item.execution_package_generated
+        || item.execution_package_ready
+        || item.execution_package_id
+      );
 
       return `
         <article class="card row-item">
           <h4>${helpers.escape(helpers.t(item.product_name, item.id))}</h4>
           <p>
-            <span class="badge ${helpers.badgeClass(status)}">${helpers.escape(helpers.statusLabel(status))}</span>
+            <span class="badge ${helpers.badgeClass(item.status)}">${helpers.escape(helpers.statusLabel(item.status))}</span>
             audience: ${helpers.escape(helpers.t(item.target_audience, "-"))}
           </p>
           <p>price suggestion: ${helpers.escape(helpers.t(item.price_suggestion, "-"))} · confidence: ${helpers.escape(helpers.t(item.confidence, "-"))}</p>
+          ${hasExecutionPackage ? "<p class='muted-note'>Execution package generated.</p>" : ""}
           <div class="card-actions wrap work-secondary-actions">
             ${actionButtons || "<span class='empty'>No actions available.</span>"}
           </div>
@@ -928,53 +831,15 @@ const views = {
       `;
     };
 
-    const proposalsByGroup = proposalGroups.map((group) => {
-      const cards = state.proposals
-        .filter((item) => helpers.normalizeStatus(item.status) === group.key)
-        .map(renderProposalCard)
-        .join("") || `<p class='empty'>No ${group.title.toLowerCase()} proposals.</p>`;
-      return `
-        <section class="work-status-group">
-          <h4>${group.title}</h4>
-          ${cards}
-        </section>
-      `;
-    }).join("");
+    const emptyStageMessage = "<p class='empty'>No items in this stage.</p>";
 
-    const renderPlanItem = (plan) => {
-      const outline = Array.isArray(plan.outline) ? plan.outline : [];
-      const deliverables = Array.isArray(plan.deliverables) ? plan.deliverables : [];
-      const buildSteps = Array.isArray(plan.build_steps) ? plan.build_steps : [];
-      const preview = outline.slice(0, 2).map((item) => `<li>${helpers.escape(helpers.t(item))}</li>`).join("") || "<li>No outline available.</li>";
-      const fullOutline = outline.map((item) => `<li>${helpers.escape(helpers.t(item))}</li>`).join("") || "<li>No outline available.</li>";
-      const stepsList = buildSteps.map((step) => `<li>${helpers.escape(helpers.t(step.title || step.step || step.name || step))}</li>`).join("") || "<li>No build steps available.</li>";
-
-      return `
-        <article class="card row-item">
-          <h4>${helpers.escape(helpers.t(plan.product_name, plan.proposal_id || plan.plan_id || "Untitled Plan"))}</h4>
-          <p>deliverables: ${helpers.escape(helpers.t(deliverables.length, 0))} · build steps: ${helpers.escape(helpers.t(buildSteps.length, 0))}</p>
-          <div>
-            <strong>Outline preview</strong>
-            <ol>${preview}</ol>
-          </div>
-          <details>
-            <summary>Expand full plan details</summary>
-            <div>
-              <p><strong>Full outline</strong></p>
-              <ol>${fullOutline}</ol>
-              <p><strong>Deliverables</strong></p>
-              <ul>${deliverables.map((item) => `<li>${helpers.escape(helpers.t(item))}</li>`).join("") || "<li>No deliverables available.</li>"}</ul>
-              <p><strong>Build steps</strong></p>
-              <ol>${stepsList}</ol>
-            </div>
-          </details>
-        </article>
-      `;
-    };
-
-    const plansContent = state.plans.length
-      ? state.plans.map(renderPlanItem).join("")
-      : "<p class='empty'>No product plans generated yet.</p>";
+    const newOpportunities = state.opportunities.filter((item) => getOpportunityStatus(item) === "new");
+    const draftProposals = state.proposals.filter((item) => helpers.normalizeStatus(item.status) === "draft");
+    const buildingProposals = state.proposals.filter((item) => helpers.normalizeStatus(item.status) === "building");
+    const readyToLaunchProposals = state.proposals.filter((item) => {
+      const status = helpers.normalizeStatus(item.status);
+      return status === "ready_to_launch" || status === "ready_for_review";
+    });
 
     const renderLaunchCard = (item) => {
       const launchId = helpers.t(item.id, "");
@@ -988,7 +853,7 @@ const views = {
           <h4>${helpers.escape(helpers.t(item.product_name, item.proposal_id || launchId))}</h4>
           <p>
             <span class="badge ${helpers.badgeClass(item.status)}">${helpers.escape(helpers.statusLabel(item.status))}</span>
-            sales: ${helpers.escape(sales)} · revenue: ${helpers.escape(revenue)} · gumroad linked: ${item.gumroad_product_id ? "yes" : "no"}
+            sales: ${helpers.escape(sales)} · revenue: ${helpers.escape(revenue)}
           </p>
           <div class="inline-form-grid launch-actions-inline">
             <div class="inline-control-group">
@@ -1005,11 +870,6 @@ const views = {
               </select>
               <button class="secondary-btn" data-action="launch-set-status" data-id="${helpers.escape(launchId)}">Change Status</button>
             </div>
-            <div class="inline-control-group">
-              <label>Gumroad Product</label>
-              <input type="text" data-launch-input="gumroad" data-id="${helpers.escape(launchId)}" value="${helpers.escape(helpers.t(item.gumroad_product_id, ""))}" placeholder="gumroad_product_id">
-              <button class="secondary-btn" data-action="launch-link-gumroad" data-id="${helpers.escape(launchId)}">Link Gumroad</button>
-            </div>
           </div>
           ${message ? `<p class="muted-note">${helpers.escape(message)}</p>` : ""}
         </article>
@@ -1018,70 +878,65 @@ const views = {
 
     const launchesContent = state.launches.length
       ? state.launches.map(renderLaunchCard).join("")
-      : "<p class='empty'>No product launches available yet.</p>";
+      : emptyStageMessage;
 
-    this.shell("Work", "Revenue Console", `
+    this.shell("Work", "Product Lifecycle Operating System", `
       <section class="work-execution">
         <article class="card work-section">
           <header class="work-section-header">
-            <h3>PIPELINE TRACE</h3>
-            <p class="muted-note">Opportunity → Proposal → Plan → Launch</p>
-          </header>
-          <div class="card-actions wrap trace-filters">
-            ${traceFilters.map((filter) => `
-              <button class="${activeTraceFilter === filter.key ? "active" : "secondary-btn"}" data-action="trace-filter" data-filter="${helpers.escape(filter.key)}">${helpers.escape(filter.label)}</button>
-            `).join("")}
-          </div>
-          <div class="trace-table-head muted-note">
-            <span>Item</span><span>Stages</span><span>Metrics</span><span>Actions</span>
-          </div>
-          <div class="trace-table-wrap">
-            ${traceRows}
-          </div>
-        </article>
-
-        <article class="card work-section">
-          <header class="work-section-header">
             <h3>1) Opportunities</h3>
-            <p class="muted-note">Incoming demand signals waiting for decisioning.</p>
-          </header>
-          <div class="work-stage-counters">
-            ${opportunitiesByGroup.map((group) => `<span class="badge info">${group.title}: ${group.count}</span>`).join("")}
-          </div>
-          <div class="work-proposals-grid">
-            ${opportunitiesByGroup.map((group) => `
-              <section class="work-status-group">
-                <h4>${group.title}</h4>
-                ${group.cards}
-              </section>
-            `).join("")}
-          </div>
-        </article>
-
-        <article class="card work-section">
-          <header class="work-section-header">
-            <h3>2) Proposals</h3>
-            <p class="muted-note">Products moving through approval, build, and launch readiness.</p>
-          </header>
-          <div class="work-proposals-grid">
-            ${proposalsByGroup}
-          </div>
-        </article>
-
-        <article class="card work-section">
-          <header class="work-section-header">
-            <h3>3) Plans</h3>
-            <p class="muted-note">Execution blueprints with outline, deliverables, and build steps.</p>
+            <p class="muted-note">New demand signals ready for triage.</p>
           </header>
           <section class="work-status-group">
-            ${plansContent}
+            ${newOpportunities.length ? newOpportunities.map(renderOpportunityCard).join("") : emptyStageMessage}
           </section>
         </article>
 
         <article class="card work-section">
           <header class="work-section-header">
-            <h3>4) Launches</h3>
-            <p class="muted-note">Live offers, monetization tracking, and sales operations.</p>
+            <h3>2) Draft Proposals</h3>
+            <p class="muted-note">Concepts waiting for an approval decision.</p>
+          </header>
+          <section class="work-status-group">
+            ${draftProposals.length ? draftProposals.map((item) => renderProposalCard(item, ["approve", "reject"])).join("") : emptyStageMessage}
+          </section>
+        </article>
+
+        <article class="card work-section">
+          <header class="work-section-header">
+            <h3>3) Building</h3>
+            <p class="muted-note">Products currently being built.</p>
+          </header>
+          <section class="work-status-group">
+            ${buildingProposals.length ? buildingProposals.map((item) => renderProposalCard(item, ["ready"])).join("") : emptyStageMessage}
+          </section>
+        </article>
+
+        <article class="card work-section">
+          <header class="work-section-header">
+            <h3>4) Ready to Launch</h3>
+            <p class="muted-note">Launch-ready proposals waiting for go-live execution.</p>
+          </header>
+          <section class="work-status-group">
+            ${readyToLaunchProposals.length ? readyToLaunchProposals.map((item) => {
+              const proposalId = helpers.t(item.id, "");
+              const hasExecutionPackage = Boolean(
+                state.workView.executionPackages[proposalId]
+                || item.execution_package
+                || item.execution_package_generated
+                || item.execution_package_ready
+                || item.execution_package_id
+              );
+              const transitions = ["launch", ...(hasExecutionPackage ? [] : ["generate_execution_package"])];
+              return renderProposalCard(item, transitions);
+            }).join("") : emptyStageMessage}
+          </section>
+        </article>
+
+        <article class="card work-section">
+          <header class="work-section-header">
+            <h3>5) Active Launches</h3>
+            <p class="muted-note">Live operations with status and monetization controls.</p>
           </header>
           <section class="work-status-group">
             ${launchesContent}
