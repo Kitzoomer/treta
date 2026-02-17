@@ -779,6 +779,13 @@ const views = {
       return score === undefined ? "-" : helpers.t(score);
     };
 
+    const renderNextActionBlock = (statusLabel, nextActionLabel) => `
+      <div style="margin: 8px 0 10px; padding: 8px 10px; border-left: 3px solid rgba(99, 102, 241, 0.5); background: rgba(99, 102, 241, 0.08); border-radius: 6px;">
+        <p class="muted-note" style="margin: 0;"><strong>Status:</strong> ${helpers.escape(statusLabel)}</p>
+        <p style="margin: 4px 0 0;"><strong>Next Action:</strong> ${helpers.escape(nextActionLabel)}</p>
+      </div>
+    `;
+
     const renderOpportunityCard = (item) => {
       return `
         <article class="card row-item">
@@ -786,6 +793,7 @@ const views = {
           <p>
             score: ${helpers.escape(getOpportunityScore(item))}
           </p>
+          ${renderNextActionBlock("New Opportunity", "Evaluate or Dismiss")}
           <div class="card-actions work-secondary-actions">
             <button class="secondary-btn" data-action="eval-opp" data-id="${helpers.escape(helpers.t(item.id, ""))}">Evaluate</button>
             <button class="secondary-btn" data-action="dismiss-opp" data-id="${helpers.escape(helpers.t(item.id, ""))}">Dismiss</button>
@@ -794,7 +802,7 @@ const views = {
       `;
     };
 
-    const renderProposalCard = (item, transitions) => {
+    const renderProposalCard = (item, transitions, stageInfo = null) => {
       const proposalId = helpers.t(item.id, "");
       const actionButtons = transitions.map((transition) => {
         if (transition === "generate_execution_package") {
@@ -822,6 +830,7 @@ const views = {
             <span class="badge ${helpers.badgeClass(item.status)}">${helpers.escape(helpers.statusLabel(item.status))}</span>
             audience: ${helpers.escape(helpers.t(item.target_audience, "-"))}
           </p>
+          ${stageInfo ? renderNextActionBlock(stageInfo.status, stageInfo.nextAction) : ""}
           <p>price suggestion: ${helpers.escape(helpers.t(item.price_suggestion, "-"))} · confidence: ${helpers.escape(helpers.t(item.confidence, "-"))}</p>
           ${hasExecutionPackage ? "<p class='muted-note'>Execution package generated.</p>" : ""}
           <div class="card-actions wrap work-secondary-actions">
@@ -846,6 +855,10 @@ const views = {
       const metrics = item.metrics || {};
       const sales = helpers.t(metrics.sales ?? item.sales, 0);
       const revenue = helpers.t(metrics.revenue ?? item.revenue, 0);
+      const salesCount = Number(metrics.sales ?? item.sales);
+      const launchNextAction = Number.isFinite(salesCount) && salesCount > 0
+        ? "Monitor performance or adjust pricing"
+        : "Add first sale to start tracking performance";
       const message = state.workView.messages[`launch-${launchId}`] || "";
 
       return `
@@ -855,6 +868,7 @@ const views = {
             <span class="badge ${helpers.badgeClass(item.status)}">${helpers.escape(helpers.statusLabel(item.status))}</span>
             sales: ${helpers.escape(sales)} · revenue: ${helpers.escape(revenue)}
           </p>
+          ${renderNextActionBlock("Launch Active", launchNextAction)}
           <div class="inline-form-grid launch-actions-inline">
             <div class="inline-control-group">
               <label>Amount</label>
@@ -898,7 +912,10 @@ const views = {
             <p class="muted-note">Concepts waiting for an approval decision.</p>
           </header>
           <section class="work-status-group">
-            ${draftProposals.length ? draftProposals.map((item) => renderProposalCard(item, ["approve", "reject"])).join("") : emptyStageMessage}
+            ${draftProposals.length ? draftProposals.map((item) => renderProposalCard(item, ["approve", "reject"], {
+              status: "Draft",
+              nextAction: "Approve to begin building",
+            })).join("") : emptyStageMessage}
           </section>
         </article>
 
@@ -908,7 +925,10 @@ const views = {
             <p class="muted-note">Products currently being built.</p>
           </header>
           <section class="work-status-group">
-            ${buildingProposals.length ? buildingProposals.map((item) => renderProposalCard(item, ["ready"])).join("") : emptyStageMessage}
+            ${buildingProposals.length ? buildingProposals.map((item) => renderProposalCard(item, ["ready"], {
+              status: "Building",
+              nextAction: "Mark ready when assets complete",
+            })).join("") : emptyStageMessage}
           </section>
         </article>
 
@@ -928,7 +948,10 @@ const views = {
                 || item.execution_package_id
               );
               const transitions = ["launch", ...(hasExecutionPackage ? [] : ["generate_execution_package"])];
-              return renderProposalCard(item, transitions);
+              return renderProposalCard(item, transitions, {
+                status: "Ready to Launch",
+                nextAction: "Launch product",
+              });
             }).join("") : emptyStageMessage}
           </section>
         </article>
