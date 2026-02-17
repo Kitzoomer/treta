@@ -367,6 +367,26 @@ function buildPipelineTrace(stateSnapshot) {
   });
 }
 
+function renderLifecycleTrace({ hasOpportunity, hasProposal, isBuilding, isReady, isLaunched, hasStrategyPending }) {
+  const steps = [
+    { label: "Opportunity", done: hasOpportunity },
+    { label: "Proposal", done: hasProposal },
+    { label: "Build", done: isBuilding || isReady || isLaunched },
+    { label: "Launch", done: isLaunched },
+    { label: "Strategy", done: hasStrategyPending },
+  ];
+
+  return `
+    <div class="lifecycle-trace">
+      ${steps.map((step) => `
+        <span class="lifecycle-step ${step.done ? "done" : "pending"}">
+          ${step.done ? "✔" : "•"} ${step.label}
+        </span>
+      `).join("")}
+    </div>
+  `;
+}
+
 function computePrimaryAttention(stateSnapshot) {
   const {
     strategyPendingActions = [],
@@ -790,6 +810,14 @@ const views = {
       return `
         <article class="card row-item">
           <h4>${helpers.escape(helpers.t(item.title, item.id))}</h4>
+          ${renderLifecycleTrace({
+            hasOpportunity: true,
+            hasProposal: false,
+            isBuilding: false,
+            isReady: false,
+            isLaunched: false,
+            hasStrategyPending,
+          })}
           <p>
             score: ${helpers.escape(getOpportunityScore(item))}
           </p>
@@ -827,6 +855,14 @@ const views = {
       return `
         <article class="card row-item">
           <h4>${helpers.escape(helpers.t(item.product_name, item.id))}</h4>
+          ${renderLifecycleTrace({
+            hasOpportunity: true,
+            hasProposal: true,
+            isBuilding: statusLabel === "Building",
+            isReady: statusLabel === "Ready to Launch",
+            isLaunched: false,
+            hasStrategyPending,
+          })}
           <p>
             <span class="badge ${helpers.badgeClass(item.status)}">${helpers.escape(helpers.statusLabel(item.status))}</span>
             audience: ${helpers.escape(helpers.t(item.target_audience, "-"))}
@@ -843,6 +879,7 @@ const views = {
     };
 
     const emptyStageMessage = "<p class='empty'>No items in this stage.</p>";
+    const hasStrategyPending = state.strategyPendingActions.length > 0;
 
     const newOpportunities = state.opportunities.filter((item) => getOpportunityStatus(item) === "new");
     const draftProposals = state.proposals.filter((item) => helpers.normalizeStatus(item.status) === "draft");
@@ -858,10 +895,6 @@ const views = {
       const sales = helpers.t(metrics.sales ?? item.sales, 0);
       const salesCount = Number(metrics.sales ?? item.sales ?? 0);
       const revenue = helpers.t(metrics.revenue ?? item.revenue, 0);
-      const salesCount = Number(metrics.sales ?? item.sales);
-      const launchNextAction = Number.isFinite(salesCount) && salesCount > 0
-        ? "Monitor performance or adjust pricing"
-        : "Add first sale to start tracking performance";
       const message = state.workView.messages[`launch-${launchId}`] || "";
       const nextActionLabel = salesCount === 0
         ? "Add first sale to start tracking performance"
@@ -870,6 +903,14 @@ const views = {
       return `
         <article class="card row-item">
           <h4>${helpers.escape(helpers.t(item.product_name, item.proposal_id || launchId))}</h4>
+          ${renderLifecycleTrace({
+            hasOpportunity: true,
+            hasProposal: true,
+            isBuilding: false,
+            isReady: false,
+            isLaunched: true,
+            hasStrategyPending,
+          })}
           <p>
             <span class="badge ${helpers.badgeClass(item.status)}">${helpers.escape(helpers.statusLabel(item.status))}</span>
             sales: ${helpers.escape(sales)} · revenue: ${helpers.escape(revenue)}
@@ -903,6 +944,24 @@ const views = {
 
     this.shell("Work", "Product Lifecycle Operating System", `
       <section class="work-execution">
+        <style>
+          .lifecycle-trace {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 6px 0 10px 0;
+            font-size: 12px;
+            opacity: 0.85;
+          }
+
+          .lifecycle-step.done {
+            color: #6cff8f;
+          }
+
+          .lifecycle-step.pending {
+            color: #666;
+          }
+        </style>
         <article class="card work-section">
           <header class="work-section-header">
             <h3>1) Opportunities</h3>
