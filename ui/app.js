@@ -779,6 +779,13 @@ const views = {
       return score === undefined ? "-" : helpers.t(score);
     };
 
+    const renderNextActionBlock = (statusLabel, nextActionLabel) => `
+      <div style="margin: 8px 0 10px; padding: 8px 10px; border-left: 3px solid rgba(99, 102, 241, 0.5); background: rgba(99, 102, 241, 0.08); border-radius: 6px;">
+        <p class="muted-note" style="margin: 0;"><strong>Status:</strong> ${helpers.escape(statusLabel)}</p>
+        <p style="margin: 4px 0 0;"><strong>Next Action:</strong> ${helpers.escape(nextActionLabel)}</p>
+      </div>
+    `;
+
     const renderOpportunityCard = (item) => {
       return `
         <article class="card row-item">
@@ -851,6 +858,10 @@ const views = {
       const sales = helpers.t(metrics.sales ?? item.sales, 0);
       const salesCount = Number(metrics.sales ?? item.sales ?? 0);
       const revenue = helpers.t(metrics.revenue ?? item.revenue, 0);
+      const salesCount = Number(metrics.sales ?? item.sales);
+      const launchNextAction = Number.isFinite(salesCount) && salesCount > 0
+        ? "Monitor performance or adjust pricing"
+        : "Add first sale to start tracking performance";
       const message = state.workView.messages[`launch-${launchId}`] || "";
       const nextActionLabel = salesCount === 0
         ? "Add first sale to start tracking performance"
