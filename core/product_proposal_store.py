@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List
 
+from core.execution_focus_engine import ExecutionFocusEngine
+
 
 ProductProposal = Dict[str, Any]
 
@@ -60,7 +62,13 @@ class ProductProposalStore:
             status = "draft"
         item["status"] = status
         item["updated_at"] = str(item.get("updated_at") or item.get("created_at") or self._now())
+        item["active_execution"] = bool(item.get("active_execution", False))
         return item
+
+
+    def _refresh_execution_focus(self) -> None:
+        target_id = ExecutionFocusEngine.select_active(self._items, [])
+        ExecutionFocusEngine.enforce_single_active(target_id, {"proposals": self._items, "launches": []})
 
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -69,6 +77,7 @@ class ProductProposalStore:
     def add(self, proposal: Dict[str, Any]) -> ProductProposal:
         item = self._normalize_item(dict(proposal))
         self._items.append(item)
+        self._refresh_execution_focus()
         self._save()
         return deepcopy(item)
 
@@ -97,6 +106,7 @@ class ProductProposalStore:
 
             item["status"] = target_status
             item["updated_at"] = self._now()
+            self._refresh_execution_focus()
             self._save()
             return deepcopy(item)
 

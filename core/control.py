@@ -15,6 +15,7 @@ from core.product_proposal_store import ProductProposalStore
 from core.product_builder import ProductBuilder
 from core.product_plan_store import ProductPlanStore
 from core.execution_engine import ExecutionEngine
+from core.execution_focus_engine import ExecutionFocusEngine
 from core.services.gumroad_sync_service import GumroadSyncService
 from core.product_launch_store import ProductLaunchStore
 
@@ -62,6 +63,19 @@ class Control:
             if self.gumroad_client is not None
             else None
         )
+
+
+    def _refresh_execution_focus(self) -> None:
+        target_id = ExecutionFocusEngine.select_active(
+            self.product_proposal_store._items,
+            self.product_launch_store._items,
+        )
+        ExecutionFocusEngine.enforce_single_active(
+            target_id,
+            {"proposals": self.product_proposal_store._items, "launches": self.product_launch_store._items},
+        )
+        self.product_proposal_store._save()
+        self.product_launch_store._save()
 
     def link_launch_gumroad(self, launch_id: str, gumroad_product_id: str) -> Dict[str, object]:
         return self.product_launch_store.link_gumroad_product(launch_id, gumroad_product_id)
@@ -215,6 +229,9 @@ class Control:
                 proposal_id=proposal_id,
                 new_status=proposal_transitions[event.type],
             )
+            if updated["status"] in {"approved", "building"}:
+                self._refresh_execution_focus()
+                updated = self.product_proposal_store.get(updated["id"]) or updated
             actions = [
                 Action(
                     type="ProductProposalStatusChanged",
@@ -224,6 +241,8 @@ class Control:
             if event.type == "MarkProposalLaunched":
                 launch = self.product_launch_store.add_from_proposal(updated["id"])
                 launch = self.product_launch_store.mark_launched(launch["id"])
+                self._refresh_execution_focus()
+                launch = self.product_launch_store.get(launch["id"]) or launch
                 actions.append(
                     Action(
                         type="ProductLaunched",
