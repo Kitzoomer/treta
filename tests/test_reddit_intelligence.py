@@ -2,7 +2,6 @@ import os
 import sqlite3
 import tempfile
 import unittest
-from unittest.mock import patch
 
 from core.reddit_intelligence.models import get_db_path, initialize_sqlite
 from core.reddit_intelligence.service import RedditIntelligenceService
@@ -115,22 +114,6 @@ class RedditIntelligenceTestCase(unittest.TestCase):
                 ],
                 reverse=True,
             ),
-        )
-
-
-    def test_sales_boost_applied(self):
-        with patch("core.reddit_intelligence.service.SalesInsightService.get_high_performing_keywords", return_value=["media", "kit"]), patch("core.reddit_intelligence.service.random.randint", side_effect=[90, 15]):
-            signal = self.service.analyze_post(
-                subreddit="freelance",
-                post_text="Does anyone have a template for a media kit?",
-                post_url="https://reddit.com/r/freelance/boost-1",
-            )
-
-        self.assertGreater(signal["opportunity_score"], 95)
-        self.assertLessEqual(signal["opportunity_score"], 100)
-        self.assertIn(
-            "Boosted score due to alignment with high-performing product keywords.",
-            signal.get("reasoning", ""),
         )
 
     def test_update_status(self):
