@@ -99,6 +99,28 @@ class RedditIntelligenceService:
     def list_top_pending(self, limit: int = 20) -> List[Dict[str, Any]]:
         return self.repository.get_pending_signals(limit=limit)
 
+    def get_daily_top_actions(self, limit: int = 5) -> List[Dict[str, Any]]:
+        actionable_signals = self.repository.get_pending_signals(limit=1000)
+        selected: List[Dict[str, Any]] = []
+        subreddit_counter: Dict[str, int] = {}
+
+        for signal in actionable_signals:
+            if signal.get("suggested_action") == "ignore":
+                continue
+
+            subreddit = str(signal.get("subreddit", ""))
+            current_count = subreddit_counter.get(subreddit, 0)
+            if current_count >= 2:
+                continue
+
+            selected.append(signal)
+            subreddit_counter[subreddit] = current_count + 1
+
+            if len(selected) >= max(int(limit), 0):
+                break
+
+        return selected
+
     def update_status(self, signal_id: str, status: str) -> Dict[str, Any] | None:
         return self.repository.update_signal_status(signal_id=signal_id, status=status)
 
