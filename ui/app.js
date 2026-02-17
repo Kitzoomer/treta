@@ -686,99 +686,113 @@ const views = {
   },
 
   loadWork() {
+    const proposalGroups = [
+      { key: "draft", title: "Draft" },
+      { key: "approved", title: "Approved" },
+      { key: "building", title: "Building" },
+      { key: "ready_to_launch", title: "Ready to Launch" },
+      { key: "launched", title: "Launched" },
+      { key: "archived", title: "Archived" },
+    ];
+
     const transitionLabels = {
       approve: "Approve",
-      reject: "Reject",
-      start_build: "Move to Build",
+      start_build: "Start Build",
       ready: "Mark Ready",
-      launch: "Launch Product",
+      launch: "Launch",
       archive: "Archive",
     };
 
-    const transitionConfig = {
-      draft: ["approve", "reject"],
+    const transitionByStatus = {
+      draft: ["approve", "archive"],
       approved: ["start_build", "archive"],
-      ready_to_review: ["launch", "archive"],
-      ready_for_review: ["launch", "archive"],
+      building: ["ready", "archive"],
       ready_to_launch: ["launch", "archive"],
-      building: ["ready"],
       launched: ["archive"],
-      rejected: ["archive"],
       archived: [],
     };
 
-    const opportunityStatus = (item) => {
-      const normalized = helpers.normalizeStatus(item.status || item.decision || "new");
-      if (["evaluated", "evaluate"].includes(normalized)) return "EVALUATED";
-      if (["dismissed", "dismiss"].includes(normalized)) return "DISMISSED";
-      return "NEW";
+    const getOpportunityStatus = (item) => {
+      const normalized = helpers.normalizeStatus(item.status || item.decision?.status || "new");
+      if (normalized === "evaluated") return "evaluated";
+      if (normalized === "dismissed") return "dismissed";
+      return "new";
     };
 
-    const renderProposal = (item) => {
-      const status = helpers.normalizeStatus(item.status);
-      const actions = (transitionConfig[status] || []).map((transition) => (
-        `<button class="secondary-btn" data-action="proposal" data-transition="${transition}" data-id="${item.id}">${transitionLabels[transition] || helpers.statusLabel(transition)}</button>`
-      )).join("");
+    const getOpportunityScore = (item) => {
+      const candidates = [item.score, item.decision?.score, item.decision?.composite_score];
+      const score = candidates.find((value) => Number.isFinite(Number(value)));
+      return score === undefined ? "-" : helpers.t(score);
+    };
 
-      return `
-        <article class="card row-item">
-          <h4>${helpers.t(item.product_name, item.id)}</h4>
-          <p>
-            <span class="badge ${helpers.badgeClass(item.status)}">${helpers.statusLabel(item.status)}</span>
-            confidence: ${helpers.t(item.confidence, "-")} · price: ${helpers.t(item.price_suggestion, "-")}
-          </p>
-          <div class="card-actions wrap work-secondary-actions">
-            ${actions || "<span class='empty'>No lifecycle actions available.</span>"}
-          </div>
-        </article>
-      `;
+    const getOpportunityReasoning = (item) => {
+      const raw = item.reasoning || item.summary || item.decision?.reasoning || item.decision?.rationale || "";
+      const textValue = String(raw || "").trim();
+      if (!textValue) return "No reasoning available yet.";
+      if (textValue.length <= 140) return textValue;
+      return `${textValue.slice(0, 137)}...`;
     };
 
     const renderOpportunityCard = (item) => {
-      const status = opportunityStatus(item);
+      const status = getOpportunityStatus(item);
       return `
         <article class="card row-item">
-          <h4>${helpers.t(item.title, item.id)}</h4>
+          <h4>${helpers.escape(helpers.t(item.title, item.id))}</h4>
           <p>
-            <span class="badge ${helpers.badgeClass(status)}">${status}</span>
-            source: ${helpers.t(item.source, "-")}
+            <span class="badge ${helpers.badgeClass(status)}">${helpers.escape(helpers.statusLabel(status))}</span>
+            score: ${helpers.escape(getOpportunityScore(item))}
           </p>
+          <p>${helpers.escape(getOpportunityReasoning(item))}</p>
           <div class="card-actions work-secondary-actions">
-            <button class="secondary-btn" data-action="eval-opp" data-id="${item.id}">Evaluate</button>
-            <button class="secondary-btn" data-action="dismiss-opp" data-id="${item.id}">Dismiss</button>
+            <button class="secondary-btn" data-action="eval-opp" data-id="${helpers.escape(helpers.t(item.id, ""))}">Evaluate</button>
+            <button class="secondary-btn" data-action="dismiss-opp" data-id="${helpers.escape(helpers.t(item.id, ""))}">Dismiss</button>
           </div>
         </article>
       `;
     };
 
-    const radarBuckets = [
-      { key: "NEW", title: "New" },
-      { key: "EVALUATED", title: "Evaluated" },
-      { key: "DISMISSED", title: "Dismissed" },
+    const opportunitiesByGroup = [
+      { key: "new", title: "New" },
+      { key: "evaluated", title: "Evaluated" },
+      { key: "dismissed", title: "Dismissed" },
     ].map((group) => {
-      const items = state.opportunities
-        .filter((item) => opportunityStatus(item) === group.key)
-        .slice(0, 10);
-
+      const items = state.opportunities.filter((item) => getOpportunityStatus(item) === group.key);
       return {
         ...group,
         count: items.length,
-        content: items.map(renderOpportunityCard).join("") || `<p class='empty'>No ${group.title.toLowerCase()} opportunities.</p>`,
+        cards: items.map(renderOpportunityCard).join("") || `<p class='empty'>No ${group.title.toLowerCase()} opportunities.</p>`,
       };
     });
 
-    const incubationGroups = [
-      { key: "draft", title: "Draft" },
-      { key: "approved", title: "Approved" },
-      { key: "ready_for_review", title: "Ready for Review", aliases: ["ready_to_review"] },
-    ].map((group) => {
-      const statuses = [group.key, ...(group.aliases || [])];
-      const cards = state.proposals
-        .filter((item) => statuses.includes(helpers.normalizeStatus(item.status)))
-        .slice(0, 10)
-        .map(renderProposal)
-        .join("") || `<p class='empty'>No proposals in ${group.title.toLowerCase()}.</p>`;
+    const renderProposalCard = (item) => {
+      const status = helpers.normalizeStatus(item.status);
+      const transitions = transitionByStatus[status] || [];
+      const actionButtons = transitions.map((transition) => (`
+        <button class="secondary-btn" data-action="proposal" data-transition="${helpers.escape(transition)}" data-id="${helpers.escape(helpers.t(item.id, ""))}">
+          ${helpers.escape(transitionLabels[transition] || helpers.statusLabel(transition))}
+        </button>
+      `)).join("");
 
+      return `
+        <article class="card row-item">
+          <h4>${helpers.escape(helpers.t(item.product_name, item.id))}</h4>
+          <p>
+            <span class="badge ${helpers.badgeClass(status)}">${helpers.escape(helpers.statusLabel(status))}</span>
+            audience: ${helpers.escape(helpers.t(item.target_audience, "-"))}
+          </p>
+          <p>price suggestion: ${helpers.escape(helpers.t(item.price_suggestion, "-"))} · confidence: ${helpers.escape(helpers.t(item.confidence, "-"))}</p>
+          <div class="card-actions wrap work-secondary-actions">
+            ${actionButtons || "<span class='empty'>No actions available.</span>"}
+          </div>
+        </article>
+      `;
+    };
+
+    const proposalsByGroup = proposalGroups.map((group) => {
+      const cards = state.proposals
+        .filter((item) => helpers.normalizeStatus(item.status) === group.key)
+        .map(renderProposalCard)
+        .join("") || `<p class='empty'>No ${group.title.toLowerCase()} proposals.</p>`;
       return `
         <section class="work-status-group">
           <h4>${group.title}</h4>
@@ -787,197 +801,100 @@ const views = {
       `;
     }).join("");
 
-    const launchesRows = state.launches.slice(0, 20).map((item) => {
-      const launchId = helpers.t(item.id, "-");
-      const message = state.workView.messages[`launch-${launchId}`] || "";
-      return `
-        <tr>
-          <td>${helpers.t(item.id)}</td>
-          <td>${helpers.t(item.proposal_id)}</td>
-          <td><span class="badge ${helpers.badgeClass(item.status)}">${helpers.statusLabel(item.status)}</span></td>
-          <td>${helpers.t(item.sales, 0)}</td>
-          <td>${helpers.t(item.revenue, 0)}</td>
-          <td>${helpers.t(item.gumroad_product_id)}</td>
-          <td>${helpers.t(item.last_synced_at)}</td>
-          <td>
-            <div class="inline-form-grid launch-actions-inline">
-              <div class="inline-control-group">
-                <label>Amount</label>
-                <input type="number" step="0.01" min="0" data-launch-input="sale" data-id="${helpers.t(item.id)}" placeholder="0.00">
-                <button class="secondary-btn" data-action="launch-add-sale" data-id="${helpers.t(item.id)}">Add sale</button>
-              </div>
-              <div class="inline-control-group">
-                <label>Status</label>
-                <select data-launch-input="status" data-id="${helpers.t(item.id)}">
-                  <option value="active">Active</option>
-                  <option value="paused">Paused</option>
-                  <option value="launched">Launched</option>
-                  <option value="archived">Archived</option>
-                </select>
-                <button class="secondary-btn" data-action="launch-set-status" data-id="${helpers.t(item.id)}">Set status</button>
-              </div>
-              <div class="inline-control-group">
-                <label>Gumroad Product</label>
-                <input type="text" data-launch-input="gumroad" data-id="${helpers.t(item.id)}" placeholder="gumroad_product_id" value="${helpers.t(item.gumroad_product_id, "")}">
-                <button class="secondary-btn" data-action="launch-link-gumroad" data-id="${helpers.t(item.id)}">Link Gumroad</button>
-              </div>
-            </div>
-            <p class="inline-feedback">${helpers.escape(message)}</p>
-          </td>
-        </tr>
-      `;
-    }).join("") || "<tr><td colspan='8' class='empty'>No launches yet.</td></tr>";
-
-    const proposalActionRows = state.proposals.slice(0, 20).map((proposal) => {
-      const proposalId = helpers.t(proposal.id);
-      const plan = state.plans.find((item) => String(item.proposal_id) === String(proposal.id));
-      const planId = plan?.id;
-      const planMsg = state.workView.messages[`plan-${proposalId}`] || "";
-      const executeMsg = state.workView.messages[`exec-${proposalId}`] || "";
-      return `
-        <tr>
-          <td>${proposalId}</td>
-          <td>${helpers.t(proposal.product_name, "-")}</td>
-          <td><span class="badge ${helpers.badgeClass(proposal.status)}">${helpers.statusLabel(proposal.status)}</span></td>
-          <td>
-            <div class="card-actions wrap no-margin">
-              <button class="secondary-btn" data-action="generate-execution-package" data-id="${proposalId}">Generate execution package</button>
-              ${state.workView.executionPackages[proposalId] ? `<button class="secondary-btn" data-action="show-execution-package" data-id="${proposalId}">Preview package</button>` : ""}
-            </div>
-            <p class="inline-feedback">${helpers.escape(executeMsg)}</p>
-          </td>
-          <td>
-            <div class="card-actions wrap no-margin">
-              <button class="secondary-btn" data-action="build-plan" data-id="${proposalId}">Build plan</button>
-              <button class="secondary-btn" data-action="view-plan" data-id="${proposalId}" data-plan-id="${helpers.t(planId, "")}">View plan</button>
-            </div>
-            <p class="inline-feedback">${helpers.escape(planMsg)}</p>
-          </td>
-        </tr>
-      `;
-    }).join("") || "<tr><td colspan='5' class='empty'>No proposals available for execution/plans.</td></tr>";
-
-    const selectedExecutionId = state.workView.activeExecutionProposalId;
-    const selectedExecutionPackage = state.workView.executionPackages[selectedExecutionId] || null;
-    const selectedPlanId = state.workView.activePlanProposalId;
-    const selectedPlan = state.workView.plansByProposal[selectedPlanId] || null;
-
-    const productPlans = state.plans.slice(0, 20).map((plan) => `
-      <article class="card row-item">
-        <h4>Plan ${helpers.t(plan.id)}</h4>
-        <p>
-          <span class="badge ${helpers.badgeClass(plan.status)}">${helpers.statusLabel(plan.status)}</span>
-          proposal: ${helpers.t(plan.proposal_id, "-")}
-        </p>
-        <p class="muted-note">updated: ${helpers.t(plan.updated_at || plan.created_at, "-")}</p>
-      </article>
-    `).join("") || "<p class='empty'>No active build plans.</p>";
-
-    const readyToLaunchProposals = state.proposals
-      .filter((item) => helpers.normalizeStatus(item.status) === "ready_to_launch")
-      .slice(0, 10)
-      .map(renderProposal)
-      .join("") || "<p class='empty'>No products ready to launch.</p>";
-
-    const latestRecommendationSummary = helpers.t(
-      state.strategy.summary
-      || state.strategy.summary_text
-      || state.strategy.recommendation_summary
-      || state.strategy.latest_recommendation
-      || state.strategy.recommendation,
-      ""
-    );
-
-    const strategyPendingActions = state.strategyPendingActions || [];
-
-    const renderStrategicCommandQueue = () => {
-      if (state.workView.strategyPendingActionsLoading && !strategyPendingActions.length) {
-        return "<p class='empty'>Loading strategic actions…</p>";
-      }
-      if (!strategyPendingActions.length) {
-        return "<p class='empty'>System stable. No strategic actions pending.</p>";
-      }
+    const renderPlanItem = (plan) => {
+      const outline = Array.isArray(plan.outline) ? plan.outline : [];
+      const deliverables = Array.isArray(plan.deliverables) ? plan.deliverables : [];
+      const buildSteps = Array.isArray(plan.build_steps) ? plan.build_steps : [];
+      const preview = outline.slice(0, 2).map((item) => `<li>${helpers.escape(helpers.t(item))}</li>`).join("") || "<li>No outline available.</li>";
+      const fullOutline = outline.map((item) => `<li>${helpers.escape(helpers.t(item))}</li>`).join("") || "<li>No outline available.</li>";
+      const stepsList = buildSteps.map((step) => `<li>${helpers.escape(helpers.t(step.title || step.step || step.name || step))}</li>`).join("") || "<li>No build steps available.</li>";
 
       return `
-        <div class="work-table-wrap">
-          <table class="work-table">
-            <thead>
-              <tr>
-                <th>Type</th>
-                <th>Priority</th>
-                <th>Expected impact score</th>
-                <th>Risk level</th>
-                <th>Auto executable</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${strategyPendingActions.map((action) => {
-                const actionType = helpers.t(action.type || action.action_type || action.title || action.name, "-");
-                const priority = helpers.t(action.priority, "unknown");
-                const impactScore = helpers.t(action.expected_impact_score, "-");
-                const riskLevel = helpers.t(action.risk_level, "unknown");
-                const actionId = helpers.t(action.id, "");
-                const isAnalysisExpanded = Boolean(state.workView.expandedStrategicAnalyses[actionId]);
-                const payloadJson = helpers.escape(JSON.stringify(action, null, 2));
-                return `
-                  <tr class="work-strategy-row">
-                    <td>${helpers.escape(actionType)}</td>
-                    <td><span class="badge ${helpers.priorityBadgeClass(priority)}">${helpers.escape(priority)}</span></td>
-                    <td>${helpers.escape(impactScore)}</td>
-                    <td><span class="dashboard-risk-badge ${helpers.riskBadgeClass(riskLevel)}">${helpers.escape(riskLevel)}</span></td>
-                    <td>${action.auto_executable ? '<span class="badge ok">Yes</span>' : '<span class="badge info">No</span>'}</td>
-                    <td>
-                      <div class="card-actions wrap no-margin">
-                        <button data-action="work-strategy-execute" data-id="${helpers.escape(action.id)}">Execute</button>
-                        <button class="secondary-btn" data-action="work-strategy-reject" data-id="${helpers.escape(action.id)}">Reject</button>
-                        <button class="secondary-btn work-analysis-toggle" data-action="work-strategy-toggle-analysis" data-id="${helpers.escape(action.id)}">${isAnalysisExpanded ? "Hide Analysis" : "View Analysis"}</button>
-                      </div>
-                    </td>
-                  </tr>
-                  <tr class="work-strategy-analysis-row ${isAnalysisExpanded ? "is-expanded" : ""}">
-                    <td colspan="6">
-                      <div class="work-analysis-panel" aria-hidden="${isAnalysisExpanded ? "false" : "true"}">
-                        <dl class="work-analysis-meta">
-                          <div><dt>Risk Level</dt><dd>${helpers.escape(riskLevel)}</dd></div>
-                          <div><dt>Expected Impact Score</dt><dd>${helpers.escape(impactScore)}</dd></div>
-                          <div><dt>Auto Executable</dt><dd>${action.auto_executable ? "Yes" : "No"}</dd></div>
-                          <div><dt>Priority Value</dt><dd>${helpers.escape(priority)}</dd></div>
-                        </dl>
-                        <p class="work-analysis-payload-label">Raw action payload</p>
-                        <pre class="work-analysis-payload">${payloadJson}</pre>
-                      </div>
-                    </td>
-                  </tr>
-                `;
-              }).join("")}
-            </tbody>
-          </table>
-        </div>
+        <article class="card row-item">
+          <h4>${helpers.escape(helpers.t(plan.product_name, plan.proposal_id || plan.plan_id || "Untitled Plan"))}</h4>
+          <p>deliverables: ${helpers.escape(helpers.t(deliverables.length, 0))} · build steps: ${helpers.escape(helpers.t(buildSteps.length, 0))}</p>
+          <div>
+            <strong>Outline preview</strong>
+            <ol>${preview}</ol>
+          </div>
+          <details>
+            <summary>Expand full plan details</summary>
+            <div>
+              <p><strong>Full outline</strong></p>
+              <ol>${fullOutline}</ol>
+              <p><strong>Deliverables</strong></p>
+              <ul>${deliverables.map((item) => `<li>${helpers.escape(helpers.t(item))}</li>`).join("") || "<li>No deliverables available.</li>"}</ul>
+              <p><strong>Build steps</strong></p>
+              <ol>${stepsList}</ol>
+            </div>
+          </details>
+        </article>
       `;
     };
 
-    const hasFinancialData = Boolean(
-      state.performance.total_revenue !== undefined
-      || state.performance.total_sales !== undefined
-      || latestRecommendationSummary
-    );
+    const plansContent = state.plans.length
+      ? state.plans.map(renderPlanItem).join("")
+      : "<p class='empty'>No product plans generated yet.</p>";
 
-    this.shell("Work", "Product factory pipeline", `
+    const renderLaunchCard = (item) => {
+      const launchId = helpers.t(item.id, "");
+      const metrics = item.metrics || {};
+      const sales = helpers.t(metrics.sales ?? item.sales, 0);
+      const revenue = helpers.t(metrics.revenue ?? item.revenue, 0);
+      const message = state.workView.messages[`launch-${launchId}`] || "";
+
+      return `
+        <article class="card row-item">
+          <h4>${helpers.escape(helpers.t(item.product_name, item.proposal_id || launchId))}</h4>
+          <p>
+            <span class="badge ${helpers.badgeClass(item.status)}">${helpers.escape(helpers.statusLabel(item.status))}</span>
+            sales: ${helpers.escape(sales)} · revenue: ${helpers.escape(revenue)} · gumroad linked: ${item.gumroad_product_id ? "yes" : "no"}
+          </p>
+          <div class="inline-form-grid launch-actions-inline">
+            <div class="inline-control-group">
+              <label>Amount</label>
+              <input type="number" step="0.01" min="0" data-launch-input="sale" data-id="${helpers.escape(launchId)}" placeholder="0.00">
+              <button class="secondary-btn" data-action="launch-add-sale" data-id="${helpers.escape(launchId)}">Add Sale</button>
+            </div>
+            <div class="inline-control-group">
+              <label>Status</label>
+              <select data-launch-input="status" data-id="${helpers.escape(launchId)}">
+                <option value="active">Active</option>
+                <option value="paused">Paused</option>
+                <option value="archived">Archived</option>
+              </select>
+              <button class="secondary-btn" data-action="launch-set-status" data-id="${helpers.escape(launchId)}">Change Status</button>
+            </div>
+            <div class="inline-control-group">
+              <label>Gumroad Product</label>
+              <input type="text" data-launch-input="gumroad" data-id="${helpers.escape(launchId)}" value="${helpers.escape(helpers.t(item.gumroad_product_id, ""))}" placeholder="gumroad_product_id">
+              <button class="secondary-btn" data-action="launch-link-gumroad" data-id="${helpers.escape(launchId)}">Link Gumroad</button>
+            </div>
+          </div>
+          ${message ? `<p class="muted-note">${helpers.escape(message)}</p>` : ""}
+        </article>
+      `;
+    };
+
+    const launchesContent = state.launches.length
+      ? state.launches.map(renderLaunchCard).join("")
+      : "<p class='empty'>No product launches available yet.</p>";
+
+    this.shell("Work", "Revenue Console", `
       <section class="work-execution">
         <article class="card work-section">
           <header class="work-section-header">
-            <h3>Radar — Market Detection</h3>
-            <p class="muted-note">Detected market signals and opportunity intake.</p>
+            <h3>1) Opportunities</h3>
+            <p class="muted-note">Incoming demand signals waiting for decisioning.</p>
           </header>
           <div class="work-stage-counters">
-            ${radarBuckets.map((bucket) => `<span class="badge info">${bucket.title}: ${bucket.count}</span>`).join("")}
+            ${opportunitiesByGroup.map((group) => `<span class="badge info">${group.title}: ${group.count}</span>`).join("")}
           </div>
           <div class="work-proposals-grid">
-            ${radarBuckets.map((bucket) => `
+            ${opportunitiesByGroup.map((group) => `
               <section class="work-status-group">
-                <h4>${bucket.title}</h4>
-                ${bucket.content}
+                <h4>${group.title}</h4>
+                ${group.cards}
               </section>
             `).join("")}
           </div>
@@ -985,101 +902,40 @@ const views = {
 
         <article class="card work-section">
           <header class="work-section-header">
-            <h3>Incubation — Product Drafts</h3>
-            <p class="muted-note">Concepts generated from validated market signals.</p>
+            <h3>2) Proposals</h3>
+            <p class="muted-note">Products moving through approval, build, and launch readiness.</p>
           </header>
           <div class="work-proposals-grid">
-            ${incubationGroups}
+            ${proposalsByGroup}
           </div>
         </article>
 
         <article class="card work-section">
           <header class="work-section-header">
-            <h3>Blueprint — Build Plans</h3>
-            <p class="muted-note">Structured product architecture and build instructions.</p>
-          </header>
-          ${productPlans}
-          <div class="work-table-wrap">
-            <table class="work-table">
-              <thead>
-                <tr>
-                  <th>Proposal ID</th>
-                  <th>Product</th>
-                  <th>Status</th>
-                  <th>Execution package</th>
-                  <th>Plans</th>
-                </tr>
-              </thead>
-              <tbody>${proposalActionRows}</tbody>
-            </table>
-          </div>
-          <div class="work-preview-grid">
-            <section class="work-preview-panel">
-              <h3>Execution Package Preview</h3>
-              ${renderExecutionPackagePreview(selectedExecutionId, selectedExecutionPackage)}
-            </section>
-            <section class="work-preview-panel">
-              <h3>Product Plan Viewer</h3>
-              ${renderPlanPreview(selectedPlanId, selectedPlan)}
-            </section>
-          </div>
-        </article>
-
-        <article class="card work-section">
-          <header class="work-section-header">
-            <h3>Launch Engine — Go To Market</h3>
-            <p class="muted-note">Products preparing for release or currently active.</p>
+            <h3>3) Plans</h3>
+            <p class="muted-note">Execution blueprints with outline, deliverables, and build steps.</p>
           </header>
           <section class="work-status-group">
-            <h4>Ready to Launch</h4>
-            ${readyToLaunchProposals}
+            ${plansContent}
           </section>
-          <div class="work-table-wrap">
-            <table class="work-table work-launch-table">
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Proposal</th>
-                  <th>Status</th>
-                  <th>Sales</th>
-                  <th>Revenue</th>
-                  <th>Gumroad Product</th>
-                  <th>Last synced</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>${launchesRows}</tbody>
-            </table>
-          </div>
         </article>
 
         <article class="card work-section">
           <header class="work-section-header">
-            <h3>Financial Core — Performance &amp; Strategy</h3>
-            <p class="muted-note">Revenue intelligence and strategic direction.</p>
+            <h3>4) Launches</h3>
+            <p class="muted-note">Live offers, monetization tracking, and sales operations.</p>
           </header>
-          ${hasFinancialData ? `
-            <div class="metrics-grid">
-              <div class="metric"><span>Total revenue</span><strong>${helpers.t(state.performance.total_revenue, 0)}</strong></div>
-              <div class="metric"><span>Total sales</span><strong>${helpers.t(state.performance.total_sales, 0)}</strong></div>
-              <div class="metric"><span>Latest recommendation</span><strong>${helpers.t(latestRecommendationSummary, "No recommendation yet")}</strong></div>
-            </div>
-          ` : "<p class='empty'>No financial performance or strategy recommendations available yet.</p>"}
-
-          <article class="card">
-            <h3>Strategic Command Queue</h3>
-            ${renderStrategicCommandQueue()}
-          </article>
+          <section class="work-status-group">
+            ${launchesContent}
+          </section>
         </article>
 
         <article class="card"><h3>Action output</h3><section id="work-response" class="result-box">Ready.</section></article>
       </section>
     `);
     bindWorkActions();
-    if (!state.workView.strategyPendingActionsLoading && !state.workView.strategyPendingActionsLoaded) {
-      loadWorkStrategyPendingActions();
-    }
   },
+
 
   loadProfile() {
     const derivedRevenuePerProduct = state.launches.length
