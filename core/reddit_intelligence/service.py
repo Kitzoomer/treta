@@ -49,6 +49,17 @@ class RedditIntelligenceService:
         if suggested_action != base_action:
             reasoning += " Suggested action adapted based on historical engagement performance."
 
+        global_ratio = self.repository.get_weekly_mention_ratio()
+        subreddit_ratio = self.repository.get_subreddit_mention_ratio(subreddit)
+
+        if suggested_action == "value_plus_mention":
+            if global_ratio > 0.4:
+                suggested_action = "value"
+                reasoning += " Global mention cap applied."
+            if suggested_action == "value_plus_mention" and subreddit_ratio > 0.3:
+                suggested_action = "value"
+                reasoning += " Subreddit mention cap applied."
+
         try:
             high_performing_keywords = SalesInsightService().get_high_performing_keywords()
             if any(keyword in text_lower for keyword in high_performing_keywords):
@@ -71,6 +82,7 @@ class RedditIntelligenceService:
             "suggested_action": suggested_action,
             "generated_reply": generated_reply,
             "reasoning": reasoning,
+            "mention_used": suggested_action == "value_plus_mention",
         }
         return self.repository.save_signal(signal)
 

@@ -38,7 +38,8 @@ def initialize_sqlite() -> None:
                 updated_at TEXT,
                 karma INTEGER DEFAULT 0,
                 replies INTEGER DEFAULT 0,
-                performance_score INTEGER DEFAULT 0
+                performance_score INTEGER DEFAULT 0,
+                mention_used BOOLEAN DEFAULT 0
             )
             """
         )
@@ -51,6 +52,7 @@ def initialize_sqlite() -> None:
             "karma": "ALTER TABLE reddit_signals ADD COLUMN karma INTEGER DEFAULT 0",
             "replies": "ALTER TABLE reddit_signals ADD COLUMN replies INTEGER DEFAULT 0",
             "performance_score": "ALTER TABLE reddit_signals ADD COLUMN performance_score INTEGER DEFAULT 0",
+            "mention_used": "ALTER TABLE reddit_signals ADD COLUMN mention_used BOOLEAN DEFAULT 0",
         }
         for column_name, ddl in migrations.items():
             if column_name not in existing_cols:

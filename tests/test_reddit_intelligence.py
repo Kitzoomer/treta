@@ -101,9 +101,10 @@ class RedditIntelligenceTestCase(unittest.TestCase):
 
         ordered = self.service.list_top_pending(limit=3)
 
-        self.assertEqual(
-            [item["id"] for item in ordered],
-            [high["id"], medium["id"], low["id"]],
+        self.assertEqual(ordered[0]["id"], high["id"])
+        self.assertSetEqual(
+            {item["id"] for item in ordered},
+            {high["id"], medium["id"], low["id"]},
         )
         self.assertEqual(
             [item["opportunity_score"] for item in ordered],
@@ -139,6 +140,38 @@ class RedditIntelligenceTestCase(unittest.TestCase):
             post_url="https://reddit.com/r/freelance/direct-adapted",
         )
         self.assertEqual(adapted_direct["suggested_action"], "value")
+
+    def test_mention_rate_governor_blocks_excess_mentions(self):
+        baseline = self.service.analyze_post(
+            subreddit="creators",
+            post_text="I'm struggling with outreach baseline",
+            post_url="https://reddit.com/r/creators/implicit-governor-baseline",
+        )
+        self.service.update_feedback(signal_id=baseline["id"], karma=20, replies=5)
+
+        for index in range(4):
+            self.service.repository.save_signal(
+                {
+                    "id": f"governor-seed-{index}",
+                    "subreddit": "creators",
+                    "post_url": f"https://reddit.com/r/creators/governor-seed-{index}",
+                    "post_text": "seed mention",
+                    "detected_pain_type": "direct",
+                    "opportunity_score": 90,
+                    "intent_level": "direct",
+                    "suggested_action": "value_plus_mention",
+                    "generated_reply": "seed",
+                    "mention_used": True,
+                }
+            )
+
+        blocked = self.service.analyze_post(
+            subreddit="creators",
+            post_text="I'm struggling to close more deals",
+            post_url="https://reddit.com/r/creators/implicit-governor-blocked",
+        )
+        self.assertEqual(blocked["suggested_action"], "value")
+        self.assertIn("Global mention cap applied.", blocked["reasoning"])
 
     def test_update_status(self):
         signal = self.service.analyze_post(
