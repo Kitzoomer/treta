@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
 from core.reddit_intelligence.models import get_connection, initialize_sqlite
@@ -31,8 +31,8 @@ class RedditSignalRepository:
                     id, subreddit, post_url, post_text, detected_pain_type,
                     opportunity_score, intent_level, suggested_action,
                     generated_reply, status, created_at, updated_at,
-                    karma, replies, performance_score
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    karma, replies, performance_score, mention_used
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     payload["id"],
@@ -50,6 +50,7 @@ class RedditSignalRepository:
                     payload["karma"],
                     payload["replies"],
                     payload["performance_score"],
+                    int(bool(payload.get("mention_used", False))),
                 ),
             )
             conn.commit()
@@ -128,3 +129,33 @@ class RedditSignalRepository:
                 (signal_id,),
             ).fetchone()
         return dict(row) if row else None
+
+    def _get_mention_ratio(self, where_clause: str = "", params: tuple[Any, ...] = ()) -> float:
+        self.ensure_initialized()
+        week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        query = """
+            SELECT
+                COUNT(*) AS total_responses,
+                SUM(CASE WHEN mention_used = 1 THEN 1 ELSE 0 END) AS mentions
+            FROM reddit_signals
+            WHERE created_at >= ?
+        """
+        query_params: tuple[Any, ...] = (week_ago, *params)
+
+        if where_clause:
+            query += f" AND {where_clause}"
+
+        with get_connection() as conn:
+            row = conn.execute(query, query_params).fetchone()
+
+        if row is None or row["total_responses"] == 0:
+            return 0
+
+        mentions = row["mentions"] or 0
+        return float(mentions) / float(row["total_responses"])
+
+    def get_weekly_mention_ratio(self) -> float:
+        return self._get_mention_ratio()
+
+    def get_subreddit_mention_ratio(self, subreddit: str) -> float:
+        return self._get_mention_ratio(where_clause="subreddit = ?", params=(subreddit,))
