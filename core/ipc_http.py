@@ -1,5 +1,6 @@
 import json
 import threading
+import time
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -24,6 +25,7 @@ class Handler(BaseHTTPRequestHandler):
     strategy_decision_engine = None
     strategy_action_execution_layer = None
     autonomy_policy_engine = None
+    daily_loop_engine = None
     ui_dir = Path(__file__).resolve().parent.parent / "ui"
 
     def _send(self, code: int, body: dict):
@@ -135,6 +137,13 @@ class Handler(BaseHTTPRequestHandler):
             if self.autonomy_policy_engine is None:
                 return self._send(503, {"error": "autonomy_policy_engine_unavailable"})
             return self._send(200, self.autonomy_policy_engine.adaptive_status())
+
+        if parsed.path == "/daily_loop/status":
+            if self.daily_loop_engine is None:
+                return self._send(503, {"error": "daily_loop_engine_unavailable"})
+            loop_state = self.daily_loop_engine.get_loop_state()
+            loop_state["timestamp"] = time.time()
+            return self._send(200, loop_state)
 
         if parsed.path == "/system/integrity":
             if self.product_proposal_store is None:
@@ -474,6 +483,7 @@ def start_http_server(
     strategy_decision_engine=None,
     strategy_action_execution_layer=None,
     autonomy_policy_engine=None,
+    daily_loop_engine=None,
 ):
     # Thread daemon: se muere si se muere el proceso principal (bien para dev)
     Handler.state_machine = state_machine
@@ -487,6 +497,7 @@ def start_http_server(
     Handler.strategy_decision_engine = strategy_decision_engine
     Handler.strategy_action_execution_layer = strategy_action_execution_layer
     Handler.autonomy_policy_engine = autonomy_policy_engine
+    Handler.daily_loop_engine = daily_loop_engine
     server = HTTPServer((host, port), Handler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()

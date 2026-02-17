@@ -18,6 +18,7 @@ from core.strategy_action_store import StrategyActionStore
 from core.strategy_action_execution_layer import StrategyActionExecutionLayer
 from core.autonomy_policy_engine import AutonomyPolicyEngine
 from core.config import get_autonomy_mode
+from core.daily_loop import DailyLoopEngine
 
 
 def main():
@@ -34,6 +35,12 @@ def main():
     performance_engine = PerformanceEngine(product_launch_store=product_launch_store)
     strategy_engine = StrategyEngine(product_launch_store=product_launch_store)
     strategy_action_store = StrategyActionStore()
+    daily_loop_engine = DailyLoopEngine(
+        opportunity_store=opportunity_store,
+        proposal_store=product_proposal_store,
+        launch_store=product_launch_store,
+        strategy_store=strategy_action_store,
+    )
     strategy_action_execution_layer = StrategyActionExecutionLayer(strategy_action_store=strategy_action_store)
     autonomy_policy_engine = AutonomyPolicyEngine(
         strategy_action_store=strategy_action_store,
@@ -69,6 +76,7 @@ def main():
             strategy_decision_engine=strategy_decision_engine,
             strategy_action_execution_layer=strategy_action_execution_layer,
             autonomy_policy_engine=autonomy_policy_engine,
+            daily_loop_engine=daily_loop_engine,
         )
     except TypeError:
         start_http_server()
