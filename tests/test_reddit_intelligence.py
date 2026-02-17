@@ -2,6 +2,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from core.reddit_intelligence.models import get_db_path, initialize_sqlite
 from core.reddit_intelligence.service import RedditIntelligenceService
@@ -172,6 +173,61 @@ class RedditIntelligenceTestCase(unittest.TestCase):
         )
         self.assertEqual(blocked["suggested_action"], "value")
         self.assertIn("Global mention cap applied.", blocked["reasoning"])
+
+    def test_subreddit_performance_adjusts_score(self):
+        for index in range(3):
+            self.service.repository.save_signal(
+                {
+                    "id": f"subreddit-high-{index}",
+                    "subreddit": "A",
+                    "post_url": f"https://reddit.com/r/A/high-{index}",
+                    "post_text": "seed high",
+                    "detected_pain_type": "direct",
+                    "opportunity_score": 90,
+                    "intent_level": "direct",
+                    "suggested_action": "value",
+                    "generated_reply": "seed",
+                    "performance_score": 30,
+                    "mention_used": False,
+                }
+            )
+
+        for index in range(3):
+            self.service.repository.save_signal(
+                {
+                    "id": f"subreddit-low-{index}",
+                    "subreddit": "B",
+                    "post_url": f"https://reddit.com/r/B/low-{index}",
+                    "post_text": "seed low",
+                    "detected_pain_type": "direct",
+                    "opportunity_score": 90,
+                    "intent_level": "direct",
+                    "suggested_action": "value",
+                    "generated_reply": "seed",
+                    "performance_score": 1,
+                    "mention_used": False,
+                }
+            )
+
+        with patch("core.reddit_intelligence.service.random.randint", return_value=85), patch(
+            "core.reddit_intelligence.service.SalesInsightService.get_high_performing_keywords",
+            return_value=[],
+        ):
+            high_signal = self.service.analyze_post(
+                subreddit="A",
+                post_text="Need help with a launch template",
+                post_url="https://reddit.com/r/A/new-1",
+            )
+            low_signal = self.service.analyze_post(
+                subreddit="B",
+                post_text="Need help with a launch template",
+                post_url="https://reddit.com/r/B/new-1",
+            )
+
+        self.assertEqual(high_signal["opportunity_score"], 93)
+        self.assertIn("Boosted due to high-performing subreddit.", high_signal["reasoning"])
+        self.assertEqual(low_signal["opportunity_score"], 80)
+        self.assertIn("Reduced due to low-performing subreddit.", low_signal["reasoning"])
 
     def test_update_status(self):
         signal = self.service.analyze_post(
