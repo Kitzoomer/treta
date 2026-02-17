@@ -26,6 +26,7 @@ class Handler(BaseHTTPRequestHandler):
     strategy_action_execution_layer = None
     autonomy_policy_engine = None
     daily_loop_engine = None
+    memory_store = None
     ui_dir = Path(__file__).resolve().parent.parent / "ui"
 
     def _send(self, code: int, body: dict):
@@ -83,6 +84,11 @@ class Handler(BaseHTTPRequestHandler):
                 for event in event_bus.recent(limit=10)
             ]
             return self._send(200, {"events": events})
+
+        if parsed.path == "/memory":
+            if self.memory_store is None:
+                return self._send(503, {"error": "memory_store_unavailable"})
+            return self._send(200, self.memory_store.snapshot())
 
         if parsed.path == "/product_proposals":
             if self.product_proposal_store is None:
@@ -484,6 +490,7 @@ def start_http_server(
     strategy_action_execution_layer=None,
     autonomy_policy_engine=None,
     daily_loop_engine=None,
+    memory_store=None,
 ):
     # Thread daemon: se muere si se muere el proceso principal (bien para dev)
     Handler.state_machine = state_machine
@@ -498,6 +505,7 @@ def start_http_server(
     Handler.strategy_action_execution_layer = strategy_action_execution_layer
     Handler.autonomy_policy_engine = autonomy_policy_engine
     Handler.daily_loop_engine = daily_loop_engine
+    Handler.memory_store = memory_store
     server = HTTPServer((host, port), Handler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()

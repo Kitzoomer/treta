@@ -1,0 +1,70 @@
+from __future__ import annotations
+
+from copy import deepcopy
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+from typing import Any, Dict, List
+
+
+class MemoryStore:
+    _DEFAULT_DATA_DIR = "./.treta_data"
+
+    def __init__(self, path: Path | None = None):
+        data_dir = Path(os.getenv("TRETA_DATA_DIR", self._DEFAULT_DATA_DIR))
+        self._path = path or data_dir / "memory_store.json"
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._state: Dict[str, Any] = self._load()
+
+    def _default_state(self) -> Dict[str, Any]:
+        return {
+            "profile": {
+                "name": "Marian",
+                "objective": "Build and launch profitable digital products consistently.",
+                "autonomy_default": "manual",
+                "humor_style": "dry and concise",
+            },
+            "chat_history": [],
+        }
+
+    def _load(self) -> Dict[str, Any]:
+        if not self._path.exists():
+            state = self._default_state()
+            self.save(state)
+            return state
+
+        loaded = json.loads(self._path.read_text(encoding="utf-8"))
+        if not isinstance(loaded, dict):
+            return self._default_state()
+
+        state = self._default_state()
+        profile = loaded.get("profile", {})
+        if isinstance(profile, dict):
+            state["profile"].update({k: v for k, v in profile.items() if isinstance(k, str)})
+        chat_history = loaded.get("chat_history", [])
+        if isinstance(chat_history, list):
+            state["chat_history"] = [dict(item) for item in chat_history if isinstance(item, dict)][-20:]
+        return state
+
+    def save(self, state: Dict[str, Any] | None = None) -> None:
+        if state is not None:
+            self._state = dict(state)
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.write_text(json.dumps(self._state, indent=2), encoding="utf-8")
+
+    def snapshot(self) -> Dict[str, Any]:
+        return deepcopy(self._state)
+
+    def append_message(self, role: str, text: str, ts: str | None = None) -> Dict[str, Any]:
+        message = {
+            "role": str(role),
+            "text": str(text),
+            "ts": ts or datetime.now(timezone.utc).isoformat(),
+        }
+        history: List[Dict[str, Any]] = self._state.setdefault("chat_history", [])
+        history.append(message)
+        self._state["chat_history"] = history[-20:]
+        self.save()
+        return deepcopy(message)
+
