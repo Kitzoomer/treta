@@ -46,18 +46,6 @@ class RedditIntelligenceService:
         except Exception:
             pass
 
-        try:
-            avg_performance = self.repository.get_average_performance_by_intent(intent_level)
-            if avg_performance > 10:
-                opportunity_score += 5
-                reasoning += " Adjusted based on historical Reddit performance."
-            elif avg_performance < 2:
-                opportunity_score -= 5
-                reasoning += " Adjusted based on historical Reddit performance."
-            opportunity_score = max(0, min(100, opportunity_score))
-        except Exception:
-            pass
-
         generated_reply = self._build_reply(suggested_action, subreddit)
 
         signal = {
