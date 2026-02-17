@@ -21,6 +21,7 @@ const ACTION_TARGETS = {
 const state = {
   system: { state: "IDLE" },
   events: [],
+  chatHistory: [],
   opportunities: [],
   proposals: [],
   launches: [],
@@ -75,6 +76,7 @@ const ui = {
   pageNav: document.getElementById("page-nav"),
   chatForm: document.getElementById("chat-form"),
   chatInput: document.getElementById("chat-input"),
+  chatHistory: document.getElementById("chat-history"),
   systemStatusPanel: document.getElementById("system-status-panel"),
   activityTimelinePanel: document.getElementById("activity-timeline-panel"),
   telemetry: document.getElementById("telemetry-content"),
@@ -130,6 +132,9 @@ const api = {
   },
   getRecentEvents() {
     return this.fetchJson("/events");
+  },
+  getMemory() {
+    return this.fetchJson("/memory");
   },
   getOpportunities() {
     return this.fetchJson("/opportunities");
@@ -1290,6 +1295,29 @@ function renderActivityTimeline() {
   });
 }
 
+function renderConversation() {
+  if (!ui.chatHistory) return;
+  const messages = state.chatHistory || [];
+  if (!messages.length) {
+    ui.chatHistory.innerHTML = "<p class='empty'>No messages yet.</p>";
+    return;
+  }
+
+  ui.chatHistory.innerHTML = messages
+    .map((item) => {
+      const role = helpers.escape(helpers.t(item.role, "assistant"));
+      const text = helpers.escape(helpers.t(item.text, ""));
+      return `
+        <article class="chat-message ${role}">
+          <div class="chat-role">${role}</div>
+          <div>${text}</div>
+        </article>
+      `;
+    })
+    .join("");
+  ui.chatHistory.scrollTop = ui.chatHistory.scrollHeight;
+}
+
 function renderCommandBar() {
   if (!ui.chatForm) return;
   ui.chatForm.classList.add("quick-command-bar");
@@ -1299,6 +1327,7 @@ function renderControlCenter() {
   renderSystemStatus();
   renderActivityTimeline();
   renderCommandBar();
+  renderConversation();
 }
 
 function renderTelemetry() {
@@ -1312,9 +1341,10 @@ function renderTelemetry() {
 
 async function refreshLoop() {
   try {
-    const [systemData, eventData, oppData, proposalData, launchData, planData, perfData, strategyData, pendingData, dailyLoopData] = await Promise.all([
+    const [systemData, eventData, memoryData, oppData, proposalData, launchData, planData, perfData, strategyData, pendingData, dailyLoopData] = await Promise.all([
       api.getState(),
       api.getRecentEvents(),
+      api.getMemory(),
       api.getOpportunities(),
       api.getProductProposals(),
       api.getProductLaunches(),
@@ -1327,6 +1357,7 @@ async function refreshLoop() {
 
     state.system = systemData || { state: "IDLE" };
     state.events = eventData.events || [];
+    state.chatHistory = memoryData.chat_history || [];
     state.opportunities = oppData.items || [];
     state.proposals = proposalData.items || [];
     state.launches = launchData.items || [];
@@ -1761,8 +1792,19 @@ document.addEventListener("click", (e) => {
 
 ui.chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  await executeCommand(ui.chatInput.value);
+  const input = ui.chatInput.value.trim();
+  if (!input) return;
+
+  await api.fetchJson("/event", {
+    method: "POST",
+    body: JSON.stringify({
+      type: "UserMessageSubmitted",
+      payload: { text: input, source: "ui" },
+      source: "ui",
+    }),
+  });
   ui.chatInput.value = "";
+  await refreshLoop();
 });
 
 window.addEventListener("hashchange", () => router.render());

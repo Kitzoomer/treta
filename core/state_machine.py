@@ -7,7 +7,7 @@ class State:
 
 
 VALID_TRANSITIONS = {
-    State.IDLE: [State.LISTENING],
+    State.IDLE: [State.LISTENING, State.THINKING, State.SPEAKING],
     State.LISTENING: [State.THINKING, State.IDLE],
     State.THINKING: [State.SPEAKING, State.IDLE],
     State.SPEAKING: [State.IDLE],

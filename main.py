@@ -19,6 +19,8 @@ from core.strategy_action_execution_layer import StrategyActionExecutionLayer
 from core.autonomy_policy_engine import AutonomyPolicyEngine
 from core.config import get_autonomy_mode
 from core.daily_loop import DailyLoopEngine
+from core.memory_store import MemoryStore
+from core.conversation_core import ConversationCore
 
 
 def main():
@@ -52,13 +54,25 @@ def main():
         strategy_action_execution_layer=strategy_action_execution_layer,
         autonomy_policy_engine=autonomy_policy_engine,
     )
+    memory_store = MemoryStore()
     control = Control(
         opportunity_store=opportunity_store,
         product_proposal_store=product_proposal_store,
         product_plan_store=product_plan_store,
         product_launch_store=product_launch_store,
     )
-    dispatcher = Dispatcher(state_machine=sm, control=control)
+    conversation_core = ConversationCore(
+        bus=event_bus,
+        state_machine=sm,
+        memory_store=memory_store,
+        daily_loop_engine=daily_loop_engine,
+    )
+    dispatcher = Dispatcher(
+        state_machine=sm,
+        control=control,
+        memory_store=memory_store,
+        conversation_core=conversation_core,
+    )
     print(f"🧠 Restored state: {sm.state}")
     print("[BOOT] Starting HTTP server")
     scheduler = DailyScheduler()
@@ -77,6 +91,7 @@ def main():
             strategy_action_execution_layer=strategy_action_execution_layer,
             autonomy_policy_engine=autonomy_policy_engine,
             daily_loop_engine=daily_loop_engine,
+            memory_store=memory_store,
         )
     except TypeError:
         start_http_server()

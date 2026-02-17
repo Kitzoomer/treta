@@ -758,3 +758,45 @@ pre { white-space: pre-wrap; background: #0b1020; border: 1px solid var(--border
   font-size: .72rem;
   line-height: 1.35;
 }
+
+.chat-panel {
+  flex: 0 0 44%;
+  min-height: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-history {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0b1020;
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.chat-message {
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: .82rem;
+  line-height: 1.35;
+  border: 1px solid rgba(255,255,255,.08);
+}
+
+.chat-message.user {
+  background: rgba(245,165,36,.12);
+}
+
+.chat-message.assistant {
+  background: rgba(76,141,255,.15);
+}
+
+.chat-role {
+  color: var(--muted);
+  font-size: .72rem;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
