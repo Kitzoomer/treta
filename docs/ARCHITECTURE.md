@@ -312,3 +312,20 @@ Treta es “herramienta poderosa” si:
 
 > Este documento se actualiza cuando añadimos un módulo o cambiamos una regla. Si no está aquí, no existe (todavía).
 
+
+---
+
+## API: Reddit Intelligence
+
+Endpoints disponibles para el módulo independiente `reddit_intelligence`:
+
+- `POST /reddit/signals`
+  - Body JSON: `subreddit`, `post_url`, `post_text`
+  - Analiza el post, calcula `opportunity_score`, genera sugerencia y guarda señal en SQLite.
+
+- `GET /reddit/signals?limit=20`
+  - Retorna señales con `status = pending`, ordenadas por `opportunity_score DESC` y con límite configurable.
+
+- `PATCH /reddit/signals/{id}/status`
+  - Body JSON: `status` (`approved`, `rejected`, `published`)
+  - Actualiza el estado de una señal existente.
