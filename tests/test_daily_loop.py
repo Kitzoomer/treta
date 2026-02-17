@@ -3,8 +3,13 @@ import tempfile
 import unittest
 from pathlib import Path
 from urllib.request import urlopen
+from unittest.mock import patch
 
+from core.bus import event_bus
+from core.control import Control
 from core.daily_loop import DailyLoopEngine
+from core.events import Event
+from core.reddit_intelligence.daily_plan_store import RedditDailyPlanStore
 from core.ipc_http import start_http_server
 from core.opportunity_store import OpportunityStore
 from core.product_launch_store import ProductLaunchStore
@@ -46,6 +51,34 @@ class DailyLoopEngineTest(unittest.TestCase):
             strategy_actions.add(action_type="review", target_id="proposal-2", reasoning="Need approval")
             self.assertEqual(engine.compute_phase(), "EXECUTE")
 
+
+    def test_daily_loop_generates_reddit_plan(self):
+        while event_bus.pop(timeout=0.001) is not None:
+            pass
+
+        RedditDailyPlanStore.save({})
+
+        signals = [
+            {"id": f"signal-{index}", "subreddit": f"sub{index}", "detected_pain_type": "direct"}
+            for index in range(1, 8)
+        ]
+
+        control = Control()
+        with patch("core.control.InfoproductSignals.emit_signals", return_value=None), patch(
+            "core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions",
+            return_value=signals[:5],
+        ):
+            control.consume(Event(type="RunInfoproductScan", payload={}, source="test"))
+
+        plan = RedditDailyPlanStore.get_latest()
+        self.assertTrue(plan)
+        self.assertLessEqual(len(plan.get("signals", [])), 5)
+        self.assertTrue(str(plan.get("summary", "")).strip())
+
+        recent_events = event_bus.recent(limit=20)
+        daily_events = [event for event in recent_events if event.type == "RedditDailyPlanGenerated"]
+        self.assertTrue(daily_events)
+
     def test_endpoint_returns_daily_loop_status(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -66,6 +99,27 @@ class DailyLoopEngineTest(unittest.TestCase):
             finally:
                 server.shutdown()
                 server.server_close()
+
+    def test_endpoint_returns_reddit_today_plan(self):
+        RedditDailyPlanStore.save(
+            {
+                "generated_at": "2026-01-01T00:00:00",
+                "signals": ["signal-1", "signal-2"],
+                "summary": "Today's Reddit focus: \n1. r/freelance - direct signal",
+            }
+        )
+
+        server = start_http_server(host="127.0.0.1", port=0)
+        try:
+            with urlopen(f"http://127.0.0.1:{server.server_port}/reddit/today_plan", timeout=2) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+
+            self.assertEqual(payload["generated_at"], "2026-01-01T00:00:00")
+            self.assertEqual(payload["signals"], ["signal-1", "signal-2"])
+            self.assertTrue(payload["summary"])
+        finally:
+            server.shutdown()
+            server.server_close()
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Dict, List
 
 from core.events import Event
@@ -77,6 +78,30 @@ class Control:
         self.product_proposal_store._save()
         self.product_launch_store._save()
 
+    def _generate_reddit_daily_plan(self) -> None:
+        from core.reddit_intelligence.daily_plan_store import RedditDailyPlanStore
+        from core.reddit_intelligence.service import RedditIntelligenceService
+
+        signals = RedditIntelligenceService().get_daily_top_actions(limit=5)
+        signal_ids = [str(item.get("id", "")).strip() for item in signals if str(item.get("id", "")).strip()]
+
+        summary_lines = ["Today's Reddit focus:"]
+        for index, signal in enumerate(signals, start=1):
+            subreddit = str(signal.get("subreddit", "unknown")).strip() or "unknown"
+            pain = str(signal.get("detected_pain_type", "trend")).strip() or "trend"
+            summary_lines.append(f"{index}. r/{subreddit} - {pain} signal")
+
+        if len(summary_lines) == 1:
+            summary_lines.append("No high-priority Reddit signals identified today.")
+
+        plan = {
+            "generated_at": datetime.utcnow().isoformat(),
+            "signals": signal_ids,
+            "summary": "\n".join(summary_lines),
+        }
+        RedditDailyPlanStore.save(plan)
+        event_bus.push(Event(type="RedditDailyPlanGenerated", payload=plan, source="control"))
+
     def link_launch_gumroad(self, launch_id: str, gumroad_product_id: str) -> Dict[str, object]:
         return self.product_launch_store.link_gumroad_product(launch_id, gumroad_product_id)
 
@@ -100,6 +125,7 @@ class Control:
         if event.type == "RunInfoproductScan":
             scanner = InfoproductSignals()
             scanner.emit_signals(event_bus)
+            self._generate_reddit_daily_plan()
             return []
 
         if event.type == "EmailTriageRequested":

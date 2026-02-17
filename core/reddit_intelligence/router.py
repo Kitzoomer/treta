@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Tuple
 
+from core.reddit_intelligence.daily_plan_store import RedditDailyPlanStore
 from core.reddit_intelligence.service import RedditIntelligenceService
 
 
@@ -26,6 +27,9 @@ class RedditIntelligenceRouter:
             limit = int(raw_limit)
             items = self._service_instance().get_daily_top_actions(limit=limit)
             return 200, items
+
+        if path == "/reddit/today_plan":
+            return 200, RedditDailyPlanStore.get_latest()
 
         return None
 
