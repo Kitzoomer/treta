@@ -229,6 +229,50 @@ class RedditIntelligenceTestCase(unittest.TestCase):
         self.assertEqual(low_signal["opportunity_score"], 80)
         self.assertIn("Reduced due to low-performing subreddit.", low_signal["reasoning"])
 
+    def test_daily_top_actions_limits_and_diversifies(self):
+        records = [
+            ("a-1", "A", 99, "value"),
+            ("a-2", "A", 98, "value_plus_mention"),
+            ("a-3", "A", 97, "value"),
+            ("b-1", "B", 96, "value"),
+            ("b-2", "B", 95, "value"),
+            ("c-1", "C", 94, "value"),
+            ("c-2", "C", 93, "value"),
+            ("ignore-1", "D", 100, "ignore"),
+        ]
+
+        for index, (signal_id, subreddit, score, action) in enumerate(records):
+            self.service.repository.save_signal(
+                {
+                    "id": signal_id,
+                    "subreddit": subreddit,
+                    "post_url": f"https://reddit.com/r/{subreddit}/{signal_id}",
+                    "post_text": "seed",
+                    "detected_pain_type": "direct",
+                    "opportunity_score": score,
+                    "intent_level": "direct",
+                    "suggested_action": action,
+                    "generated_reply": "seed",
+                    "status": "pending",
+                    "created_at": f"2026-01-01T00:00:0{index}+00:00",
+                    "mention_used": action == "value_plus_mention",
+                }
+            )
+
+        selected = self.service.get_daily_top_actions(limit=5)
+
+        self.assertEqual(len(selected), 5)
+
+        by_subreddit = {}
+        for item in selected:
+            by_subreddit[item["subreddit"]] = by_subreddit.get(item["subreddit"], 0) + 1
+        self.assertTrue(all(count <= 2 for count in by_subreddit.values()))
+
+        self.assertEqual(
+            [item["opportunity_score"] for item in selected],
+            [99, 98, 96, 95, 94],
+        )
+
     def test_update_status(self):
         signal = self.service.analyze_post(
             subreddit="saas",

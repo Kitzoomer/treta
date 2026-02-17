@@ -14,14 +14,20 @@ class RedditIntelligenceRouter:
             self._service = RedditIntelligenceService()
         return self._service
 
-    def handle_get(self, path: str, query: Dict[str, list[str]]) -> Tuple[int, Dict[str, Any]] | None:
-        if path != "/reddit/signals":
-            return None
+    def handle_get(self, path: str, query: Dict[str, list[str]]) -> Tuple[int, Any] | None:
+        if path == "/reddit/signals":
+            raw_limit = (query.get("limit") or ["20"])[0]
+            limit = int(raw_limit)
+            items = self._service_instance().list_top_pending(limit=limit)
+            return 200, {"items": items}
 
-        raw_limit = (query.get("limit") or ["20"])[0]
-        limit = int(raw_limit)
-        items = self._service_instance().list_top_pending(limit=limit)
-        return 200, {"items": items}
+        if path == "/reddit/daily_actions":
+            raw_limit = (query.get("limit") or ["5"])[0]
+            limit = int(raw_limit)
+            items = self._service_instance().get_daily_top_actions(limit=limit)
+            return 200, items
+
+        return None
 
     def handle_post(self, path: str, payload: Dict[str, Any]) -> Tuple[int, Dict[str, Any]] | None:
         if path != "/reddit/signals":
