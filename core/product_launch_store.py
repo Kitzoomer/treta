@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 import uuid
 
+from core.execution_focus_engine import ExecutionFocusEngine
 from core.launch_metrics import LaunchMetricsModule
 from core.product_proposal_store import ProductProposalStore
 
@@ -75,6 +76,7 @@ class ProductLaunchStore:
             "gumroad_product_id": None,
             "last_gumroad_sync_at": None,
             "last_gumroad_sale_id": None,
+            "active_execution": bool(item.get("active_execution", False)),
         }
 
         product_name = item.get("product_name")
@@ -94,6 +96,14 @@ class ProductLaunchStore:
             normalized["last_gumroad_sale_id"] = str(last_gumroad_sale_id)
 
         return normalized
+
+
+    def _refresh_execution_focus(self) -> None:
+        target_id = ExecutionFocusEngine.select_active(self._proposal_store._items, self._items)
+        ExecutionFocusEngine.enforce_single_active(
+            target_id,
+            {"proposals": self._proposal_store._items, "launches": self._items},
+        )
 
     def _find(self, launch_id: str) -> ProductLaunch | None:
         for item in self._items:
@@ -122,6 +132,7 @@ class ProductLaunchStore:
             }
         )
         self._items.append(item)
+        self._refresh_execution_focus()
         self._save()
         return deepcopy(item)
 
@@ -131,6 +142,7 @@ class ProductLaunchStore:
             raise ValueError(f"launch not found: {launch_id}")
         item["launched_at"] = self._now()
         item["status"] = "active"
+        self._refresh_execution_focus()
         self._save()
         return deepcopy(item)
 
@@ -213,5 +225,6 @@ class ProductLaunchStore:
             raise ValueError(f"invalid transition: {current_status} -> {target_status}")
 
         item["status"] = target_status
+        self._refresh_execution_focus()
         self._save()
         return deepcopy(item)
