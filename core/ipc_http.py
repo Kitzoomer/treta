@@ -28,7 +28,7 @@ class Handler(BaseHTTPRequestHandler):
     autonomy_policy_engine = None
     daily_loop_engine = None
     memory_store = None
-    reddit_router = RedditIntelligenceRouter()
+    reddit_router = None
     ui_dir = Path(__file__).resolve().parent.parent / "ui"
 
     def _send(self, code: int, body: dict):
@@ -59,6 +59,8 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
 
         try:
+            if self.reddit_router is None:
+                self.reddit_router = RedditIntelligenceRouter()
             reddit_response = self.reddit_router.handle_get(parsed.path, parse_qs(parsed.query))
             if reddit_response is not None:
                 code, body = reddit_response
@@ -314,6 +316,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             data = json.loads(raw)
 
+            if self.reddit_router is None:
+                self.reddit_router = RedditIntelligenceRouter()
             reddit_post_response = self.reddit_router.handle_post(self.path, data)
             if reddit_post_response is not None:
                 code, body = reddit_post_response
@@ -499,6 +503,8 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             return self._send(400, {"ok": False, "error": str(e)})
 
+        if self.reddit_router is None:
+            self.reddit_router = RedditIntelligenceRouter()
         patch_response = self.reddit_router.handle_patch(self.path, data)
         if patch_response is None:
             return self._send(404, {"ok": False, "error": "not_found"})
@@ -538,6 +544,7 @@ def start_http_server(
     Handler.autonomy_policy_engine = autonomy_policy_engine
     Handler.daily_loop_engine = daily_loop_engine
     Handler.memory_store = memory_store
+    Handler.reddit_router = RedditIntelligenceRouter()
     server = HTTPServer((host, port), Handler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()

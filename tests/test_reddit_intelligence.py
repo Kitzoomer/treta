@@ -111,5 +111,23 @@ class RedditIntelligenceEndpointTest(unittest.TestCase):
                 server.server_close()
 
 
+
+
+class RedditIntelligenceModelPathTest(unittest.TestCase):
+    def test_default_db_path_uses_local_relative_fallback(self):
+        from core.reddit_intelligence.models import get_db_path
+
+        previous_data_dir = os.environ.get("TRETA_DATA_DIR")
+        try:
+            os.environ.pop("TRETA_DATA_DIR", None)
+            db_path = get_db_path()
+            self.assertEqual(db_path.name, "reddit_intelligence.db")
+            self.assertFalse(db_path.is_absolute())
+        finally:
+            if previous_data_dir is None:
+                os.environ.pop("TRETA_DATA_DIR", None)
+            else:
+                os.environ["TRETA_DATA_DIR"] = previous_data_dir
+
 if __name__ == "__main__":
     unittest.main()

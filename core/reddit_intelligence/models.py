@@ -5,14 +5,9 @@ import sqlite3
 from pathlib import Path
 
 
-DEFAULT_DB_PATH = Path("/data/memory/treta.sqlite")
-
-
 def get_db_path() -> Path:
-    data_dir = os.getenv("TRETA_DATA_DIR")
-    if data_dir:
-        return Path(data_dir) / "treta.sqlite"
-    return DEFAULT_DB_PATH
+    base = os.environ.get("TRETA_DATA_DIR", ".")
+    return Path(base) / "reddit_intelligence.db"
 
 
 def get_connection() -> sqlite3.Connection:

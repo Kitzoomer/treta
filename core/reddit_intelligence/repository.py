@@ -10,11 +10,11 @@ Signal = Dict[str, Any]
 
 
 class RedditSignalRepository:
-    def __init__(self):
+    def ensure_initialized(self) -> None:
         initialize_sqlite()
 
     def save_signal(self, signal_data: Signal) -> Signal:
-        initialize_sqlite()
+        self.ensure_initialized()
         now = datetime.now(timezone.utc).isoformat()
         payload = dict(signal_data)
         payload.setdefault("status", "pending")
@@ -49,7 +49,7 @@ class RedditSignalRepository:
         return payload
 
     def get_pending_signals(self, limit: int = 20) -> List[Signal]:
-        initialize_sqlite()
+        self.ensure_initialized()
         with get_connection() as conn:
             rows = conn.execute(
                 """
@@ -63,7 +63,7 @@ class RedditSignalRepository:
         return [dict(row) for row in rows]
 
     def update_signal_status(self, signal_id: str, status: str) -> Signal | None:
-        initialize_sqlite()
+        self.ensure_initialized()
         now = datetime.now(timezone.utc).isoformat()
         with get_connection() as conn:
             conn.execute(
@@ -78,7 +78,7 @@ class RedditSignalRepository:
         return self.find_signal_by_id(signal_id)
 
     def find_signal_by_id(self, signal_id: str) -> Signal | None:
-        initialize_sqlite()
+        self.ensure_initialized()
         with get_connection() as conn:
             row = conn.execute(
                 "SELECT * FROM reddit_signals WHERE id = ?",
