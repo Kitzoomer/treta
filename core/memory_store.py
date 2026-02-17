@@ -21,9 +21,8 @@ class MemoryStore:
         return {
             "profile": {
                 "name": "Marian",
-                "objective": "Build and launch profitable digital products consistently.",
+                "objective": "Infoproductos: detectar oportunidades, proponer, construir y ayudar a vender",
                 "autonomy_default": "manual",
-                "humor_style": "dry and concise",
             },
             "chat_history": [],
         }
@@ -47,6 +46,10 @@ class MemoryStore:
             state["chat_history"] = [dict(item) for item in chat_history if isinstance(item, dict)][-20:]
         return state
 
+    def load(self) -> Dict[str, Any]:
+        self._state = self._load()
+        return self.snapshot()
+
     def save(self, state: Dict[str, Any] | None = None) -> None:
         if state is not None:
             self._state = dict(state)
@@ -67,4 +70,3 @@ class MemoryStore:
         self._state["chat_history"] = history[-20:]
         self.save()
         return deepcopy(message)
-

@@ -77,16 +77,10 @@ class Dispatcher:
             "ListPendingConfirmations",
         }:
             if event.type == "UserMessageSubmitted":
-                text = str(event.payload.get("text", "")).strip()
-                if text:
-                    self.memory_store.append_message("user", text)
                 self.conversation_core.consume(event)
                 return
 
             if event.type == "AssistantMessageGenerated":
-                text = str(event.payload.get("text", "")).strip()
-                if text:
-                    self.memory_store.append_message("assistant", text)
                 return
 
             actions = self.control.consume(event)
