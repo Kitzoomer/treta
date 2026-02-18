@@ -49,6 +49,12 @@ const state = {
     qualified: 0,
     posts: [],
   },
+  systemIntegrity: {
+    status: "unknown",
+  },
+  redditLastScan: {
+    message: "No scan executed yet.",
+  },
   strategyView: {
     pendingActions: [],
     recommendation: {},
@@ -221,6 +227,12 @@ const api = {
   },
   runRedditScan() {
     return this.fetchJson("/reddit/run_scan", { method: "POST", body: JSON.stringify({}) });
+  },
+  getSystemIntegrity() {
+    return this.fetchJson("/system/integrity");
+  },
+  getRedditLastScan() {
+    return this.fetchJson("/reddit/last_scan");
   },
 };
 
@@ -565,12 +577,18 @@ function renderMissionControl(loopState) {
 }
 
 const router = {
+  normalizeRouteHash(route) {
+    const raw = helpers.t(route, "").trim();
+    if (!raw) return "#/home";
+    if (raw.startsWith("#/")) return raw;
+    return `#/${raw.replace(/^#?\/?/, "")}`;
+  },
   resolveRoute() {
     const hash = (window.location.hash || "").replace("#/", "").toLowerCase();
     return CONFIG.routes.includes(hash) ? hash : CONFIG.defaultRoute;
   },
   navigate(route) {
-    window.location.hash = `#/${route}`;
+    window.location.hash = this.normalizeRouteHash(route);
   },
   render() {
     state.currentRoute = this.resolveRoute();
@@ -775,11 +793,29 @@ const views = {
 
     const strategyFeedback = dashboardView.feedback ? `<p class="dashboard-strategy-feedback">${helpers.escape(dashboardView.feedback)}</p>` : "";
     const strategyError = dashboardView.error ? `<p class="empty">${helpers.escape(dashboardView.error)}</p>` : "";
+    const integrityStatusRaw = helpers.normalizeStatus(state.systemIntegrity?.status || "unknown");
+    const integrityTone = integrityStatusRaw === "ok"
+      ? "ok"
+      : ["warning", "warn"].includes(integrityStatusRaw)
+        ? "warn"
+        : integrityStatusRaw === "error"
+          ? "error"
+          : "info";
+    const lastScanAnalyzed = Number(state.redditLastScan?.analyzed || 0);
+    const lastScanQualified = Number(state.redditLastScan?.qualified || 0);
+    const lastScanTimestamp = state.redditLastScan?.timestamp || state.redditLastScan?.last_scan_at || state.redditLastScan?.scanned_at;
+    const lastScanDate = lastScanTimestamp ? new Date(lastScanTimestamp).toLocaleString() : "N/A";
 
     this.shell("Dashboard", "Operational summary and next best action", `
       <section class="os-dashboard">
         ${renderGlobalStatus()}
         ${renderAutonomyControls()}
+        <article class="card">
+          <h3>System Coherence</h3>
+          <p><strong>Integrity:</strong> <span class="badge ${integrityTone}">${helpers.escape(integrityStatusRaw.toUpperCase())}</span></p>
+          <p><strong>Last scan:</strong> analyzed ${helpers.escape(lastScanAnalyzed)} · qualified ${helpers.escape(lastScanQualified)}</p>
+          <p><strong>Last scan date:</strong> ${helpers.escape(lastScanDate)}</p>
+        </article>
         <div id="attention-block"></div>
         ${renderRevenueFocus()}
 
@@ -1196,7 +1232,7 @@ const views = {
         state.redditConfig = updated;
         return updated;
       }, ACTION_TARGETS.settings);
-      await router.loadSettings();
+      router.render();
     });
 
     document.getElementById("reddit-run-scan")?.addEventListener("click", async () => {
@@ -1205,7 +1241,7 @@ const views = {
         state.redditScanResult = result;
         return result;
       }, ACTION_TARGETS.settings);
-      await router.loadSettings();
+      router.render();
     });
   },
 
@@ -1874,7 +1910,7 @@ function renderTelemetry() {
 
 async function refreshLoop() {
   try {
-    const [systemData, eventData, memoryData, oppData, proposalData, launchData, planData, perfData, strategyData, pendingData, dailyLoopData, redditConfigData] = await Promise.all([
+    const [systemData, eventData, memoryData, oppData, proposalData, launchData, planData, perfData, strategyData, pendingData, dailyLoopData, redditConfigData, systemIntegrityData, redditLastScanData] = await Promise.all([
       api.getState(),
       api.getRecentEvents(),
       api.getMemory(),
@@ -1887,6 +1923,8 @@ async function refreshLoop() {
       api.getPendingStrategyActions(),
       api.getDailyLoopStatus(),
       api.getRedditConfig(),
+      api.getSystemIntegrity(),
+      api.getRedditLastScan(),
     ]);
 
     state.system = systemData || { state: "IDLE" };
@@ -1906,6 +1944,8 @@ async function refreshLoop() {
     state.dashboardView.error = "";
     state.dailyLoop = dailyLoopData || state.dailyLoop;
     state.redditConfig = redditConfigData || state.redditConfig;
+    state.systemIntegrity = systemIntegrityData || state.systemIntegrity;
+    state.redditLastScan = redditLastScanData || state.redditLastScan;
   } catch (error) {
     log("system", `refresh error: ${error.message}`);
   }
@@ -2377,9 +2417,9 @@ document.addEventListener("click", (e) => {
   const el = e.target.closest("[data-route]");
   if (!el) return;
 
-  const route = el.dataset.route;
-  if (route && location.hash !== route) {
-    location.hash = route;
+  const normalizedRoute = router.normalizeRouteHash(el.dataset.route || "");
+  if (normalizedRoute && location.hash !== normalizedRoute) {
+    location.hash = normalizedRoute;
   }
 });
 
