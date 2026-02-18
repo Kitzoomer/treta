@@ -82,14 +82,13 @@ class Control:
     def run_reddit_public_scan(self) -> Dict[str, object]:
         from core.reddit_public.service import RedditPublicService
 
-        subreddits = [
-            "UGCcreators",
-            "freelance",
-            "ContentCreators",
-            "smallbusiness",
-        ]
         config = get_config()
         pain_threshold = int(config.get("pain_threshold", 60))
+        subreddits = [
+            str(item).strip()
+            for item in config.get("subreddits", [])
+            if str(item).strip()
+        ]
 
         posts = RedditPublicService().scan_subreddits(subreddits)
         print(
@@ -98,6 +97,7 @@ class Control:
         )
 
         qualified_posts: List[Dict[str, object]] = []
+        by_subreddit: Dict[str, int] = {}
 
         for post in posts:
             title = str(post.get("title", ""))
@@ -119,6 +119,8 @@ class Control:
                 "urgency_level": str(pain_data["urgency_level"]),
             }
             qualified_posts.append(qualified_payload)
+            subreddit_name = str(post.get("subreddit", "")).strip() or "unknown"
+            by_subreddit[subreddit_name] = by_subreddit.get(subreddit_name, 0) + 1
 
             snippet = body[:300]
             event_bus.push(
@@ -147,6 +149,7 @@ class Control:
         return {
             "analyzed": len(posts),
             "qualified": len(qualified_posts),
+            "by_subreddit": by_subreddit,
             "posts": qualified_posts,
         }
 

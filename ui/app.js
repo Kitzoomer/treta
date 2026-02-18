@@ -1087,6 +1087,8 @@ const views = {
   loadSettings() {
     const redditConfig = state.redditConfig || {};
     const redditScan = state.redditScanResult || { posts: [] };
+    const bySubreddit = redditScan.by_subreddit || {};
+    const bySubredditRows = Object.entries(bySubreddit).map(([subreddit, count]) => `<li>${helpers.t(subreddit, "-")}: ${Number(count || 0)}</li>`).join("");
     const scanRows = (redditScan.posts || []).map((post) => `
       <tr>
         <td>${helpers.t(post.title, "-")}</td>
@@ -1117,6 +1119,9 @@ const views = {
           <label>Pain Keywords (comma separated)
             <textarea id="reddit-pain-keywords" rows="4">${(redditConfig.pain_keywords || []).join(", ")}</textarea>
           </label>
+          <label>Subreddits (comma separated)
+            <textarea id="reddit-subreddits" rows="4">${(redditConfig.subreddits || ["UGCcreators", "freelance", "ContentCreators", "smallbusiness"]).join(", ")}</textarea>
+          </label>
           <label>Commercial Keywords (comma separated)
             <textarea id="reddit-commercial-keywords" rows="4">${(redditConfig.commercial_keywords || []).join(", ")}</textarea>
           </label>
@@ -1129,6 +1134,8 @@ const views = {
         <section class="result-box">
           <strong>Scan Result</strong>
           <div>Analyzed: ${Number(redditScan.analyzed || 0)} | Qualified: ${Number(redditScan.qualified || 0)}</div>
+          <div>By subreddit:</div>
+          <ul>${bySubredditRows || '<li class="muted-note">No subreddit counts yet.</li>'}</ul>
           <div class="work-table-wrap">
             <table class="work-table">
               <thead>
@@ -1182,6 +1189,7 @@ const views = {
         pain_keywords: String(document.getElementById("reddit-pain-keywords")?.value || "").split(",").map((item) => item.trim()).filter(Boolean),
         commercial_keywords: String(document.getElementById("reddit-commercial-keywords")?.value || "").split(",").map((item) => item.trim()).filter(Boolean),
         enable_engagement_boost: Boolean(document.getElementById("reddit-engagement-boost")?.checked),
+        subreddits: String(document.getElementById("reddit-subreddits")?.value || "").split(",").map((item) => item.trim()).filter(Boolean),
       };
       await runAction(async () => {
         const updated = await api.saveRedditConfig(payload);

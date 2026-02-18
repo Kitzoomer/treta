@@ -122,6 +122,37 @@ class RedditPublicPainGateTest(unittest.TestCase):
         self.assertIn("urgency_level", payload)
 
 
+
+    def test_scan_summary_includes_by_subreddit_counts(self):
+        posts = [
+            {
+                "id": "high-1",
+                "title": "How do I set client pricing?",
+                "selftext": "I am struggling with proposal rate and need help asap",
+                "score": 15,
+                "num_comments": 6,
+                "subreddit": "freelance",
+            },
+            {
+                "id": "high-2",
+                "title": "Need help closing brand deals",
+                "selftext": "I am overwhelmed and stuck with this issue",
+                "score": 20,
+                "num_comments": 9,
+                "subreddit": "UGCcreators",
+            },
+        ]
+
+        control = Control()
+        with patch("core.reddit_public.service.RedditPublicService.scan_subreddits", return_value=posts), patch(
+            "core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions",
+            return_value=[],
+        ):
+            result = control.run_reddit_public_scan()
+
+        self.assertEqual(result["qualified"], 2)
+        self.assertEqual(result["by_subreddit"], {"freelance": 1, "UGCcreators": 1})
+
     def test_threshold_comes_from_config(self):
         while event_bus.pop(timeout=0.001) is not None:
             pass
