@@ -65,6 +65,7 @@ class Control:
             if self.gumroad_client is not None
             else None
         )
+        self._last_reddit_scan: Dict[str, object] | None = None
 
 
     def _refresh_execution_focus(self) -> None:
@@ -146,12 +147,17 @@ class Control:
                 )
             )
 
-        return {
+        result = {
             "analyzed": len(posts),
             "qualified": len(qualified_posts),
             "by_subreddit": by_subreddit,
             "posts": qualified_posts,
         }
+        self._last_reddit_scan = result
+        return result
+
+    def get_last_reddit_scan(self) -> Dict[str, object] | None:
+        return self._last_reddit_scan
 
     def _scan_reddit_public_opportunities(self) -> None:
         self.run_reddit_public_scan()

@@ -83,6 +83,39 @@ class RedditConfigEndpointTest(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
 
+    def test_get_last_scan_returns_saved_scan(self):
+        expected = {
+            "analyzed": 2,
+            "qualified": 1,
+            "by_subreddit": {"freelance": 1},
+            "posts": [
+                {
+                    "title": "Need help with rates",
+                    "subreddit": "freelance",
+                    "pain_score": 75,
+                    "intent_type": "monetization",
+                    "urgency_level": "high",
+                }
+            ],
+        }
+        control = Control()
+
+        server = start_http_server(host="127.0.0.1", port=0, control=control)
+        try:
+            with urlopen(f"http://127.0.0.1:{server.server_port}/reddit/last_scan", timeout=2) as response:
+                empty_payload = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(empty_payload, {"message": "No scan executed yet."})
+
+            with patch.object(control, "get_last_reddit_scan", return_value=expected):
+                with urlopen(f"http://127.0.0.1:{server.server_port}/reddit/last_scan", timeout=2) as response:
+                    last_payload = json.loads(response.read().decode("utf-8"))
+
+            self.assertEqual(last_payload, expected)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+
 
 if __name__ == "__main__":
     unittest.main()

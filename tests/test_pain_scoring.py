@@ -179,5 +179,27 @@ class RedditPublicPainGateTest(unittest.TestCase):
 
         self.assertEqual(result["qualified"], 0)
 
+    def test_last_scan_is_stored_in_runtime(self):
+        posts = [
+            {
+                "id": "high-1",
+                "title": "How do I set client pricing?",
+                "selftext": "I am struggling with proposal rate and need help asap",
+                "score": 15,
+                "num_comments": 6,
+                "subreddit": "freelance",
+            }
+        ]
+
+        control = Control()
+        with patch("core.reddit_public.service.RedditPublicService.scan_subreddits", return_value=posts), patch(
+            "core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions",
+            return_value=[],
+        ):
+            result = control.run_reddit_public_scan()
+
+        self.assertEqual(control.get_last_reddit_scan(), result)
+
+
 if __name__ == "__main__":
     unittest.main()
