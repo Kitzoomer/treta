@@ -1,8 +1,10 @@
+import os
 import sqlite3
 from pathlib import Path
 from typing import Optional
 
-DB_PATH = Path("/data/memory/treta.sqlite")
+DATA_ROOT = Path(os.getenv("TRETA_DATA_DIR", "./.treta_data"))
+DB_PATH = DATA_ROOT / "memory" / "treta.sqlite"
 
 
 class Storage:
