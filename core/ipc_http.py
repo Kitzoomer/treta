@@ -260,6 +260,14 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/reddit/config":
             return self._send(200, get_config())
 
+        if parsed.path == "/reddit/last_scan":
+            if self.control is None:
+                return self._send(503, {"ok": False, "error": "control_unavailable"})
+            return self._send(
+                200,
+                self.control.get_last_reddit_scan() or {"message": "No scan executed yet."},
+            )
+
         return self._send(404, {"error": "not_found"})
 
     def do_POST(self):
