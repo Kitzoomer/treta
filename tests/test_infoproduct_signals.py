@@ -2,6 +2,7 @@ import os
 import shutil
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from core.control import Control
@@ -44,7 +45,36 @@ class InfoproductSignalsTest(unittest.TestCase):
         control = Control(opportunity_store=opportunity_store)
         dispatcher = Dispatcher(state_machine=StateMachine(initial_state=State.IDLE), control=control)
 
-        dispatcher.handle(Event(type="RunInfoproductScan", payload={}, source="test"))
+        with unittest.mock.patch(
+            "core.reddit_public.service.RedditPublicService.scan_subreddits",
+            return_value=[
+                {
+                    "id": "a1",
+                    "title": "Need client proposal template",
+                    "selftext": "I am struggling with pricing and rate discussion.",
+                    "score": 5,
+                    "num_comments": 2,
+                    "subreddit": "freelance",
+                },
+                {
+                    "id": "a2",
+                    "title": "media kit help",
+                    "selftext": "how do i create one?",
+                    "score": 7,
+                    "num_comments": 3,
+                    "subreddit": "ugc",
+                },
+                {
+                    "id": "a3",
+                    "title": "struggling with client onboarding",
+                    "selftext": "",
+                    "score": 4,
+                    "num_comments": 1,
+                    "subreddit": "smallbusiness",
+                },
+            ],
+        ):
+            dispatcher.handle(Event(type="RunInfoproductScan", payload={}, source="test"))
 
         while True:
             queued = event_bus.pop(timeout=0.01)
