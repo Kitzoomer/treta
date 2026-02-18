@@ -82,6 +82,30 @@ const state = {
     feedback: "",
     error: "",
   },
+  redditDailyActions: [],
+  settingsFeedback: {
+    message: "",
+    tone: "ok",
+  },
+  diagnostics: {
+    showPanel: false,
+    lastRefreshAt: {
+      system: null,
+      reddit: null,
+      strategy: null,
+    },
+    lastApiErrors: {
+      system: "",
+      reddit: "",
+      strategy: "",
+    },
+    backendConnected: false,
+    showDashboardMore: false,
+  },
+  routeBanner: {
+    message: "",
+    tone: "warn",
+  },
   expandedTimelineEvents: {},
   debugMode: localStorage.getItem(STORAGE_KEYS.debug) === "true",
   refreshMs: Number(localStorage.getItem(STORAGE_KEYS.refreshMs) || CONFIG.defaultRefreshMs),
@@ -251,6 +275,9 @@ const api = {
   getRedditTodayPlan() {
     return this.fetchJson("/reddit/today_plan");
   },
+  getRedditDailyActions(limit = 5) {
+    return this.fetchJson(`/reddit/daily_actions?limit=${encodeURIComponent(limit)}`);
+  },
   getStrategyDecision() {
     return this.fetchJson("/strategy/decide");
   },
@@ -336,6 +363,15 @@ const helpers = {
       averageImpactScore,
       status,
     };
+  },
+  formatTimestamp(value) {
+    if (!value) return "Never";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "Never";
+    return date.toLocaleTimeString();
+  },
+  isCoreSlice(slice) {
+    return ["system", "reddit", "strategy"].includes(slice);
   },
 };
 
@@ -597,21 +633,28 @@ function renderMissionControl(loopState) {
 }
 
 const router = {
-  normalizeRouteHash(route) {
-    const raw = helpers.t(route, "").trim();
+  normalizeRoute(route) {
+    const raw = helpers.t(route, "").trim().toLowerCase();
     if (!raw) return "#/home";
-    if (raw.startsWith("#/")) return raw;
-    return `#/${raw.replace(/^#?\/?/, "")}`;
+    if (raw.startsWith("#/")) return `#/${raw.slice(2).replace(/^\/+/, "")}`;
+    if (raw.startsWith("#")) return `#/${raw.slice(1).replace(/^\/+/, "")}`;
+    return `#/${raw.replace(/^\/+/, "")}`;
+  },
+  normalizeRouteHash(route) {
+    return this.normalizeRoute(route);
   },
   resolveRoute() {
-    const hash = (window.location.hash || "").replace("#/", "").toLowerCase();
-    return CONFIG.routes.includes(hash) ? hash : CONFIG.defaultRoute;
+    const normalized = this.normalizeRoute(window.location.hash || "");
+    const route = normalized.slice(2);
+    if (CONFIG.routes.includes(route)) return { route, valid: true };
+    return { route: CONFIG.defaultRoute, valid: false, attempted: normalized };
   },
   navigate(route) {
-    window.location.hash = this.normalizeRouteHash(route);
+    window.location.hash = this.normalizeRoute(route);
   },
   render() {
-    state.currentRoute = this.resolveRoute();
+    const resolution = this.resolveRoute();
+    state.currentRoute = resolution.route;
     document.body.dataset.route = state.currentRoute;
     renderNavigation();
     if (state.currentRoute === "home") return views.loadHome();
@@ -630,7 +673,9 @@ const views = {
     ui.pageContent.innerHTML = `
       <div class="card" style="margin-bottom: 12px; padding: 10px 14px;">
         <strong>Daily Loop Phase:</strong> <span class="badge info">${helpers.escape(phase)}</span>
+        <span style="margin-left: 10px;">Backend: <span class="badge ${state.diagnostics.backendConnected ? "ok" : "error"}">${state.diagnostics.backendConnected ? "CONNECTED" : "DISCONNECTED"}</span></span>
       </div>
+      ${renderRouteBanner()}
       <header class="page-head">
         <div>
           <h2 class="page-title">${title}</h2>
@@ -646,7 +691,9 @@ const views = {
     ui.pageContent.innerHTML = `
       <div class="card" style="margin-bottom: 12px; padding: 10px 14px;">
         <strong>Daily Loop Phase:</strong> <span class="badge info">${helpers.escape(phase)}</span>
+        <span style="margin-left: 10px;">Backend: <span class="badge ${state.diagnostics.backendConnected ? "ok" : "error"}">${state.diagnostics.backendConnected ? "CONNECTED" : "DISCONNECTED"}</span></span>
       </div>
+      ${renderRouteBanner()}
       <section class="home-identity" aria-label="Treta identity">
         <h1 class="treta-title" aria-label="TRETA">
           <span class="treta-title-text">TRETA</span>
@@ -924,6 +971,12 @@ const views = {
         <div id="attention-block"></div>
         ${renderRevenueFocus()}
 
+        <article class="card">
+          <h3>Backend</h3>
+          <p><strong>Status:</strong> <span class="badge ${state.diagnostics.backendConnected ? "ok" : "error"}">${state.diagnostics.backendConnected ? "CONNECTED" : "DISCONNECTED"}</span></p>
+          <p class="muted-note">Preview mode without backend will show disconnected status.</p>
+        </article>
+
         <article class="card os-strategic-actions" id="dashboard-strategic-actions">
           <h3>🧠 STRATEGIC ACTIONS</h3>
           ${strategyError}
@@ -948,6 +1001,21 @@ const views = {
           <p><strong>Feedback adjustments detected:</strong> <span class="badge ${hasFeedbackAdjustedSignals ? "warn" : "info"}">${hasFeedbackAdjustedSignals ? "YES" : "NO"}</span></p>
           <h4>Top 5 Signals (pain score)</h4>
           ${renderTopSignals()}
+        </article>
+
+        <article class="card">
+          <div class="card-actions wrap">
+            <button data-action="dashboard-toggle-more" class="secondary-btn">${state.diagnostics.showDashboardMore ? "Hide" : "Show"} More Observability</button>
+            <button data-action="dashboard-toggle-diagnostics" class="secondary-btn">${state.diagnostics.showPanel ? "Hide" : "Show"} Diagnostics</button>
+          </div>
+          ${state.diagnostics.showDashboardMore ? `
+            <div class="stack">
+              <p><strong>Today plan summary:</strong> ${helpers.escape(helpers.t(state.redditTodayPlan?.summary, "No plan yet."))}</p>
+              <p><strong>Daily actions count:</strong> ${helpers.escape((state.redditDailyActions || []).length)}</p>
+              <p><strong>Top 5 signals exposed:</strong> ${(state.redditSignals || []).slice(0, 5).map((item) => helpers.escape(helpers.t(item.title, item.post_title || "Untitled"))).join(" · ") || "-"}</p>
+            </div>
+          ` : ""}
+          ${state.diagnostics.showPanel ? renderDiagnosticsPanel() : ""}
         </article>
       </section>
     `);
@@ -1290,7 +1358,7 @@ const views = {
           <button id="reddit-save-settings">Save Settings</button>
           <button id="reddit-run-scan">Run Scan Now</button>
         </div>
-        <section id="settings-response" class="result-box">Ready.</section>
+        <section id="settings-response" class="result-box ${state.settingsFeedback.tone === "error" ? "error" : ""}">${helpers.escape(state.settingsFeedback.message || "Ready.")}</section>
         <section class="result-box">
           <strong>Scan Result</strong>
           <div>Analyzed: ${Number(redditScan.analyzed || 0)} | Qualified: ${Number(redditScan.qualified || 0)}</div>
@@ -1354,18 +1422,30 @@ const views = {
       await runAction(async () => {
         const updated = await api.saveRedditConfig(payload);
         state.redditConfig = updated;
+        state.settingsFeedback = { message: "Settings saved successfully.", tone: "ok" };
         return updated;
       }, ACTION_TARGETS.settings);
       router.render();
+      window.setTimeout(() => {
+        state.settingsFeedback = { message: "", tone: "ok" };
+        if (state.currentRoute === "settings") router.render();
+      }, 3000);
     });
 
     document.getElementById("reddit-run-scan")?.addEventListener("click", async () => {
       await runAction(async () => {
         const result = await api.runRedditScan();
         state.redditScanResult = result;
+        state.redditLastScan = result;
+        state.settingsFeedback = { message: "Scan completed.", tone: "ok" };
         return result;
       }, ACTION_TARGETS.settings);
+      await refreshLoop();
       router.render();
+      window.setTimeout(() => {
+        state.settingsFeedback = { message: "", tone: "ok" };
+        if (state.currentRoute === "settings") router.render();
+      }, 3000);
     });
   },
 
@@ -1560,6 +1640,7 @@ function renderNavigation() {
 }
 
 function log(role, message) {
+  if (!state.debugMode) return;
   console.info(`[${role}] ${message}`);
 }
 
@@ -2033,51 +2114,79 @@ function renderTelemetry() {
 }
 
 async function refreshLoop() {
-  try {
-    const [systemData, eventData, memoryData, oppData, proposalData, launchData, planData, perfData, strategyData, pendingData, dailyLoopData, redditConfigData, systemIntegrityData, redditLastScanData, redditSignalsData, redditTodayPlanData, strategyDecisionData] = await Promise.all([
-      api.getState(),
-      api.getRecentEvents(),
-      api.getMemory(),
-      api.getOpportunities(),
-      api.getProductProposals(),
-      api.getProductLaunches(),
-      api.getProductPlans(),
-      api.getPerformanceSummary(),
-      api.getStrategyRecommendations(),
-      api.getPendingStrategyActions(),
-      api.getDailyLoopStatus(),
-      api.getRedditConfig(),
-      api.getSystemIntegrity(),
-      api.getRedditLastScan(),
-      api.getRedditSignals(),
-      api.getRedditTodayPlan(),
-      api.getStrategyDecision(),
-    ]);
+  const sliceCalls = {
+    system: async () => {
+      const [systemData, eventData, memoryData, oppData, proposalData, launchData, planData, perfData, dailyLoopData, systemIntegrityData] = await Promise.all([
+        api.getState(),
+        api.getRecentEvents(),
+        api.getMemory(),
+        api.getOpportunities(),
+        api.getProductProposals(),
+        api.getProductLaunches(),
+        api.getProductPlans(),
+        api.getPerformanceSummary(),
+        api.getDailyLoopStatus(),
+        api.getSystemIntegrity(),
+      ]);
+      state.system = systemData || { state: "IDLE" };
+      state.events = eventData?.events || [];
+      state.chatHistory = memoryData?.chat_history || [];
+      state.opportunities = oppData?.items || [];
+      state.proposals = proposalData?.items || [];
+      state.launches = launchData?.items || [];
+      state.plans = planData?.items || [];
+      state.performance = perfData || {};
+      state.dailyLoop = dailyLoopData || state.dailyLoop;
+      state.systemIntegrity = systemIntegrityData || state.systemIntegrity;
+      state.diagnostics.lastRefreshAt.system = Date.now();
+      state.diagnostics.lastApiErrors.system = "";
+      state.diagnostics.backendConnected = true;
+    },
+    strategy: async () => {
+      const [strategyData, pendingData, strategyDecisionData] = await Promise.all([
+        api.getStrategyRecommendations(),
+        api.getPendingStrategyActions(),
+        api.getStrategyDecision(),
+      ]);
+      state.strategy = strategyData || {};
+      const pendingActions = pendingData?.items || pendingData?.actions || pendingData?.pending_actions || [];
+      state.strategyPendingActions = pendingActions;
+      state.dashboardView.pendingActions = pendingActions;
+      state.dashboardView.loaded = true;
+      state.dashboardView.loading = false;
+      state.dashboardView.error = "";
+      state.strategyDecision = strategyDecisionData || state.strategyDecision;
+      state.diagnostics.lastRefreshAt.strategy = Date.now();
+      state.diagnostics.lastApiErrors.strategy = "";
+    },
+    reddit: async () => {
+      const [redditConfigData, redditLastScanData, redditSignalsData, redditTodayPlanData, redditDailyActionsData] = await Promise.all([
+        api.getRedditConfig(),
+        api.getRedditLastScan(),
+        api.getRedditSignals(50),
+        api.getRedditTodayPlan(),
+        api.getRedditDailyActions(5),
+      ]);
+      state.redditConfig = redditConfigData || state.redditConfig;
+      state.redditLastScan = redditLastScanData || state.redditLastScan;
+      state.redditSignals = redditSignalsData?.items || [];
+      state.redditTodayPlan = redditTodayPlanData || state.redditTodayPlan;
+      state.redditDailyActions = Array.isArray(redditDailyActionsData) ? redditDailyActionsData : [];
+      state.diagnostics.lastRefreshAt.reddit = Date.now();
+      state.diagnostics.lastApiErrors.reddit = "";
+    },
+  };
 
-    state.system = systemData || { state: "IDLE" };
-    state.events = eventData.events || [];
-    state.chatHistory = memoryData.chat_history || [];
-    state.opportunities = oppData.items || [];
-    state.proposals = proposalData.items || [];
-    state.launches = launchData.items || [];
-    state.plans = planData.items || [];
-    state.performance = perfData || {};
-    state.strategy = strategyData || {};
-    const pendingActions = pendingData.items || pendingData.actions || pendingData.pending_actions || [];
-    state.strategyPendingActions = pendingActions;
-    state.dashboardView.pendingActions = pendingActions;
-    state.dashboardView.loaded = true;
-    state.dashboardView.loading = false;
-    state.dashboardView.error = "";
-    state.dailyLoop = dailyLoopData || state.dailyLoop;
-    state.redditConfig = redditConfigData || state.redditConfig;
-    state.systemIntegrity = systemIntegrityData || state.systemIntegrity;
-    state.redditLastScan = redditLastScanData || state.redditLastScan;
-    state.redditSignals = redditSignalsData?.items || [];
-    state.redditTodayPlan = redditTodayPlanData || state.redditTodayPlan;
-    state.strategyDecision = strategyDecisionData || state.strategyDecision;
-  } catch (error) {
-    log("system", `refresh error: ${error.message}`);
+  for (const [slice, task] of Object.entries(sliceCalls)) {
+    try {
+      await task();
+    } catch (error) {
+      state.diagnostics.lastApiErrors[slice] = error.message;
+      if (slice === "system") {
+        state.diagnostics.backendConnected = false;
+      }
+      log("system", `${slice} refresh error: ${error.message}`);
+    }
   }
 
   renderControlCenter();
@@ -2468,6 +2577,31 @@ function renderPlanPreview(proposalId, plan) {
   `;
 }
 
+function renderRouteBanner() {
+  if (!state.routeBanner.message) return "";
+  return `<div class="card" style="margin-bottom: 12px; padding: 10px 14px;">
+    <strong>Route notice:</strong> <span class="badge ${helpers.escape(state.routeBanner.tone)}">${helpers.escape(state.routeBanner.tone.toUpperCase())}</span>
+    <p>${helpers.escape(state.routeBanner.message)}</p>
+  </div>`;
+}
+
+function renderDiagnosticsPanel() {
+  const refreshRows = ["system", "reddit", "strategy"]
+    .map((slice) => `<li>${helpers.escape(slice)}: ${helpers.escape(helpers.formatTimestamp(state.diagnostics.lastRefreshAt[slice]))}</li>`)
+    .join("");
+  const errorRows = ["system", "reddit", "strategy"]
+    .map((slice) => `<li>${helpers.escape(slice)}: ${helpers.escape(state.diagnostics.lastApiErrors[slice] || "none")}</li>`)
+    .join("");
+  return `
+    <section class="stack">
+      <p><strong>Last refresh by slice</strong></p>
+      <ul>${refreshRows}</ul>
+      <p><strong>Last API errors</strong></p>
+      <ul>${errorRows}</ul>
+    </section>
+  `;
+}
+
 function bindDashboardActions() {
   ui.pageContent.querySelectorAll("button[data-action='toggle-autonomy']").forEach((button) => {
     button.addEventListener("click", () => {
@@ -2512,6 +2646,20 @@ function bindDashboardActions() {
         () => api.rejectStrategyAction(button.dataset.id),
         "Action rejected successfully."
       );
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='dashboard-toggle-more']").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.diagnostics.showDashboardMore = !state.diagnostics.showDashboardMore;
+      router.render();
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='dashboard-toggle-diagnostics']").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.diagnostics.showPanel = !state.diagnostics.showPanel;
+      router.render();
     });
   });
 }
@@ -2578,7 +2726,29 @@ ui.chatForm.addEventListener("submit", async (event) => {
   renderConversation();
 });
 
-window.addEventListener("hashchange", () => router.render());
+const initialResolution = router.resolveRoute();
+if (!initialResolution.valid) {
+  state.routeBanner = { message: `Route ${initialResolution.attempted || ""} not found. Redirected to home.`, tone: "warn" };
+  router.navigate(CONFIG.defaultRoute);
+  window.setTimeout(() => {
+    state.routeBanner.message = "";
+    if (state.currentRoute === CONFIG.defaultRoute) router.render();
+  }, 3000);
+}
+
+window.addEventListener("hashchange", () => {
+  const resolution = router.resolveRoute();
+  if (!resolution.valid) {
+    state.routeBanner = { message: `Route ${resolution.attempted || ""} not found. Redirected to home.`, tone: "warn" };
+    router.navigate(CONFIG.defaultRoute);
+    window.setTimeout(() => {
+      state.routeBanner.message = "";
+      if (state.currentRoute === CONFIG.defaultRoute) router.render();
+    }, 3000);
+    return;
+  }
+  router.render();
+});
 
 startRefreshLoop();
 refreshLoop();
