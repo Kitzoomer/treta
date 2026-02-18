@@ -18,6 +18,7 @@ from core.execution_engine import ExecutionEngine
 from core.execution_focus_engine import ExecutionFocusEngine
 from core.services.gumroad_sync_service import GumroadSyncService
 from core.product_launch_store import ProductLaunchStore
+from core.domain.integrity import DomainIntegrityPolicy
 from core.reddit_public.config import get_config
 from core.reddit_public.pain_scoring import compute_pain_score
 
@@ -67,6 +68,7 @@ class Control:
         )
         self._last_reddit_scan: Dict[str, object] | None = None
         self.only_top_proposal = True
+        self.domain_integrity_policy = DomainIntegrityPolicy()
 
     def has_active_proposal(self) -> bool:
         active_statuses = {"draft", "approved", "building", "ready_to_launch"}
@@ -365,10 +367,17 @@ class Control:
             proposal_id = str(event.payload.get("proposal_id", "")).strip()
             if not proposal_id:
                 return []
+            next_status = proposal_transitions[event.type]
+            proposal = self.product_proposal_store.get(proposal_id)
+            if proposal is None:
+                return []
+            proposals = self.product_proposal_store.list()
+            self.domain_integrity_policy.validate_transition(proposal, next_status, proposals)
             updated = self.product_proposal_store.transition_status(
                 proposal_id=proposal_id,
-                new_status=proposal_transitions[event.type],
+                new_status=next_status,
             )
+            self.domain_integrity_policy.validate_global_invariants(self.product_proposal_store.list())
             if updated["status"] in {"approved", "building"}:
                 self._refresh_execution_focus()
                 updated = self.product_proposal_store.get(updated["id"]) or updated
@@ -478,10 +487,13 @@ class Control:
                 )
             ]
 
+            proposals = self.product_proposal_store.list()
+            self.domain_integrity_policy.validate_transition(proposal, "ready_for_review", proposals)
             updated = self.product_proposal_store.transition_status(
                 proposal_id=proposal_id,
                 new_status="ready_for_review",
             )
+            self.domain_integrity_policy.validate_global_invariants(self.product_proposal_store.list())
             actions.append(
                 Action(
                     type="ProductProposalStatusChanged",

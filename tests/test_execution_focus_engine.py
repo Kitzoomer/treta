@@ -5,6 +5,7 @@ from pathlib import Path
 from core.control import Control
 from core.events import Event
 from core.execution_focus_engine import ExecutionFocusEngine
+from core.domain.integrity import DomainIntegrityError
 from core.product_launch_store import ProductLaunchStore
 from core.product_proposal_store import ProductProposalStore
 
@@ -42,14 +43,14 @@ class ExecutionFocusStoreIntegrationTest(unittest.TestCase):
             proposals.add({"id": "proposal-2", "product_name": "Two"})
 
             control.consume(Event(type="ApproveProposal", payload={"proposal_id": "proposal-1"}, source="test"))
-            control.consume(Event(type="ApproveProposal", payload={"proposal_id": "proposal-2"}, source="test"))
-            control.consume(Event(type="StartBuildingProposal", payload={"proposal_id": "proposal-2"}, source="test"))
+            with self.assertRaises(DomainIntegrityError):
+                control.consume(Event(type="ApproveProposal", payload={"proposal_id": "proposal-2"}, source="test"))
 
             p1 = proposals.get("proposal-1")
             p2 = proposals.get("proposal-2")
 
-            self.assertFalse(p1["active_execution"])
-            self.assertTrue(p2["active_execution"])
+            self.assertTrue(p1["active_execution"])
+            self.assertFalse(p2["active_execution"])
 
 
 if __name__ == "__main__":
