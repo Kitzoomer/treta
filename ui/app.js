@@ -1,5 +1,5 @@
 const CONFIG = {
-  routes: ["home", "dashboard", "work", "profile", "game", "strategy", "settings"],
+  routes: ["home", "dashboard", "work", "profile", "game", "strategy", "reddit-ops", "settings"],
   defaultRoute: "home",
   defaultRefreshMs: 3000,
   maxEventStream: 20,
@@ -123,6 +123,13 @@ const state = {
     expandedStrategicAnalyses: {},
     strategyPendingActionsLoading: false,
     strategyPendingActionsLoaded: false,
+  },
+  redditOpsView: {
+    selectedProposalId: "",
+    copyByProposalId: {},
+    messages: {},
+    postingFormByProposalId: {},
+    posts: [],
   },
   timerId: null,
 };
@@ -280,6 +287,12 @@ const api = {
   },
   getStrategyDecision() {
     return this.fetchJson("/strategy/decide");
+  },
+  markRedditPosted(payload) {
+    return this.fetchJson("/reddit/mark_posted", { method: "POST", body: JSON.stringify(payload) });
+  },
+  getRedditPosts() {
+    return this.fetchJson("/reddit/posts");
   },
 };
 
@@ -663,6 +676,7 @@ const router = {
     if (state.currentRoute === "profile") return views.loadProfile();
     if (state.currentRoute === "game") return views.loadGame();
     if (state.currentRoute === "strategy") return views.loadStrategy();
+    if (state.currentRoute === "reddit-ops") return views.loadRedditOps();
     return views.loadSettings();
   },
 };
@@ -1560,6 +1574,142 @@ const views = {
       loadStrategyData();
     }
   },
+
+  loadRedditOps() {
+    const pendingProposals = state.proposals.filter((item) => ["ready_to_launch", "ready_for_review"].includes(helpers.normalizeStatus(item.status)));
+    const view = state.redditOpsView;
+    const selectedProposalId = view.selectedProposalId;
+    const selectedProposal = pendingProposals.find((item) => String(item.id) === String(selectedProposalId));
+    const selectedCopy = view.copyByProposalId[selectedProposalId] || selectedProposal?.execution_package || null;
+    const redditPost = selectedCopy?.reddit_post || {};
+    const copySections = [
+      { label: "Reddit Post Title", value: helpers.t(redditPost.title, "") },
+      { label: "Reddit Post Body", value: helpers.t(redditPost.body, "") },
+      { label: "Short Pitch", value: helpers.t(selectedCopy?.short_pitch, "") },
+      { label: "Gumroad Description", value: helpers.t(selectedCopy?.gumroad_description, "") },
+      { label: "Pricing Strategy", value: helpers.t(selectedCopy?.pricing_strategy, "") },
+    ];
+
+    const renderPendingCard = (item) => {
+      const proposalId = helpers.t(item.id, "");
+      return `
+        <article class="card row-item">
+          <h4>${helpers.escape(helpers.t(item.product_name, proposalId))}</h4>
+          <p><strong>Audience:</strong> ${helpers.escape(helpers.t(item.target_audience, "-"))}</p>
+          <p><strong>Price Suggestion:</strong> ${helpers.escape(helpers.t(item.price_suggestion, "-"))}</p>
+          <p><strong>Status:</strong> <span class="badge ${helpers.badgeClass(item.status)}">${helpers.escape(helpers.statusLabel(item.status))}</span></p>
+          <p><strong>Confidence:</strong> ${helpers.escape(helpers.t(item.confidence, "-"))}</p>
+          <div class="card-actions work-secondary-actions">
+            <button class="secondary-btn" data-action="reddit-ops-view-copy" data-id="${helpers.escape(proposalId)}">View Copy</button>
+            <button class="secondary-btn" data-action="reddit-ops-approve" data-id="${helpers.escape(proposalId)}">Approve</button>
+            <button class="secondary-btn" data-action="reddit-ops-reject" data-id="${helpers.escape(proposalId)}">Reject</button>
+          </div>
+          ${view.messages[`proposal-${proposalId}`] ? `<p class="muted-note">${helpers.escape(view.messages[`proposal-${proposalId}`])}</p>` : ""}
+        </article>
+      `;
+    };
+
+    const form = view.postingFormByProposalId[selectedProposalId] || {
+      subreddit: "",
+      post_url: "",
+      upvotes: "",
+      comments: "",
+    };
+
+    this.shell("Reddit Ops", "Opportunity → Proposal → Launch Copy → Approve → Mark Posted → Track", `
+      <section class="work-execution">
+        <article class="card work-section">
+          <header class="work-section-header">
+            <h3>A) Pending Launch Actions</h3>
+          </header>
+          <section class="work-status-group">
+            ${pendingProposals.length ? pendingProposals.map(renderPendingCard).join("") : "<p class='empty'>No proposals pending launch actions.</p>"}
+          </section>
+        </article>
+
+        <article class="card work-section">
+          <header class="work-section-header">
+            <h3>B) Launch Package</h3>
+          </header>
+          ${selectedProposalId ? `
+            <p class="muted-note">Proposal selected: <strong>${helpers.escape(selectedProposalId)}</strong></p>
+            <div class="work-copy-grid">
+              ${copySections.map((section) => `
+                <article class="copy-block">
+                  <header>
+                    <h4>${helpers.escape(section.label)}</h4>
+                    <button class="secondary-btn" data-action="reddit-ops-copy" data-id="${helpers.escape(selectedProposalId)}" data-copy-value="${encodeURIComponent(section.value)}">Copy</button>
+                  </header>
+                  <textarea readonly rows="5">${helpers.escape(section.value)}</textarea>
+                </article>
+              `).join("")}
+            </div>
+          ` : "<p class='empty'>Select a proposal and click “View Copy”.</p>"}
+          ${view.messages[`copy-${selectedProposalId}`] ? `<p class="muted-note">${helpers.escape(view.messages[`copy-${selectedProposalId}`])}</p>` : ""}
+        </article>
+
+        <article class="card work-section">
+          <header class="work-section-header">
+            <h3>C) Mark As Posted</h3>
+          </header>
+          ${selectedProposalId ? `
+            <div class="card-actions">
+              <button class="secondary-btn" data-action="reddit-ops-show-posted-form" data-id="${helpers.escape(selectedProposalId)}">Mark as Posted</button>
+            </div>
+            ${view.postingFormByProposalId[selectedProposalId]?.visible ? `
+              <div class="settings-grid" style="margin-top: 10px;">
+                <label>Subreddit<input data-reddit-ops-input="subreddit" data-id="${helpers.escape(selectedProposalId)}" value="${helpers.escape(form.subreddit)}" /></label>
+                <label>Post URL<input data-reddit-ops-input="post_url" data-id="${helpers.escape(selectedProposalId)}" value="${helpers.escape(form.post_url)}" /></label>
+                <label>Manual Upvotes (optional)<input type="number" data-reddit-ops-input="upvotes" data-id="${helpers.escape(selectedProposalId)}" value="${helpers.escape(form.upvotes)}" /></label>
+                <label>Manual Comments (optional)<input type="number" data-reddit-ops-input="comments" data-id="${helpers.escape(selectedProposalId)}" value="${helpers.escape(form.comments)}" /></label>
+              </div>
+              <div class="card-actions" style="margin-top: 10px;">
+                <button class="btn" data-action="reddit-ops-mark-posted" data-id="${helpers.escape(selectedProposalId)}">Save Posted Link</button>
+              </div>
+            ` : ""}
+            ${view.messages[`posted-${selectedProposalId}`] ? `<p class="muted-note">${helpers.escape(view.messages[`posted-${selectedProposalId}`])}</p>` : ""}
+          ` : "<p class='empty'>Select a proposal to mark as posted.</p>"}
+        </article>
+
+        <article class="card work-section">
+          <header class="work-section-header">
+            <h3>D) Recent Posts</h3>
+          </header>
+          ${view.posts.length ? `
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Product</th>
+                    <th>Subreddit</th>
+                    <th>Date</th>
+                    <th>Upvotes</th>
+                    <th>Comments</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${view.posts.map((item) => `
+                    <tr>
+                      <td>${helpers.escape(helpers.t(item.product_name, item.proposal_id))}</td>
+                      <td>${helpers.escape(helpers.t(item.subreddit, "-"))}</td>
+                      <td>${helpers.escape(helpers.t(item.date, item.created_at || "-"))}</td>
+                      <td>${helpers.escape(helpers.t(item.upvotes, 0))}</td>
+                      <td>${helpers.escape(helpers.t(item.comments, 0))}</td>
+                      <td><span class="badge ${helpers.badgeClass(item.status)}">${helpers.escape(helpers.statusLabel(item.status || "open"))}</span></td>
+                    </tr>
+                  `).join("")}
+                </tbody>
+              </table>
+            </div>
+          ` : "<p class='empty'>No tracked reddit posts yet.</p>"}
+        </article>
+
+        <article class="card"><h3>Action output</h3><section id="reddit-ops-response" class="result-box">Ready.</section></article>
+      </section>
+    `);
+    bindRedditOpsActions();
+  },
 };
 
 async function loadStrategyData() {
@@ -2160,18 +2310,20 @@ async function refreshLoop() {
       state.diagnostics.lastApiErrors.strategy = "";
     },
     reddit: async () => {
-      const [redditConfigData, redditLastScanData, redditSignalsData, redditTodayPlanData, redditDailyActionsData] = await Promise.all([
+      const [redditConfigData, redditLastScanData, redditSignalsData, redditTodayPlanData, redditDailyActionsData, redditPostsData] = await Promise.all([
         api.getRedditConfig(),
         api.getRedditLastScan(),
         api.getRedditSignals(50),
         api.getRedditTodayPlan(),
         api.getRedditDailyActions(5),
+        api.getRedditPosts(),
       ]);
       state.redditConfig = redditConfigData || state.redditConfig;
       state.redditLastScan = redditLastScanData || state.redditLastScan;
       state.redditSignals = redditSignalsData?.items || [];
       state.redditTodayPlan = redditTodayPlanData || state.redditTodayPlan;
       state.redditDailyActions = Array.isArray(redditDailyActionsData) ? redditDailyActionsData : [];
+      state.redditOpsView.posts = redditPostsData?.items || [];
       state.diagnostics.lastRefreshAt.reddit = Date.now();
       state.diagnostics.lastApiErrors.reddit = "";
     },
@@ -2192,6 +2344,101 @@ async function refreshLoop() {
   renderControlCenter();
   renderTelemetry();
   router.render();
+}
+
+function bindRedditOpsActions() {
+  const responseBox = document.getElementById("reddit-ops-response");
+
+  ui.pageContent.querySelectorAll("button[data-action='reddit-ops-approve']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const proposalId = button.dataset.id;
+      await runAction(() => api.fetchJson(`/product_proposals/${proposalId}/approve`, { method: "POST", body: JSON.stringify({}) }), "reddit-ops-response");
+      state.redditOpsView.messages[`proposal-${proposalId}`] = "Proposal approved.";
+      router.render();
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='reddit-ops-reject']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const proposalId = button.dataset.id;
+      await runAction(() => api.fetchJson(`/product_proposals/${proposalId}/reject`, { method: "POST", body: JSON.stringify({}) }), "reddit-ops-response");
+      state.redditOpsView.messages[`proposal-${proposalId}`] = "Proposal rejected.";
+      router.render();
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='reddit-ops-view-copy']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const proposalId = helpers.t(button.dataset.id, "");
+      state.redditOpsView.selectedProposalId = proposalId;
+      try {
+        const proposal = await api.fetchJson(`/product_proposals/${proposalId}`);
+        if (proposal?.execution_package) {
+          state.redditOpsView.copyByProposalId[proposalId] = proposal.execution_package;
+        }
+      } catch (_error) {
+        state.redditOpsView.messages[`copy-${proposalId}`] = "Unable to refresh copy from backend.";
+      }
+      router.render();
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='reddit-ops-copy']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const proposalId = helpers.t(button.dataset.id, "");
+      const raw = decodeURIComponent(button.dataset.copyValue || "");
+      try {
+        await navigator.clipboard.writeText(raw);
+        state.redditOpsView.messages[`copy-${proposalId}`] = "Copied to clipboard.";
+      } catch (_error) {
+        state.redditOpsView.messages[`copy-${proposalId}`] = "Clipboard unavailable in this environment.";
+      }
+      router.render();
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='reddit-ops-show-posted-form']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const proposalId = helpers.t(button.dataset.id, "");
+      const current = state.redditOpsView.postingFormByProposalId[proposalId] || {};
+      state.redditOpsView.postingFormByProposalId[proposalId] = { ...current, visible: true };
+      router.render();
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='reddit-ops-mark-posted']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const proposalId = helpers.t(button.dataset.id, "");
+      const subreddit = helpers.t(ui.pageContent.querySelector(`input[data-reddit-ops-input='subreddit'][data-id='${proposalId}']`)?.value, "").trim();
+      const postUrl = helpers.t(ui.pageContent.querySelector(`input[data-reddit-ops-input='post_url'][data-id='${proposalId}']`)?.value, "").trim();
+      const upvotesRaw = helpers.t(ui.pageContent.querySelector(`input[data-reddit-ops-input='upvotes'][data-id='${proposalId}']`)?.value, "").trim();
+      const commentsRaw = helpers.t(ui.pageContent.querySelector(`input[data-reddit-ops-input='comments'][data-id='${proposalId}']`)?.value, "").trim();
+
+      state.redditOpsView.postingFormByProposalId[proposalId] = {
+        visible: true,
+        subreddit,
+        post_url: postUrl,
+        upvotes: upvotesRaw,
+        comments: commentsRaw,
+      };
+
+      const payload = {
+        proposal_id: proposalId,
+        subreddit,
+        post_url: postUrl,
+      };
+      if (upvotesRaw !== "") payload.upvotes = Number(upvotesRaw);
+      if (commentsRaw !== "") payload.comments = Number(commentsRaw);
+
+      await runAction(() => api.markRedditPosted(payload), "reddit-ops-response");
+      state.redditOpsView.messages[`posted-${proposalId}`] = "Post tracked successfully.";
+      router.render();
+    });
+  });
+
+  if (responseBox && !responseBox.textContent.trim()) {
+    responseBox.textContent = "Ready.";
+  }
 }
 
 function startRefreshLoop() {
