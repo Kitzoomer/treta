@@ -38,6 +38,17 @@ const state = {
     route: null,
     timestamp: null,
   },
+  redditConfig: {
+    pain_threshold: 60,
+    pain_keywords: [],
+    commercial_keywords: [],
+    enable_engagement_boost: true,
+  },
+  redditScanResult: {
+    analyzed: 0,
+    qualified: 0,
+    posts: [],
+  },
   strategyView: {
     pendingActions: [],
     recommendation: {},
@@ -201,6 +212,15 @@ const api = {
   },
   getDailyLoopStatus() {
     return this.fetchJson("/daily_loop/status");
+  },
+  getRedditConfig() {
+    return this.fetchJson("/reddit/config");
+  },
+  saveRedditConfig(payload) {
+    return this.fetchJson("/reddit/config", { method: "POST", body: JSON.stringify(payload) });
+  },
+  runRedditScan() {
+    return this.fetchJson("/reddit/run_scan", { method: "POST", body: JSON.stringify({}) });
   },
 };
 
@@ -1065,6 +1085,18 @@ const views = {
   },
 
   loadSettings() {
+    const redditConfig = state.redditConfig || {};
+    const redditScan = state.redditScanResult || { posts: [] };
+    const scanRows = (redditScan.posts || []).map((post) => `
+      <tr>
+        <td>${helpers.t(post.title, "-")}</td>
+        <td>${helpers.t(post.subreddit, "-")}</td>
+        <td>${Number(post.pain_score || 0)}</td>
+        <td>${helpers.t(post.intent_type, "-")}</td>
+        <td>${helpers.t(post.urgency_level, "-")}</td>
+      </tr>
+    `).join("");
+
     this.shell("Settings", "UI runtime controls", `
       <section class="card">
         <div class="settings-grid">
@@ -1075,7 +1107,45 @@ const views = {
           <button id="sync-sales">Sync sales</button>
           <button id="clear-cache">Clear UI cache</button>
         </div>
+      </section>
+
+      <section class="card">
+        <h3>Reddit Intelligence Settings</h3>
+        <div class="settings-grid">
+          <label>Pain Threshold <input id="reddit-pain-threshold" type="number" min="0" max="100" value="${Number(redditConfig.pain_threshold || 60)}"></label>
+          <label>Engagement boost <input id="reddit-engagement-boost" type="checkbox" ${redditConfig.enable_engagement_boost ? "checked" : ""}></label>
+          <label>Pain Keywords (comma separated)
+            <textarea id="reddit-pain-keywords" rows="4">${(redditConfig.pain_keywords || []).join(", ")}</textarea>
+          </label>
+          <label>Commercial Keywords (comma separated)
+            <textarea id="reddit-commercial-keywords" rows="4">${(redditConfig.commercial_keywords || []).join(", ")}</textarea>
+          </label>
+        </div>
+        <div class="card-actions wrap">
+          <button id="reddit-save-settings">Save Settings</button>
+          <button id="reddit-run-scan">Run Scan Now</button>
+        </div>
         <section id="settings-response" class="result-box">Ready.</section>
+        <section class="result-box">
+          <strong>Scan Result</strong>
+          <div>Analyzed: ${Number(redditScan.analyzed || 0)} | Qualified: ${Number(redditScan.qualified || 0)}</div>
+          <div class="work-table-wrap">
+            <table class="work-table">
+              <thead>
+                <tr>
+                  <th>Title</th>
+                  <th>Subreddit</th>
+                  <th>Pain Score</th>
+                  <th>Intent</th>
+                  <th>Urgency</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${scanRows || '<tr><td colspan="5" class="muted-note">No scan results yet.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </section>
       </section>
     `);
 
@@ -1104,6 +1174,30 @@ const views = {
       state.profile = loadProfileState();
       document.getElementById(ACTION_TARGETS.settings).textContent = "UI cache cleared.";
       log("system", "UI cache cleared.");
+    });
+
+    document.getElementById("reddit-save-settings")?.addEventListener("click", async () => {
+      const payload = {
+        pain_threshold: Number(document.getElementById("reddit-pain-threshold")?.value || 60),
+        pain_keywords: String(document.getElementById("reddit-pain-keywords")?.value || "").split(",").map((item) => item.trim()).filter(Boolean),
+        commercial_keywords: String(document.getElementById("reddit-commercial-keywords")?.value || "").split(",").map((item) => item.trim()).filter(Boolean),
+        enable_engagement_boost: Boolean(document.getElementById("reddit-engagement-boost")?.checked),
+      };
+      await runAction(async () => {
+        const updated = await api.saveRedditConfig(payload);
+        state.redditConfig = updated;
+        return updated;
+      }, ACTION_TARGETS.settings);
+      await router.loadSettings();
+    });
+
+    document.getElementById("reddit-run-scan")?.addEventListener("click", async () => {
+      await runAction(async () => {
+        const result = await api.runRedditScan();
+        state.redditScanResult = result;
+        return result;
+      }, ACTION_TARGETS.settings);
+      await router.loadSettings();
     });
   },
 
@@ -1772,7 +1866,7 @@ function renderTelemetry() {
 
 async function refreshLoop() {
   try {
-    const [systemData, eventData, memoryData, oppData, proposalData, launchData, planData, perfData, strategyData, pendingData, dailyLoopData] = await Promise.all([
+    const [systemData, eventData, memoryData, oppData, proposalData, launchData, planData, perfData, strategyData, pendingData, dailyLoopData, redditConfigData] = await Promise.all([
       api.getState(),
       api.getRecentEvents(),
       api.getMemory(),
@@ -1784,6 +1878,7 @@ async function refreshLoop() {
       api.getStrategyRecommendations(),
       api.getPendingStrategyActions(),
       api.getDailyLoopStatus(),
+      api.getRedditConfig(),
     ]);
 
     state.system = systemData || { state: "IDLE" };
@@ -1802,6 +1897,7 @@ async function refreshLoop() {
     state.dashboardView.loading = false;
     state.dashboardView.error = "";
     state.dailyLoop = dailyLoopData || state.dailyLoop;
+    state.redditConfig = redditConfigData || state.redditConfig;
   } catch (error) {
     log("system", `refresh error: ${error.message}`);
   }

@@ -18,6 +18,7 @@ from core.execution_engine import ExecutionEngine
 from core.execution_focus_engine import ExecutionFocusEngine
 from core.services.gumroad_sync_service import GumroadSyncService
 from core.product_launch_store import ProductLaunchStore
+from core.reddit_public.config import get_config
 from core.reddit_public.pain_scoring import compute_pain_score
 
 
@@ -78,7 +79,7 @@ class Control:
         self.product_proposal_store._save()
         self.product_launch_store._save()
 
-    def _scan_reddit_public_opportunities(self) -> None:
+    def run_reddit_public_scan(self) -> Dict[str, object]:
         from core.reddit_public.service import RedditPublicService
 
         subreddits = [
@@ -87,8 +88,16 @@ class Control:
             "ContentCreators",
             "smallbusiness",
         ]
+        config = get_config()
+        pain_threshold = int(config.get("pain_threshold", 60))
+
         posts = RedditPublicService().scan_subreddits(subreddits)
-        print(f"[REDDIT_PUBLIC] analyzed {len(posts)} posts after score/comment filters")
+        print(
+            f"[REDDIT_PUBLIC] analyzed {len(posts)} posts after score/comment filters; "
+            f"pain_threshold={pain_threshold}"
+        )
+
+        qualified_posts: List[Dict[str, object]] = []
 
         for post in posts:
             title = str(post.get("title", ""))
@@ -99,8 +108,17 @@ class Control:
                 f"[REDDIT_PUBLIC] post={post.get('id', '')} pain_score={pain_score} "
                 f"intent={pain_data['intent_type']} urgency={pain_data['urgency_level']}"
             )
-            if pain_score < 60:
+            if pain_score < pain_threshold:
                 continue
+
+            qualified_payload = {
+                "title": title,
+                "subreddit": str(post.get("subreddit", "")),
+                "pain_score": pain_score,
+                "intent_type": str(pain_data["intent_type"]),
+                "urgency_level": str(pain_data["urgency_level"]),
+            }
+            qualified_posts.append(qualified_payload)
 
             snippet = body[:300]
             event_bus.push(
@@ -125,6 +143,15 @@ class Control:
                     source="reddit_public_scan",
                 )
             )
+
+        return {
+            "analyzed": len(posts),
+            "qualified": len(qualified_posts),
+            "posts": qualified_posts,
+        }
+
+    def _scan_reddit_public_opportunities(self) -> None:
+        self.run_reddit_public_scan()
 
     def _generate_reddit_daily_plan(self) -> None:
         from core.reddit_intelligence.daily_plan_store import RedditDailyPlanStore

@@ -12,6 +12,7 @@ from core.gumroad_oauth import exchange_code_for_token, get_auth_url, load_token
 from core.services.gumroad_sync_service import GumroadSyncService
 from core.system_integrity import compute_system_integrity
 from core.reddit_intelligence.router import RedditIntelligenceRouter
+from core.reddit_public.config import get_config, update_config
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -256,6 +257,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(502, {"ok": False, "error": f"oauth_exchange_failed: {e}"})
             return self._send(200, {"status": "connected"})
 
+        if parsed.path == "/reddit/config":
+            return self._send(200, get_config())
+
         return self._send(404, {"error": "not_found"})
 
     def do_POST(self):
@@ -306,6 +310,8 @@ class Handler(BaseHTTPRequestHandler):
             "/product_proposals/execute",
             "/gumroad/sync_sales",
             "/reddit/signals",
+            "/reddit/config",
+            "/reddit/run_scan",
         }
         if self.path not in allowed_paths and transition_event_type is None and launch_sale_id is None and launch_status_id is None and launch_link_gumroad_id is None and strategy_execute_id is None and strategy_reject_id is None:
             return self._send(404, {"ok": False, "error": "not_found"})
@@ -441,6 +447,36 @@ class Handler(BaseHTTPRequestHandler):
                 service = GumroadSyncService(self.product_launch_store, gumroad_client)
                 summary = service.sync_sales()
                 return self._send(200, summary)
+
+            if self.path == "/reddit/config":
+                editable_fields = {
+                    "pain_threshold",
+                    "pain_keywords",
+                    "commercial_keywords",
+                    "enable_engagement_boost",
+                }
+                payload = {key: value for key, value in data.items() if key in editable_fields}
+                if "pain_threshold" in payload:
+                    payload["pain_threshold"] = int(payload["pain_threshold"])
+                if "pain_keywords" in payload:
+                    raw_pain_keywords = payload["pain_keywords"]
+                    if isinstance(raw_pain_keywords, str):
+                        raw_pain_keywords = raw_pain_keywords.split(",")
+                    payload["pain_keywords"] = [str(item).strip().lower() for item in raw_pain_keywords if str(item).strip()]
+                if "commercial_keywords" in payload:
+                    raw_commercial_keywords = payload["commercial_keywords"]
+                    if isinstance(raw_commercial_keywords, str):
+                        raw_commercial_keywords = raw_commercial_keywords.split(",")
+                    payload["commercial_keywords"] = [str(item).strip().lower() for item in raw_commercial_keywords if str(item).strip()]
+                if "enable_engagement_boost" in payload:
+                    payload["enable_engagement_boost"] = bool(payload["enable_engagement_boost"])
+                updated = update_config(payload)
+                return self._send(200, updated)
+
+            if self.path == "/reddit/run_scan":
+                if self.control is None:
+                    return self._send(503, {"ok": False, "error": "control_unavailable"})
+                return self._send(200, self.control.run_reddit_public_scan())
 
             if strategy_execute_id is not None:
                 if self.strategy_action_execution_layer is None:
