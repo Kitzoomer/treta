@@ -229,17 +229,8 @@ class Handler(BaseHTTPRequestHandler):
                 plans=plans,
                 launches=launches,
             )
-
-            include_version = parse_qs(parsed.query).get("include_version", [""])[0].strip().lower() in {"1", "true", "yes"}
-            if include_version:
-                report["version"] = VERSION
-
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("X-Treta-Version", VERSION)
-            self.end_headers()
-            self.wfile.write(json.dumps(report).encode("utf-8"))
-            return
+            report["version"] = VERSION
+            return self._send(200, report)
 
         if parsed.path.startswith("/product_launches/"):
             if self.product_launch_store is None:
