@@ -5,6 +5,7 @@ from pathlib import Path
 from core.control import Control
 from core.events import Event
 from core.product_proposal_store import ProductProposalStore
+from core.domain.integrity import DomainIntegrityError
 
 
 class ProductProposalLifecycleTest(unittest.TestCase):
@@ -58,6 +59,22 @@ class ProductProposalLifecycleTest(unittest.TestCase):
             self.assertEqual(actions[0].type, "ProductProposalStatusChanged")
             self.assertEqual(actions[0].payload["proposal_id"], "proposal-4")
             self.assertEqual(actions[0].payload["status"], "approved")
+
+    def test_double_approved_proposals_raise_domain_integrity_error(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = self._create_store(Path(tmp_dir))
+            store.add({"id": "proposal-a", "product_name": "Demo A"})
+            store.add({"id": "proposal-b", "product_name": "Demo B"})
+            control = Control(product_proposal_store=store)
+
+            control.consume(
+                Event(type="ApproveProposal", payload={"proposal_id": "proposal-a"}, source="test")
+            )
+
+            with self.assertRaises(DomainIntegrityError):
+                control.consume(
+                    Event(type="ApproveProposal", payload={"proposal_id": "proposal-b"}, source="test")
+                )
 
 
 if __name__ == "__main__":
