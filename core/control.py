@@ -66,6 +66,14 @@ class Control:
             else None
         )
         self._last_reddit_scan: Dict[str, object] | None = None
+        self.only_top_proposal = True
+
+    def has_active_proposal(self) -> bool:
+        active_statuses = {"draft", "approved", "building", "ready_to_launch"}
+        return any(
+            str(item.get("status", "")).strip() in active_statuses
+            for item in self.product_proposal_store.list()
+        )
 
 
     def _refresh_execution_focus(self) -> None:
@@ -98,6 +106,7 @@ class Control:
         )
 
         qualified_posts: List[Dict[str, object]] = []
+        ranked_candidates: List[Dict[str, object]] = []
         by_subreddit: Dict[str, int] = {}
 
         for post in posts:
@@ -120,32 +129,51 @@ class Control:
                 "urgency_level": str(pain_data["urgency_level"]),
             }
             qualified_posts.append(qualified_payload)
+            ranked_candidates.append(
+                {
+                    "post": post,
+                    "pain_data": pain_data,
+                    "pain_score": pain_score,
+                    "score": pain_score,
+                }
+            )
             subreddit_name = str(post.get("subreddit", "")).strip() or "unknown"
             by_subreddit[subreddit_name] = by_subreddit.get(subreddit_name, 0) + 1
 
-            snippet = body[:300]
-            event_bus.push(
-                Event(
-                    type="OpportunityDetected",
-                    payload={
-                        "id": f"reddit-public-{post.get('id', '')}",
-                        "source": "reddit_public",
-                        "title": title,
-                        "subreddit": post.get("subreddit", ""),
-                        "score": post.get("score", 0),
-                        "num_comments": post.get("num_comments", 0),
-                        "pain_score": pain_score,
-                        "intent_type": pain_data["intent_type"],
-                        "urgency_level": pain_data["urgency_level"],
-                        "snippet": snippet,
-                        "summary": snippet,
-                        "opportunity": {
-                            "confidence": min(10, max(1, int(post.get("score", 0) / 10) + 1)),
-                        },
-                    },
-                    source="reddit_public_scan",
-                )
+        if ranked_candidates and not self.has_active_proposal():
+            candidates = sorted(
+                ranked_candidates,
+                key=lambda item: (int(item["score"]), int(item["post"].get("score", 0))),
+                reverse=True,
             )
+            selected = candidates[0] if self.only_top_proposal else None
+            if selected is not None:
+                top_post = selected["post"]
+                top_pain_data = selected["pain_data"]
+                top_pain_score = int(selected["pain_score"])
+                snippet = str(top_post.get("selftext", ""))[:300]
+                event_bus.push(
+                    Event(
+                        type="OpportunityDetected",
+                        payload={
+                            "id": f"reddit-public-{top_post.get('id', '')}",
+                            "source": "reddit_public",
+                            "title": str(top_post.get("title", "")),
+                            "subreddit": top_post.get("subreddit", ""),
+                            "score": top_post.get("score", 0),
+                            "num_comments": top_post.get("num_comments", 0),
+                            "pain_score": top_pain_score,
+                            "intent_type": top_pain_data["intent_type"],
+                            "urgency_level": top_pain_data["urgency_level"],
+                            "snippet": snippet,
+                            "summary": snippet,
+                            "opportunity": {
+                                "confidence": min(10, max(1, int(top_post.get("score", 0) / 10) + 1)),
+                            },
+                        },
+                        source="reddit_public_scan",
+                    )
+                )
 
         result = {
             "analyzed": len(posts),
@@ -290,7 +318,7 @@ class Control:
                 opportunity=dict(event.payload.get("opportunity", {})),
             )
 
-            if created.get("source") == "reddit_public":
+            if created.get("source") == "reddit_public" and self.has_active_proposal():
                 return []
 
             alignment = self.alignment_engine.evaluate(

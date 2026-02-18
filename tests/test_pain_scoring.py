@@ -1,8 +1,11 @@
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from core.bus import event_bus
 from core.control import Control
+from core.product_proposal_store import ProductProposalStore
 from core.events import Event
 from core.reddit_public.config import DEFAULT_CONFIG, update_config
 from core.reddit_public.pain_scoring import compute_pain_score
@@ -99,12 +102,14 @@ class RedditPublicPainGateTest(unittest.TestCase):
             },
         ]
 
-        control = Control()
-        with patch("core.reddit_public.service.RedditPublicService.scan_subreddits", return_value=posts), patch(
-            "core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions",
-            return_value=[],
-        ):
-            control.consume(Event(type="RunInfoproductScan", payload={}, source="test"))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            proposal_store = ProductProposalStore(path=Path(temp_dir) / "product_proposals.json")
+            control = Control(product_proposal_store=proposal_store)
+            with patch("core.reddit_public.service.RedditPublicService.scan_subreddits", return_value=posts), patch(
+                "core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions",
+                return_value=[],
+            ):
+                control.consume(Event(type="RunInfoproductScan", payload={}, source="test"))
 
         emitted = []
         while True:
@@ -122,6 +127,107 @@ class RedditPublicPainGateTest(unittest.TestCase):
         self.assertIn("urgency_level", payload)
 
 
+
+
+    def test_scan_emits_only_top_scoring_opportunity(self):
+        while event_bus.pop(timeout=0.001) is not None:
+            pass
+
+        posts = [
+            {
+                "id": "top",
+                "title": "How do I fix client pricing asap?",
+                "selftext": "I am struggling, stuck, confused and overwhelmed with proposal rates and need help today",
+                "score": 3,
+                "num_comments": 1,
+                "subreddit": "freelance",
+            },
+            {
+                "id": "lower",
+                "title": "Need help with pricing",
+                "selftext": "need help with client pricing",
+                "score": 40,
+                "num_comments": 10,
+                "subreddit": "freelance",
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            proposal_store = ProductProposalStore(path=Path(temp_dir) / "product_proposals.json")
+            control = Control(product_proposal_store=proposal_store)
+            with patch("core.reddit_public.service.RedditPublicService.scan_subreddits", return_value=posts), patch(
+                "core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions",
+                return_value=[],
+            ):
+                result = control.run_reddit_public_scan()
+
+        emitted = []
+        while True:
+            event = event_bus.pop(timeout=0.001)
+            if event is None:
+                break
+            if event.type == "OpportunityDetected":
+                emitted.append(event)
+
+        self.assertEqual(result["qualified"], 2)
+        self.assertEqual(len(emitted), 1)
+        self.assertEqual(emitted[0].payload["id"], "reddit-public-top")
+
+    def test_scan_does_not_emit_when_active_proposal_exists(self):
+        while event_bus.pop(timeout=0.001) is not None:
+            pass
+
+        posts = [
+            {
+                "id": "high",
+                "title": "How do I set client pricing?",
+                "selftext": "I am struggling with proposal rate and need help asap",
+                "score": 15,
+                "num_comments": 6,
+                "subreddit": "freelance",
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            proposal_store = ProductProposalStore(path=Path(temp_dir) / "product_proposals.json")
+            control = Control(product_proposal_store=proposal_store)
+            control.product_proposal_store.add(
+            {
+                "id": "existing-draft",
+                "created_at": "2025-01-01T00:00:00+00:00",
+                "source_opportunity_id": "opp-existing",
+                "product_name": "Existing product",
+                "product_type": "template",
+                "target_audience": "creators",
+                "core_problem": "pricing",
+                "solution": "pricing framework",
+                "format": "pdf",
+                "price_suggestion": "$29",
+                "deliverables": ["guide"],
+                "positioning": "fast win",
+                "distribution_plan": "x",
+                "validation_plan": "y",
+                "confidence": 7,
+                "reasoning": "existing",
+                "status": "draft",
+            }
+        )
+
+            with patch("core.reddit_public.service.RedditPublicService.scan_subreddits", return_value=posts), patch(
+                "core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions",
+                return_value=[],
+            ):
+                control.run_reddit_public_scan()
+
+            emitted = []
+            while True:
+                event = event_bus.pop(timeout=0.001)
+                if event is None:
+                    break
+                if event.type == "OpportunityDetected":
+                    emitted.append(event)
+
+            self.assertEqual(len(emitted), 0)
 
     def test_scan_summary_includes_by_subreddit_counts(self):
         posts = [
@@ -143,12 +249,14 @@ class RedditPublicPainGateTest(unittest.TestCase):
             },
         ]
 
-        control = Control()
-        with patch("core.reddit_public.service.RedditPublicService.scan_subreddits", return_value=posts), patch(
-            "core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions",
-            return_value=[],
-        ):
-            result = control.run_reddit_public_scan()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            proposal_store = ProductProposalStore(path=Path(temp_dir) / "product_proposals.json")
+            control = Control(product_proposal_store=proposal_store)
+            with patch("core.reddit_public.service.RedditPublicService.scan_subreddits", return_value=posts), patch(
+                "core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions",
+                return_value=[],
+            ):
+                result = control.run_reddit_public_scan()
 
         self.assertEqual(result["qualified"], 2)
         self.assertEqual(result["by_subreddit"], {"freelance": 1, "UGCcreators": 1})
@@ -170,12 +278,14 @@ class RedditPublicPainGateTest(unittest.TestCase):
 
         update_config({"pain_threshold": 90})
 
-        control = Control()
-        with patch("core.reddit_public.service.RedditPublicService.scan_subreddits", return_value=posts), patch(
-            "core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions",
-            return_value=[],
-        ):
-            result = control.run_reddit_public_scan()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            proposal_store = ProductProposalStore(path=Path(temp_dir) / "product_proposals.json")
+            control = Control(product_proposal_store=proposal_store)
+            with patch("core.reddit_public.service.RedditPublicService.scan_subreddits", return_value=posts), patch(
+                "core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions",
+                return_value=[],
+            ):
+                result = control.run_reddit_public_scan()
 
         self.assertEqual(result["qualified"], 0)
 
@@ -191,12 +301,14 @@ class RedditPublicPainGateTest(unittest.TestCase):
             }
         ]
 
-        control = Control()
-        with patch("core.reddit_public.service.RedditPublicService.scan_subreddits", return_value=posts), patch(
-            "core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions",
-            return_value=[],
-        ):
-            result = control.run_reddit_public_scan()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            proposal_store = ProductProposalStore(path=Path(temp_dir) / "product_proposals.json")
+            control = Control(product_proposal_store=proposal_store)
+            with patch("core.reddit_public.service.RedditPublicService.scan_subreddits", return_value=posts), patch(
+                "core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions",
+                return_value=[],
+            ):
+                result = control.run_reddit_public_scan()
 
         self.assertEqual(control.get_last_reddit_scan(), result)
 
