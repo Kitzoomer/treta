@@ -71,3 +71,14 @@ def test_valid_lifecycle_transitions_do_not_raise_errors():
     proposal["status"] = "building"
 
     policy.validate_transition(proposal, "ready_to_launch", proposals)
+
+
+def test_corrupted_proposal_state_with_two_active_proposals_is_detected():
+    policy = DomainIntegrityPolicy()
+    proposals = [
+        {"id": "proposal-a", "status": "approved"},
+        {"id": "proposal-b", "status": "building"},
+    ]
+
+    with pytest.raises(DomainIntegrityError):
+        policy.validate_global_invariants(proposals)
