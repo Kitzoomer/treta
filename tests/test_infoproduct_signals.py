@@ -83,7 +83,8 @@ class InfoproductSignalsTest(unittest.TestCase):
             dispatcher.handle(queued)
 
         items = opportunity_store.list()
-        self.assertEqual(len(items), 3)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["id"], "reddit-public-a1")
 
 
 if __name__ == "__main__":

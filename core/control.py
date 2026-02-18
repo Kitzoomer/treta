@@ -18,6 +18,7 @@ from core.execution_engine import ExecutionEngine
 from core.execution_focus_engine import ExecutionFocusEngine
 from core.services.gumroad_sync_service import GumroadSyncService
 from core.product_launch_store import ProductLaunchStore
+from core.reddit_public.pain_scoring import compute_pain_score
 
 
 @dataclass(frozen=True)
@@ -86,25 +87,19 @@ class Control:
             "ContentCreators",
             "smallbusiness",
         ]
-        keywords = [
-            "template",
-            "media kit",
-            "proposal",
-            "client",
-            "pricing",
-            "rate",
-            "how do I",
-            "struggling",
-        ]
-
         posts = RedditPublicService().scan_subreddits(subreddits)
         print(f"[REDDIT_PUBLIC] analyzed {len(posts)} posts after score/comment filters")
 
         for post in posts:
             title = str(post.get("title", ""))
             body = str(post.get("selftext", ""))
-            text = f"{title} {body}".lower()
-            if not any(keyword.lower() in text for keyword in keywords):
+            pain_data = compute_pain_score(post)
+            pain_score = int(pain_data["pain_score"])
+            print(
+                f"[REDDIT_PUBLIC] post={post.get('id', '')} pain_score={pain_score} "
+                f"intent={pain_data['intent_type']} urgency={pain_data['urgency_level']}"
+            )
+            if pain_score < 60:
                 continue
 
             snippet = body[:300]
@@ -118,6 +113,9 @@ class Control:
                         "subreddit": post.get("subreddit", ""),
                         "score": post.get("score", 0),
                         "num_comments": post.get("num_comments", 0),
+                        "pain_score": pain_score,
+                        "intent_type": pain_data["intent_type"],
+                        "urgency_level": pain_data["urgency_level"],
                         "snippet": snippet,
                         "summary": snippet,
                         "opportunity": {
