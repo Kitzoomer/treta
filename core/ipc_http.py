@@ -522,6 +522,13 @@ class Handler(BaseHTTPRequestHandler):
                 proposal_id = str(data.get("proposal_id", "")).strip()
                 subreddit = str(data.get("subreddit", "")).strip()
                 post_url = str(data.get("post_url", "")).strip()
+                post_id = str(data.get("post_id", "")).strip()
+                if not post_id and post_url:
+                    path_parts = [part for part in urlparse(post_url).path.split("/") if part]
+                    if "comments" in path_parts:
+                        comments_index = path_parts.index("comments")
+                        if comments_index + 1 < len(path_parts):
+                            post_id = str(path_parts[comments_index + 1]).strip()
                 if not proposal_id:
                     return self._send(400, {"ok": False, "error": "missing_proposal_id"})
                 if not subreddit:
@@ -548,6 +555,7 @@ class Handler(BaseHTTPRequestHandler):
 
                 entry = {
                     "id": f"reddit_post_{int(time.time() * 1000)}",
+                    "post_id": post_id,
                     "proposal_id": proposal_id,
                     "product_name": product_name,
                     "subreddit": subreddit,
