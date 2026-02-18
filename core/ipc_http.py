@@ -13,6 +13,7 @@ from core.services.gumroad_sync_service import GumroadSyncService
 from core.system_integrity import compute_system_integrity
 from core.reddit_intelligence.router import RedditIntelligenceRouter
 from core.reddit_public.config import get_config, update_config
+from core.version import VERSION
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -228,6 +229,7 @@ class Handler(BaseHTTPRequestHandler):
                 plans=plans,
                 launches=launches,
             )
+            report["version"] = VERSION
             return self._send(200, report)
 
         if parsed.path.startswith("/product_launches/"):
