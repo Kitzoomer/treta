@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from core.bus import event_bus
+from core.bus import EventBus
 from core.control import Control
 from core.product_proposal_store import ProductProposalStore
 from core.events import Event
@@ -74,13 +74,14 @@ class PainScoringTest(unittest.TestCase):
 
 class RedditPublicPainGateTest(unittest.TestCase):
     def setUp(self):
+        self.bus = EventBus()
         update_config(DEFAULT_CONFIG.copy())
 
     def tearDown(self):
         update_config(DEFAULT_CONFIG.copy())
 
     def test_only_posts_with_pain_score_60_or_more_emit_opportunity(self):
-        while event_bus.pop(timeout=0.001) is not None:
+        while self.bus.pop(timeout=0.001) is not None:
             pass
 
         posts = [
@@ -104,7 +105,7 @@ class RedditPublicPainGateTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             proposal_store = ProductProposalStore(path=Path(temp_dir) / "product_proposals.json")
-            control = Control(product_proposal_store=proposal_store)
+            control = Control(product_proposal_store=proposal_store, bus=self.bus)
             with patch("core.reddit_public.service.RedditPublicService.scan_subreddits", return_value=posts), patch(
                 "core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions",
                 return_value=[],
@@ -113,7 +114,7 @@ class RedditPublicPainGateTest(unittest.TestCase):
 
         emitted = []
         while True:
-            event = event_bus.pop(timeout=0.001)
+            event = self.bus.pop(timeout=0.001)
             if event is None:
                 break
             if event.type == "OpportunityDetected":
@@ -130,7 +131,7 @@ class RedditPublicPainGateTest(unittest.TestCase):
 
 
     def test_scan_emits_only_top_scoring_opportunity(self):
-        while event_bus.pop(timeout=0.001) is not None:
+        while self.bus.pop(timeout=0.001) is not None:
             pass
 
         posts = [
@@ -154,7 +155,7 @@ class RedditPublicPainGateTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             proposal_store = ProductProposalStore(path=Path(temp_dir) / "product_proposals.json")
-            control = Control(product_proposal_store=proposal_store)
+            control = Control(product_proposal_store=proposal_store, bus=self.bus)
             with patch("core.reddit_public.service.RedditPublicService.scan_subreddits", return_value=posts), patch(
                 "core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions",
                 return_value=[],
@@ -163,7 +164,7 @@ class RedditPublicPainGateTest(unittest.TestCase):
 
         emitted = []
         while True:
-            event = event_bus.pop(timeout=0.001)
+            event = self.bus.pop(timeout=0.001)
             if event is None:
                 break
             if event.type == "OpportunityDetected":
@@ -174,7 +175,7 @@ class RedditPublicPainGateTest(unittest.TestCase):
         self.assertEqual(emitted[0].payload["id"], "reddit-public-top")
 
     def test_scan_does_not_emit_when_active_proposal_exists(self):
-        while event_bus.pop(timeout=0.001) is not None:
+        while self.bus.pop(timeout=0.001) is not None:
             pass
 
         posts = [
@@ -190,7 +191,7 @@ class RedditPublicPainGateTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             proposal_store = ProductProposalStore(path=Path(temp_dir) / "product_proposals.json")
-            control = Control(product_proposal_store=proposal_store)
+            control = Control(product_proposal_store=proposal_store, bus=self.bus)
             control.product_proposal_store.add(
             {
                 "id": "existing-draft",
@@ -221,7 +222,7 @@ class RedditPublicPainGateTest(unittest.TestCase):
 
             emitted = []
             while True:
-                event = event_bus.pop(timeout=0.001)
+                event = self.bus.pop(timeout=0.001)
                 if event is None:
                     break
                 if event.type == "OpportunityDetected":
@@ -251,7 +252,7 @@ class RedditPublicPainGateTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             proposal_store = ProductProposalStore(path=Path(temp_dir) / "product_proposals.json")
-            control = Control(product_proposal_store=proposal_store)
+            control = Control(product_proposal_store=proposal_store, bus=self.bus)
             with patch("core.reddit_public.service.RedditPublicService.scan_subreddits", return_value=posts), patch(
                 "core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions",
                 return_value=[],
@@ -262,7 +263,7 @@ class RedditPublicPainGateTest(unittest.TestCase):
         self.assertEqual(result["by_subreddit"], {"freelance": 1, "UGCcreators": 1})
 
     def test_threshold_comes_from_config(self):
-        while event_bus.pop(timeout=0.001) is not None:
+        while self.bus.pop(timeout=0.001) is not None:
             pass
 
         posts = [
@@ -280,7 +281,7 @@ class RedditPublicPainGateTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             proposal_store = ProductProposalStore(path=Path(temp_dir) / "product_proposals.json")
-            control = Control(product_proposal_store=proposal_store)
+            control = Control(product_proposal_store=proposal_store, bus=self.bus)
             with patch("core.reddit_public.service.RedditPublicService.scan_subreddits", return_value=posts), patch(
                 "core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions",
                 return_value=[],
@@ -303,7 +304,7 @@ class RedditPublicPainGateTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             proposal_store = ProductProposalStore(path=Path(temp_dir) / "product_proposals.json")
-            control = Control(product_proposal_store=proposal_store)
+            control = Control(product_proposal_store=proposal_store, bus=self.bus)
             with patch("core.reddit_public.service.RedditPublicService.scan_subreddits", return_value=posts), patch(
                 "core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions",
                 return_value=[],

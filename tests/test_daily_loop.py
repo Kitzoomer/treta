@@ -5,7 +5,7 @@ from pathlib import Path
 from urllib.request import urlopen
 from unittest.mock import patch
 
-from core.bus import event_bus
+from core.bus import EventBus
 from core.control import Control
 from core.daily_loop import DailyLoopEngine
 from core.events import Event
@@ -18,6 +18,9 @@ from core.strategy_action_store import StrategyActionStore
 
 
 class DailyLoopEngineTest(unittest.TestCase):
+    def setUp(self):
+        self.bus = EventBus()
+
     def _stores(self, root: Path):
         opportunities = OpportunityStore(path=root / "opportunities.json")
         proposals = ProductProposalStore(path=root / "product_proposals.json")
@@ -53,7 +56,7 @@ class DailyLoopEngineTest(unittest.TestCase):
 
 
     def test_daily_loop_generates_reddit_plan(self):
-        while event_bus.pop(timeout=0.001) is not None:
+        while self.bus.pop(timeout=0.001) is not None:
             pass
 
         RedditDailyPlanStore.save({})
@@ -63,7 +66,7 @@ class DailyLoopEngineTest(unittest.TestCase):
             for index in range(1, 8)
         ]
 
-        control = Control()
+        control = Control(bus=self.bus)
         with patch("core.control.Control._scan_reddit_public_opportunities", return_value=None), patch(
             "core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions",
             return_value=signals[:5],
@@ -75,7 +78,7 @@ class DailyLoopEngineTest(unittest.TestCase):
         self.assertLessEqual(len(plan.get("signals", [])), 5)
         self.assertTrue(str(plan.get("summary", "")).strip())
 
-        recent_events = event_bus.recent(limit=20)
+        recent_events = self.bus.recent(limit=20)
         daily_events = [event for event in recent_events if event.type == "RedditDailyPlanGenerated"]
         self.assertTrue(daily_events)
 

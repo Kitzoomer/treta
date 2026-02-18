@@ -1,7 +1,7 @@
 from core.state_machine import StateMachine, State
 from core.events import Event
 from core.control import Control
-from core.bus import event_bus
+from core.bus import EventBus
 from core.memory_store import MemoryStore
 from core.conversation_core import ConversationCore
 
@@ -13,12 +13,14 @@ class Dispatcher:
         control: Control | None = None,
         memory_store: MemoryStore | None = None,
         conversation_core: ConversationCore | None = None,
+        bus: EventBus | None = None,
     ):
         self.sm = state_machine
-        self.control = control or Control()
+        self.bus = bus or EventBus()
+        self.control = control or Control(bus=self.bus)
         self.memory_store = memory_store or MemoryStore()
         self.conversation_core = conversation_core or ConversationCore(
-            bus=event_bus,
+            bus=self.bus,
             state_machine=self.sm,
             memory_store=self.memory_store,
         )
@@ -86,4 +88,4 @@ class Dispatcher:
             actions = self.control.consume(event)
             for action in actions:
                 print(f"[ACTION] {action.type} payload={action.payload}")
-                event_bus.push(Event(type=action.type, payload=action.payload, source="control"))
+                self.bus.push(Event(type=action.type, payload=action.payload, source="control"))

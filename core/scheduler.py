@@ -4,11 +4,12 @@ import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from core.bus import EventBus
 from core.events import Event
 
 
 class DailyScheduler:
-    def __init__(self, now_fn=None, sleep_fn=None):
+    def __init__(self, bus: EventBus | None = None, now_fn=None, sleep_fn=None):
         self.timezone_name = os.getenv("TRETA_TIMEZONE", "UTC")
         self.scan_hour = int(os.getenv("TRETA_SCAN_HOUR", "9"))
         self._timezone = ZoneInfo(self.timezone_name)
@@ -16,17 +17,20 @@ class DailyScheduler:
         self._now_fn = now_fn
         self._sleep_fn = sleep_fn or time.sleep
 
-        self._bus = None
+        self._bus = bus
         self._stop_event = threading.Event()
         self._thread = None
         self._last_run_date = None
         self._next_scan_at = None
 
-    def start(self, bus):
+    def start(self, bus: EventBus | None = None):
         if self._thread and self._thread.is_alive():
             return
 
-        self._bus = bus
+        if bus is not None:
+            self._bus = bus
+        if self._bus is None:
+            self._bus = EventBus()
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()

@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock
 
+from core.bus import EventBus
 from core.control import Action, Control
 from core.domain.integrity import DomainIntegrityError
 from core.events import Event
@@ -12,6 +13,7 @@ from core.events import Event
 
 class ControlSmokeTest(unittest.TestCase):
     def setUp(self):
+        self.bus = EventBus()
         self._temp_dir = tempfile.TemporaryDirectory()
         self._data_dir = Path(self._temp_dir.name)
 
@@ -35,7 +37,7 @@ class ControlSmokeTest(unittest.TestCase):
                 child.unlink()
 
     def test_deterministic_mapping_for_requested_events(self):
-        control = Control()
+        control = Control(bus=self.bus)
 
         cases = {
             "DailyBriefRequested": [Action(type="BuildDailyBrief", payload={"dry_run": True})],
@@ -54,7 +56,7 @@ class ControlSmokeTest(unittest.TestCase):
                 self.assertEqual(first, second)
 
     def test_evaluate_opportunity_event_returns_structured_decision(self):
-        control = Control()
+        control = Control(bus=self.bus)
         event = Event(
             type="EvaluateOpportunity",
             payload={
@@ -77,7 +79,7 @@ class ControlSmokeTest(unittest.TestCase):
         self.assertIn("reasoning", actions[0].payload)
 
     def test_action_approved_generates_action_plan(self):
-        control = Control()
+        control = Control(bus=self.bus)
         event = Event(type="ActionApproved", payload={"type": "top_product"}, source="test")
 
         actions = control.consume(event)
@@ -125,7 +127,7 @@ class ControlSmokeTest(unittest.TestCase):
 
 
     def test_opportunity_detected_filters_non_aligned_opportunity(self):
-        control = Control()
+        control = Control(bus=self.bus)
 
         payload = {
             "id": "opp-filter",
@@ -143,7 +145,7 @@ class ControlSmokeTest(unittest.TestCase):
         self.assertEqual(items["opp-filter"]["status"], "strategically_filtered")
 
     def test_opportunity_detected_stores_alignment_metadata_on_generated_proposal(self):
-        control = Control()
+        control = Control(bus=self.bus)
 
         payload = {
             "id": "opp-aligned",
@@ -162,7 +164,7 @@ class ControlSmokeTest(unittest.TestCase):
         self.assertGreaterEqual(proposal["alignment_score"], 60)
 
     def test_opportunity_store_flow_detect_list_evaluate_and_dismiss(self):
-        control = Control()
+        control = Control(bus=self.bus)
 
         first_payload = {
             "id": "opp-1",
@@ -224,7 +226,7 @@ class ControlSmokeTest(unittest.TestCase):
 
 
     def test_build_product_plan_requires_preapproved_status(self):
-        control = Control()
+        control = Control(bus=self.bus)
         control.product_proposal_store.add({"id": "proposal-draft", "product_name": "Draft", "status": "draft"})
 
         with self.assertRaises(DomainIntegrityError):

@@ -1,18 +1,20 @@
-import sys
 import select
+import sys
 import time
 
+from core.bus import EventBus
 from core.events import (
-    Event,
-    EVENT_WAKE_WORD,
-    EVENT_TRANSCRIPT_READY,
-    EVENT_LLM_RESPONSE_READY,
-    EVENT_TTS_FINISHED,
     EVENT_ERROR,
+    EVENT_LLM_RESPONSE_READY,
+    EVENT_TRANSCRIPT_READY,
+    EVENT_TTS_FINISHED,
+    EVENT_WAKE_WORD,
+    Event,
 )
-from core.bus import event_bus
 
-def keyboard_loop():
+
+def keyboard_loop(bus: EventBus | None = None):
+    event_bus = bus or EventBus()
     print("⌨️  Modo teclado (DEBUG)")
     print("Comandos: wake | think | speak | idle | error | quit")
 

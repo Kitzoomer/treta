@@ -1,10 +1,12 @@
-from core.events import Event
-from core.bus import event_bus
+import requests
 
-print("Injecting WakeWordDetected event...")
-event_bus.push(Event(
+from core.events import Event
+
+payload = Event(
     type="WakeWordDetected",
     payload={},
-    source="manual"
-))
-print("Event injected.")
+    source="injector",
+).__dict__
+
+requests.post("http://localhost:7777/event", json=payload, timeout=2)
+print("Event sent")

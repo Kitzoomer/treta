@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-from core.bus import event_bus
+from core.bus import EventBus
 from core.ipc_http import start_http_server
 from core.product_launch_store import ProductLaunchStore
 from core.product_proposal_store import ProductProposalStore
@@ -15,6 +15,9 @@ from core.strategy_decision_engine import StrategyDecisionEngine
 
 
 class StrategyDecisionEngineTest(unittest.TestCase):
+    def setUp(self):
+        self.bus = EventBus()
+
     def _stores(self, root: Path):
         proposals = ProductProposalStore(path=root / "product_proposals.json")
         launches = ProductLaunchStore(proposal_store=proposals, path=root / "product_launches.json")
@@ -110,7 +113,7 @@ class StrategyDecisionEngineTest(unittest.TestCase):
             root = Path(tmp_dir)
             proposals, launches = self._stores(root)
             action_store = StrategyActionStore(path=root / "strategy_actions.json")
-            action_execution_layer = StrategyActionExecutionLayer(strategy_action_store=action_store)
+            action_execution_layer = StrategyActionExecutionLayer(strategy_action_store=action_store, bus=self.bus)
 
             proposals.add({"id": "proposal-1", "product_name": "Growth Kit"})
             launch = launches.add_from_proposal("proposal-1")
@@ -138,7 +141,7 @@ class StrategyDecisionEngineTest(unittest.TestCase):
             root = Path(tmp_dir)
             proposals, launches = self._stores(root)
             action_store = StrategyActionStore(path=root / "strategy_actions.json")
-            action_execution_layer = StrategyActionExecutionLayer(strategy_action_store=action_store)
+            action_execution_layer = StrategyActionExecutionLayer(strategy_action_store=action_store, bus=self.bus)
 
             proposals.add({"id": "proposal-1", "product_name": "Growth Kit"})
             launch = launches.add_from_proposal("proposal-1")
@@ -156,6 +159,7 @@ class StrategyDecisionEngineTest(unittest.TestCase):
                 host="127.0.0.1",
                 port=0,
                 strategy_decision_engine=engine,
+                bus=self.bus,
                 strategy_action_execution_layer=action_execution_layer,
             )
             try:
@@ -197,7 +201,7 @@ class StrategyDecisionEngineTest(unittest.TestCase):
 
             self.assertEqual(executed["status"], "executed")
             self.assertEqual(rejected["status"], "rejected")
-            recent_events = event_bus.recent(limit=1)
+            recent_events = self.bus.recent(limit=1)
             self.assertEqual(recent_events[-1].type, "StrategyActionExecuted")
 
     def test_strategy_decide_endpoint(self):
@@ -211,7 +215,7 @@ class StrategyDecisionEngineTest(unittest.TestCase):
                 launches.add_sale(launch["id"], 10)
 
             engine = StrategyDecisionEngine(product_launch_store=launches)
-            server = start_http_server(host="127.0.0.1", port=0, strategy_decision_engine=engine)
+            server = start_http_server(host="127.0.0.1", port=0, strategy_decision_engine=engine, bus=self.bus)
             try:
                 port = server.server_port
                 with urlopen(f"http://127.0.0.1:{port}/strategy/decide", timeout=2) as response:

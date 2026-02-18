@@ -1,12 +1,16 @@
 import unittest
 
+from core.bus import EventBus
 from core.control import Control
 from core.events import Event
 
 
 class ConfirmationFlowTest(unittest.TestCase):
+    def setUp(self):
+        self.bus = EventBus()
+
     def test_action_plan_generated_emits_awaiting_confirmation(self):
-        control = Control()
+        control = Control(bus=self.bus)
 
         actions = control.consume(
             Event(

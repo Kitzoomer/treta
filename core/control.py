@@ -11,7 +11,7 @@ from core.integrations.gumroad_client import GumroadClient
 from core.action_planner import ActionPlanner
 from core.confirmation_queue import ConfirmationQueue
 from core.opportunity_store import OpportunityStore
-from core.bus import event_bus
+from core.bus import EventBus
 from core.product_engine import ProductEngine
 from core.alignment_engine import AlignmentEngine
 from core.product_proposal_store import ProductProposalStore
@@ -50,6 +50,7 @@ class Control:
         product_plan_store: ProductPlanStore | None = None,
         execution_engine: ExecutionEngine | None = None,
         product_launch_store: ProductLaunchStore | None = None,
+        bus: EventBus | None = None,
     ):
         self.decision_engine = decision_engine or DecisionEngine()
         self.gumroad_client = gumroad_client
@@ -96,6 +97,7 @@ class Control:
         self._last_reddit_scan: Dict[str, object] | None = None
         self.only_top_proposal = True
         self.domain_integrity_policy = DomainIntegrityPolicy()
+        self.bus = bus or EventBus()
 
     def has_active_proposal(self) -> bool:
         active_statuses = {"draft", *self.domain_integrity_policy.ACTIVE_STATUSES}
@@ -234,7 +236,7 @@ class Control:
                 top_pain_data = selected["pain_data"]
                 top_pain_score = int(selected["pain_score"])
                 snippet = str(top_post.get("selftext", ""))[:300]
-                event_bus.push(
+                self.bus.push(
                     Event(
                         type="OpportunityDetected",
                         payload={
@@ -294,7 +296,7 @@ class Control:
             "summary": "\n".join(summary_lines),
         }
         RedditDailyPlanStore.save(plan)
-        event_bus.push(Event(type="RedditDailyPlanGenerated", payload=plan, source="control"))
+        self.bus.push(Event(type="RedditDailyPlanGenerated", payload=plan, source="control"))
 
     def link_launch_gumroad(self, launch_id: str, gumroad_product_id: str) -> Dict[str, object]:
         return self.product_launch_store.link_gumroad_product(launch_id, gumroad_product_id)
