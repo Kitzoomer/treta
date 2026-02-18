@@ -77,8 +77,8 @@ class RedditOpsEndpointTest(unittest.TestCase):
             payload = json.loads(response.read().decode("utf-8"))
 
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["item"]["proposal_id"], "proposal_1")
-        self.assertEqual(payload["item"]["product_name"], "Reddit Micro SaaS")
+        self.assertEqual(payload["data"]["item"]["proposal_id"], "proposal_1")
+        self.assertEqual(payload["data"]["item"]["product_name"], "Reddit Micro SaaS")
 
         stored = json.loads((Path(self.temp_dir.name) / "reddit_posts.json").read_text(encoding="utf-8"))
         self.assertEqual(len(stored), 1)
@@ -109,9 +109,10 @@ class RedditOpsEndpointTest(unittest.TestCase):
         with urlopen(f"http://127.0.0.1:{self.server.server_port}/reddit/posts", timeout=2) as response:
             payload = json.loads(response.read().decode("utf-8"))
 
-        self.assertIsInstance(payload["items"], list)
-        self.assertEqual(len(payload["items"]), 1)
-        self.assertEqual(payload["items"][0]["id"], "reddit_post_1")
+        self.assertTrue(payload["ok"])
+        self.assertIsInstance(payload["data"]["items"], list)
+        self.assertEqual(len(payload["data"]["items"]), 1)
+        self.assertEqual(payload["data"]["items"][0]["id"], "reddit_post_1")
 
     def test_run_scan_is_incremental_for_duplicate_posts(self):
         self._drain_events()
