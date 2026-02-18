@@ -13,6 +13,8 @@ from core.services.gumroad_sync_service import GumroadSyncService
 from core.system_integrity import compute_system_integrity
 from core.reddit_intelligence.router import RedditIntelligenceRouter
 from core.reddit_public.config import get_config, update_config
+from core.http.response import error as error_response
+from core.http.response import success
 from core.version import VERSION
 
 
@@ -60,6 +62,15 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(json.dumps(body).encode("utf-8"))
+
+    def _send_success(self, code: int, data: dict):
+        return self._send(code, success(data))
+
+    def _send_error(self, status_code: int, error_type: str, code: str, message: str, data: dict | None = None):
+        body = error_response(error_type, code, message)
+        if data is not None:
+            body["data"] = data
+        return self._send(status_code, body)
 
     def _send_static(self, file_name: str):
         file_path = self.ui_dir / file_name
@@ -189,11 +200,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/system/integrity":
             if self.product_proposal_store is None:
-                return self._send(503, {"error": "product_proposal_store_unavailable"})
+                return self._send_error(503, "dependency_error", "product_proposal_store_unavailable", "product_proposal_store_unavailable")
             if self.product_plan_store is None:
-                return self._send(503, {"error": "product_plan_store_unavailable"})
+                return self._send_error(503, "dependency_error", "product_plan_store_unavailable", "product_plan_store_unavailable")
             if self.product_launch_store is None:
-                return self._send(503, {"error": "product_launch_store_unavailable"})
+                return self._send_error(503, "dependency_error", "product_launch_store_unavailable", "product_launch_store_unavailable")
 
             data_errors: list[str] = []
 
@@ -222,7 +233,13 @@ class Handler(BaseHTTPRequestHandler):
                 data_errors.append(f"launches_load_failed: {exc}")
 
             if data_errors:
-                return self._send(503, {"error": "integrity_data_unavailable", "details": data_errors})
+                return self._send_error(
+                    503,
+                    "dependency_error",
+                    "integrity_data_unavailable",
+                    "integrity_data_unavailable",
+                    data={"error": "integrity_data_unavailable", "details": data_errors},
+                )
 
             report = compute_system_integrity(
                 proposals=proposals,
@@ -230,7 +247,7 @@ class Handler(BaseHTTPRequestHandler):
                 launches=launches,
             )
             report["version"] = VERSION
-            return self._send(200, report)
+            return self._send_success(200, report)
 
         if parsed.path.startswith("/product_launches/"):
             if self.product_launch_store is None:
@@ -291,19 +308,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"status": "connected"})
 
         if parsed.path == "/reddit/config":
-            return self._send(200, get_config())
+            return self._send_success(200, get_config())
 
         if parsed.path == "/reddit/last_scan":
             if self.control is None:
-                return self._send(503, {"ok": False, "error": "control_unavailable"})
-            return self._send(
+                return self._send_error(503, "dependency_error", "control_unavailable", "control_unavailable")
+            return self._send_success(
                 200,
                 self.control.get_last_reddit_scan() or {"message": "No scan executed yet."},
             )
 
         if parsed.path == "/reddit/posts":
             posts = self._load_reddit_posts()
-            return self._send(200, {"items": list(reversed(posts))})
+            return self._send_success(200, {"items": list(reversed(posts))})
 
         return self._send(404, {"error": "not_found"})
 
@@ -377,10 +394,10 @@ class Handler(BaseHTTPRequestHandler):
 
             if transition_event_type is not None:
                 if self.control is None:
-                    return self._send(503, {"ok": False, "error": "control_unavailable"})
+                    return self._send_error(503, "dependency_error", "control_unavailable", "control_unavailable")
                 proposal_id = str(transition_proposal_id or "").strip()
                 if not proposal_id:
-                    return self._send(400, {"ok": False, "error": "missing_id"})
+                    return self._send_error(400, "client_error", "missing_id", "missing_id")
 
                 transition_event = Event(
                     type=transition_event_type,
@@ -392,9 +409,9 @@ class Handler(BaseHTTPRequestHandler):
                 for action in actions:
                     event_bus.push(Event(type=action.type, payload=action.payload, source="control"))
                     if action.type == "ProductProposalStatusChanged":
-                        return self._send(200, action.payload["proposal"])
+                        return self._send_success(200, action.payload["proposal"])
 
-                return self._send(404, {"ok": False, "error": "proposal_not_found"})
+                return self._send_error(404, "client_error", "proposal_not_found", "proposal_not_found")
 
             if self.path == "/event":
                 ev_type = data.get("type")
@@ -433,9 +450,9 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/product_proposals/execute":
                 proposal_id = str(data.get("id", "")).strip()
                 if not proposal_id:
-                    return self._send(400, {"ok": False, "error": "missing_id"})
+                    return self._send_error(400, "client_error", "missing_id", "missing_id")
                 if self.control is None:
-                    return self._send(503, {"ok": False, "error": "control_unavailable"})
+                    return self._send_error(503, "dependency_error", "control_unavailable", "control_unavailable")
 
                 execute_event = Event(
                     type="ExecuteProductPlanRequested",
@@ -447,9 +464,9 @@ class Handler(BaseHTTPRequestHandler):
                 for action in actions:
                     event_bus.push(Event(type=action.type, payload=action.payload, source="control"))
                     if action.type == "ProductPlanExecuted":
-                        return self._send(200, action.payload["execution_package"])
+                        return self._send_success(200, action.payload["execution_package"])
 
-                return self._send(404, {"ok": False, "error": "proposal_not_found"})
+                return self._send_error(404, "client_error", "proposal_not_found", "proposal_not_found")
 
             if launch_sale_id is not None:
                 if self.product_launch_store is None:
@@ -523,12 +540,12 @@ class Handler(BaseHTTPRequestHandler):
                 if "enable_engagement_boost" in payload:
                     payload["enable_engagement_boost"] = bool(payload["enable_engagement_boost"])
                 updated = update_config(payload)
-                return self._send(200, updated)
+                return self._send_success(200, updated)
 
             if self.path == "/reddit/run_scan":
                 if self.control is None:
-                    return self._send(503, {"ok": False, "error": "control_unavailable"})
-                return self._send(200, self.control.run_reddit_public_scan())
+                    return self._send_error(503, "dependency_error", "control_unavailable", "control_unavailable")
+                return self._send_success(200, self.control.run_reddit_public_scan())
 
             if self.path == "/reddit/mark_posted":
                 proposal_id = str(data.get("proposal_id", "")).strip()
@@ -542,11 +559,11 @@ class Handler(BaseHTTPRequestHandler):
                         if comments_index + 1 < len(path_parts):
                             post_id = str(path_parts[comments_index + 1]).strip()
                 if not proposal_id:
-                    return self._send(400, {"ok": False, "error": "missing_proposal_id"})
+                    return self._send_error(400, "client_error", "missing_proposal_id", "missing_proposal_id")
                 if not subreddit:
-                    return self._send(400, {"ok": False, "error": "missing_subreddit"})
+                    return self._send_error(400, "client_error", "missing_subreddit", "missing_subreddit")
                 if not post_url:
-                    return self._send(400, {"ok": False, "error": "missing_post_url"})
+                    return self._send_error(400, "client_error", "missing_post_url", "missing_post_url")
 
                 product_name = ""
                 if self.product_proposal_store is not None:
@@ -581,7 +598,7 @@ class Handler(BaseHTTPRequestHandler):
                 posts = self._load_reddit_posts()
                 posts.append(entry)
                 self._save_reddit_posts(posts)
-                return self._send(200, {"ok": True, "item": entry})
+                return self._send_success(200, {"item": entry})
 
             if strategy_execute_id is not None:
                 if self.strategy_action_execution_layer is None:
@@ -633,7 +650,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"ok": False, "error": str(e)})
             return self._send(400, {"ok": False, "error": str(e)})
         except Exception as e:
-            return self._send(400, {"ok": False, "error": str(e)})
+            return self._send_error(500, "server_error", "unexpected_error", str(e))
 
     def do_PATCH(self):
         length = int(self.headers.get("Content-Length", "0"))

@@ -90,7 +90,8 @@ class SystemIntegrityEndpointTest(unittest.TestCase):
             with urlopen(f"http://127.0.0.1:{server.server_port}/system/integrity", timeout=2) as response:
                 payload = json.loads(response.read().decode("utf-8"))
 
-            self.assertEqual(payload.get("version"), VERSION)
+            self.assertTrue(payload.get("ok"))
+            self.assertEqual(payload["data"].get("version"), VERSION)
         finally:
             server.shutdown()
             server.server_close()
@@ -109,8 +110,11 @@ class SystemIntegrityEndpointTest(unittest.TestCase):
 
             self.assertEqual(ctx.exception.code, 503)
             payload = json.loads(ctx.exception.read().decode("utf-8"))
-            self.assertEqual(payload.get("error"), "integrity_data_unavailable")
-            self.assertTrue(payload.get("details"))
+            self.assertFalse(payload.get("ok"))
+            self.assertEqual(payload["error"]["type"], "dependency_error")
+            self.assertEqual(payload["error"]["code"], "integrity_data_unavailable")
+            self.assertEqual(payload["data"].get("error"), "integrity_data_unavailable")
+            self.assertTrue(payload["data"].get("details"))
         finally:
             server.shutdown()
             server.server_close()
