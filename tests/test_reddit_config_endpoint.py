@@ -21,6 +21,7 @@ class RedditConfigEndpointTest(unittest.TestCase):
             with urlopen(f"http://127.0.0.1:{server.server_port}/reddit/config", timeout=2) as response:
                 payload = json.loads(response.read().decode("utf-8"))
             self.assertEqual(payload["pain_threshold"], 60)
+            self.assertEqual(payload["subreddits"], ["UGCcreators", "freelance", "ContentCreators", "smallbusiness"])
 
             req = Request(
                 f"http://127.0.0.1:{server.server_port}/reddit/config",
@@ -30,6 +31,7 @@ class RedditConfigEndpointTest(unittest.TestCase):
                         "pain_keywords": ["blocked", "need support"],
                         "commercial_keywords": "pricing, proposal",
                         "enable_engagement_boost": False,
+                        "subreddits": "freelance, UGCcreators",
                     }
                 ).encode("utf-8"),
                 method="POST",
@@ -42,6 +44,7 @@ class RedditConfigEndpointTest(unittest.TestCase):
             self.assertEqual(updated["pain_keywords"], ["blocked", "need support"])
             self.assertEqual(updated["commercial_keywords"], ["pricing", "proposal"])
             self.assertFalse(updated["enable_engagement_boost"])
+            self.assertEqual(updated["subreddits"], ["freelance", "UGCcreators"])
         finally:
             server.shutdown()
             server.server_close()
@@ -50,6 +53,7 @@ class RedditConfigEndpointTest(unittest.TestCase):
         expected = {
             "analyzed": 2,
             "qualified": 1,
+            "by_subreddit": {"freelance": 1},
             "posts": [
                 {
                     "title": "Need help with rates",

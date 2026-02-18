@@ -1,4 +1,10 @@
 DEFAULT_CONFIG = {
+    "subreddits": [
+        "UGCcreators",
+        "freelance",
+        "ContentCreators",
+        "smallbusiness",
+    ],
     "pain_threshold": 60,
     "pain_keywords": [
         "struggling",

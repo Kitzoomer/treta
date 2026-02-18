@@ -450,12 +450,18 @@ class Handler(BaseHTTPRequestHandler):
 
             if self.path == "/reddit/config":
                 editable_fields = {
+                    "subreddits",
                     "pain_threshold",
                     "pain_keywords",
                     "commercial_keywords",
                     "enable_engagement_boost",
                 }
                 payload = {key: value for key, value in data.items() if key in editable_fields}
+                if "subreddits" in payload:
+                    raw_subreddits = payload["subreddits"]
+                    if isinstance(raw_subreddits, str):
+                        raw_subreddits = raw_subreddits.split(",")
+                    payload["subreddits"] = [str(item).strip() for item in raw_subreddits if str(item).strip()]
                 if "pain_threshold" in payload:
                     payload["pain_threshold"] = int(payload["pain_threshold"])
                 if "pain_keywords" in payload:
