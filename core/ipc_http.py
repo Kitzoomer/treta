@@ -32,6 +32,27 @@ class Handler(BaseHTTPRequestHandler):
     reddit_router = None
     ui_dir = Path(__file__).resolve().parent.parent / "ui"
 
+    def _reddit_posts_path(self) -> Path:
+        data_dir = Path(__file__).resolve().parent.parent / ".treta_data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        return data_dir / "reddit_posts.json"
+
+    def _load_reddit_posts(self) -> list[dict]:
+        path = self._reddit_posts_path()
+        if not path.exists():
+            return []
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        if not isinstance(loaded, list):
+            return []
+        return [item for item in loaded if isinstance(item, dict)]
+
+    def _save_reddit_posts(self, items: list[dict]) -> None:
+        path = self._reddit_posts_path()
+        path.write_text(json.dumps(items, indent=2), encoding="utf-8")
+
     def _send(self, code: int, body: dict):
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
@@ -268,6 +289,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.control.get_last_reddit_scan() or {"message": "No scan executed yet."},
             )
 
+        if parsed.path == "/reddit/posts":
+            posts = self._load_reddit_posts()
+            return self._send(200, {"items": list(reversed(posts))})
+
         return self._send(404, {"error": "not_found"})
 
     def do_POST(self):
@@ -320,6 +345,7 @@ class Handler(BaseHTTPRequestHandler):
             "/reddit/signals",
             "/reddit/config",
             "/reddit/run_scan",
+            "/reddit/mark_posted",
         }
         if self.path not in allowed_paths and transition_event_type is None and launch_sale_id is None and launch_status_id is None and launch_link_gumroad_id is None and strategy_execute_id is None and strategy_reject_id is None:
             return self._send(404, {"ok": False, "error": "not_found"})
@@ -491,6 +517,51 @@ class Handler(BaseHTTPRequestHandler):
                 if self.control is None:
                     return self._send(503, {"ok": False, "error": "control_unavailable"})
                 return self._send(200, self.control.run_reddit_public_scan())
+
+            if self.path == "/reddit/mark_posted":
+                proposal_id = str(data.get("proposal_id", "")).strip()
+                subreddit = str(data.get("subreddit", "")).strip()
+                post_url = str(data.get("post_url", "")).strip()
+                if not proposal_id:
+                    return self._send(400, {"ok": False, "error": "missing_proposal_id"})
+                if not subreddit:
+                    return self._send(400, {"ok": False, "error": "missing_subreddit"})
+                if not post_url:
+                    return self._send(400, {"ok": False, "error": "missing_post_url"})
+
+                product_name = ""
+                if self.product_proposal_store is not None:
+                    proposal = self.product_proposal_store.get(proposal_id)
+                    if proposal:
+                        product_name = str(proposal.get("product_name", "")).strip()
+
+                upvotes = data.get("upvotes", 0)
+                comments = data.get("comments", 0)
+                try:
+                    upvotes = int(upvotes)
+                except (TypeError, ValueError):
+                    upvotes = 0
+                try:
+                    comments = int(comments)
+                except (TypeError, ValueError):
+                    comments = 0
+
+                entry = {
+                    "id": f"reddit_post_{int(time.time() * 1000)}",
+                    "proposal_id": proposal_id,
+                    "product_name": product_name,
+                    "subreddit": subreddit,
+                    "post_url": post_url,
+                    "upvotes": upvotes,
+                    "comments": comments,
+                    "status": "open",
+                    "date": time.strftime("%Y-%m-%d"),
+                    "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                }
+                posts = self._load_reddit_posts()
+                posts.append(entry)
+                self._save_reddit_posts(posts)
+                return self._send(200, {"ok": True, "item": entry})
 
             if strategy_execute_id is not None:
                 if self.strategy_action_execution_layer is None:
