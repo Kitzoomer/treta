@@ -55,6 +55,12 @@ const state = {
   redditLastScan: {
     message: "No scan executed yet.",
   },
+  redditSignals: [],
+  redditTodayPlan: {
+    generated_at: null,
+    signals: [],
+    summary: "",
+  },
   strategyDecision: {
     primary_focus: "unknown",
     confidence: 0,
@@ -238,6 +244,12 @@ const api = {
   },
   getRedditLastScan() {
     return this.fetchJson("/reddit/last_scan");
+  },
+  getRedditSignals(limit = 50) {
+    return this.fetchJson(`/reddit/signals?limit=${encodeURIComponent(limit)}`);
+  },
+  getRedditTodayPlan() {
+    return this.fetchJson("/reddit/today_plan");
   },
   getStrategyDecision() {
     return this.fetchJson("/strategy/decide");
@@ -824,6 +836,76 @@ const views = {
     const strategyDecisionScore = helpers.t(strategyDecision.confidence, "-");
     const strategyDecisionActionLabel = helpers.t(strategyDecision.actions?.[0]?.type, "No immediate action").replaceAll("_", " ");
 
+    const redditSignals = Array.isArray(state.redditSignals) ? state.redditSignals : [];
+    const painThreshold = Number(
+      state.redditLastScan?.pain_threshold
+      || state.redditConfig?.pain_threshold
+      || 0,
+    );
+    const intentDistribution = redditSignals.reduce((acc, signal) => {
+      const intent = helpers.t(signal.intent, signal.intent_level || signal.intent_type || "unknown");
+      acc[intent] = (acc[intent] || 0) + 1;
+      return acc;
+    }, {});
+    const urgencyDistribution = redditSignals.reduce((acc, signal) => {
+      const urgency = helpers.t(signal.urgency, signal.urgency_level || "unknown");
+      acc[urgency] = (acc[urgency] || 0) + 1;
+      return acc;
+    }, {});
+    const getSignalPainScore = (signal) => Number(signal.pain_score ?? signal.opportunity_score ?? signal.score ?? 0);
+    const topSignals = [...redditSignals]
+      .sort((left, right) => getSignalPainScore(right) - getSignalPainScore(left))
+      .slice(0, 5);
+    const hasFeedbackAdjustedSignals = redditSignals.some((signal) => {
+      const hasAdjustmentField = signal.performance_adjustment !== undefined
+        && signal.performance_adjustment !== null
+        && signal.performance_adjustment !== "";
+      const reasoning = helpers.normalizeStatus(signal.reasoning || "");
+      const adjustedByReasoning = reasoning.includes("adapted")
+        || reasoning.includes("boosted")
+        || reasoning.includes("reduced");
+      return hasAdjustmentField || adjustedByReasoning;
+    });
+    const todayPlan = state.redditTodayPlan || {};
+    const todayPlanSignals = Array.isArray(todayPlan.signals) ? todayPlan.signals.length : 0;
+    const renderDistribution = (distribution) => {
+      const rows = Object.entries(distribution)
+        .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+        .map(([label, count]) => `<li>${helpers.escape(label)}: ${helpers.escape(count)}</li>`)
+        .join("");
+      return rows || "<li class='muted-note'>No signals yet.</li>";
+    };
+    const renderTopSignals = () => {
+      if (!topSignals.length) return "<p class='empty'>No Reddit signals available.</p>";
+      return `
+        <div class="dashboard-strategy-list">
+          ${topSignals.map((signal) => {
+            const title = helpers.t(signal.title, signal.post_text || signal.post_title || "Untitled");
+            const trimmedTitle = title.length > 88 ? `${title.slice(0, 85)}…` : title;
+            const subreddit = helpers.t(signal.subreddit, "-");
+            const painScore = getSignalPainScore(signal);
+            const intent = helpers.t(signal.intent, signal.intent_level || signal.intent_type || "-");
+            const urgency = helpers.t(signal.urgency, signal.urgency_level || "-");
+            const adjustment = signal.performance_adjustment;
+            const adjustmentLabel = adjustment === undefined || adjustment === null || adjustment === ""
+              ? "-"
+              : adjustment;
+            return `
+              <article class="dashboard-strategy-card">
+                <div class="dashboard-strategy-meta">
+                  <span class="badge info">Pain: ${helpers.escape(painScore)}</span>
+                  <span class="dashboard-risk-badge risk-neutral">r/${helpers.escape(subreddit)}</span>
+                </div>
+                <p><strong>Title:</strong> ${helpers.escape(trimmedTitle)}</p>
+                <p><strong>Intent:</strong> ${helpers.escape(intent)} · <strong>Urgency:</strong> ${helpers.escape(urgency)}</p>
+                <p><strong>Performance adjustment:</strong> ${helpers.escape(adjustmentLabel)}</p>
+              </article>
+            `;
+          }).join("")}
+        </div>
+      `;
+    };
+
     this.shell("Dashboard", "Operational summary and next best action", `
       <section class="os-dashboard">
         ${renderGlobalStatus()}
@@ -847,6 +929,25 @@ const views = {
           ${strategyError}
           ${strategyFeedback}
           ${renderStrategicCompact()}
+        </article>
+
+        <article class="card" id="dashboard-reddit-engine-status">
+          <h3>REDDIT ENGINE STATUS</h3>
+          <p><strong>Scan Summary:</strong> analyzed ${helpers.escape(lastScanAnalyzed)} · qualified ${helpers.escape(lastScanQualified)} · pain threshold ${helpers.escape(painThreshold)}</p>
+          <section class="card-grid cols-2">
+            <div>
+              <h4>Intent Distribution</h4>
+              <ul>${renderDistribution(intentDistribution)}</ul>
+            </div>
+            <div>
+              <h4>Urgency Distribution</h4>
+              <ul>${renderDistribution(urgencyDistribution)}</ul>
+            </div>
+          </section>
+          <p><strong>Today plan:</strong> ${helpers.escape(todayPlanSignals)} signals ${todayPlan.generated_at ? `· generated ${helpers.escape(new Date(todayPlan.generated_at).toLocaleString())}` : ""}</p>
+          <p><strong>Feedback adjustments detected:</strong> <span class="badge ${hasFeedbackAdjustedSignals ? "warn" : "info"}">${hasFeedbackAdjustedSignals ? "YES" : "NO"}</span></p>
+          <h4>Top 5 Signals (pain score)</h4>
+          ${renderTopSignals()}
         </article>
       </section>
     `);
@@ -1933,7 +2034,7 @@ function renderTelemetry() {
 
 async function refreshLoop() {
   try {
-    const [systemData, eventData, memoryData, oppData, proposalData, launchData, planData, perfData, strategyData, pendingData, dailyLoopData, redditConfigData, systemIntegrityData, redditLastScanData, strategyDecisionData] = await Promise.all([
+    const [systemData, eventData, memoryData, oppData, proposalData, launchData, planData, perfData, strategyData, pendingData, dailyLoopData, redditConfigData, systemIntegrityData, redditLastScanData, redditSignalsData, redditTodayPlanData, strategyDecisionData] = await Promise.all([
       api.getState(),
       api.getRecentEvents(),
       api.getMemory(),
@@ -1948,6 +2049,8 @@ async function refreshLoop() {
       api.getRedditConfig(),
       api.getSystemIntegrity(),
       api.getRedditLastScan(),
+      api.getRedditSignals(),
+      api.getRedditTodayPlan(),
       api.getStrategyDecision(),
     ]);
 
@@ -1970,6 +2073,8 @@ async function refreshLoop() {
     state.redditConfig = redditConfigData || state.redditConfig;
     state.systemIntegrity = systemIntegrityData || state.systemIntegrity;
     state.redditLastScan = redditLastScanData || state.redditLastScan;
+    state.redditSignals = redditSignalsData?.items || [];
+    state.redditTodayPlan = redditTodayPlanData || state.redditTodayPlan;
     state.strategyDecision = strategyDecisionData || state.strategyDecision;
   } catch (error) {
     log("system", `refresh error: ${error.message}`);
