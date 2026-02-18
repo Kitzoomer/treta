@@ -4,10 +4,17 @@ from unittest.mock import patch
 from core.bus import event_bus
 from core.control import Control
 from core.events import Event
+from core.reddit_public.config import DEFAULT_CONFIG, update_config
 from core.reddit_public.pain_scoring import compute_pain_score
 
 
 class PainScoringTest(unittest.TestCase):
+    def setUp(self):
+        update_config(DEFAULT_CONFIG.copy())
+
+    def tearDown(self):
+        update_config(DEFAULT_CONFIG.copy())
+
     def test_multiple_keywords_scores_above_70(self):
         post = {
             "title": "How do I fix client pricing?",
@@ -48,7 +55,27 @@ class PainScoringTest(unittest.TestCase):
         self.assertEqual(result["pain_score"], 100)
 
 
+
+    def test_disable_engagement_boost_uses_config(self):
+        post = {
+            "title": "How do I fix this?",
+            "selftext": "Need help",
+            "score": 12,
+            "num_comments": 30,
+        }
+
+        update_config({"enable_engagement_boost": False})
+        result = compute_pain_score(post)
+
+        self.assertEqual(result["pain_score"], 35)
+
 class RedditPublicPainGateTest(unittest.TestCase):
+    def setUp(self):
+        update_config(DEFAULT_CONFIG.copy())
+
+    def tearDown(self):
+        update_config(DEFAULT_CONFIG.copy())
+
     def test_only_posts_with_pain_score_60_or_more_emit_opportunity(self):
         while event_bus.pop(timeout=0.001) is not None:
             pass
@@ -94,6 +121,32 @@ class RedditPublicPainGateTest(unittest.TestCase):
         self.assertIn("intent_type", payload)
         self.assertIn("urgency_level", payload)
 
+
+    def test_threshold_comes_from_config(self):
+        while event_bus.pop(timeout=0.001) is not None:
+            pass
+
+        posts = [
+            {
+                "id": "mid",
+                "title": "How do I set pricing?",
+                "selftext": "need help",
+                "score": 15,
+                "num_comments": 5,
+                "subreddit": "freelance",
+            }
+        ]
+
+        update_config({"pain_threshold": 90})
+
+        control = Control()
+        with patch("core.reddit_public.service.RedditPublicService.scan_subreddits", return_value=posts), patch(
+            "core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions",
+            return_value=[],
+        ):
+            result = control.run_reddit_public_scan()
+
+        self.assertEqual(result["qualified"], 0)
 
 if __name__ == "__main__":
     unittest.main()

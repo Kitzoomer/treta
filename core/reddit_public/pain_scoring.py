@@ -2,28 +2,7 @@ from __future__ import annotations
 
 from typing import Dict
 
-EXPLICIT_PAIN_KEYWORDS = [
-    "struggling",
-    "stuck",
-    "can't",
-    "cannot",
-    "problem",
-    "issue",
-    "need help",
-    "confused",
-    "overwhelmed",
-]
-
-COMMERCIAL_INTENT_KEYWORDS = [
-    "client",
-    "pricing",
-    "proposal",
-    "media kit",
-    "rate",
-    "brand deal",
-    "charge",
-    "template",
-]
+from core.reddit_public.config import get_config
 
 QUESTION_PATTERNS = [
     "how do i",
@@ -47,12 +26,18 @@ def compute_pain_score(post: dict) -> Dict[str, object]:
     has_help = False
     has_commercial = False
 
-    for keyword in EXPLICIT_PAIN_KEYWORDS:
+    config = get_config()
+
+    pain_keywords = config.get("pain_keywords", [])
+    commercial_keywords = config.get("commercial_keywords", [])
+    enable_engagement_boost = bool(config.get("enable_engagement_boost", True))
+
+    for keyword in pain_keywords:
         if keyword in text:
             score += 20
             has_help = True
 
-    for keyword in COMMERCIAL_INTENT_KEYWORDS:
+    for keyword in commercial_keywords:
         if keyword in text:
             score += 25
             has_commercial = True
@@ -60,11 +45,12 @@ def compute_pain_score(post: dict) -> Dict[str, object]:
     if title.strip().endswith("?") or any(pattern in text for pattern in QUESTION_PATTERNS):
         score += 15
 
-    num_comments = int(post.get("num_comments", 0) or 0)
-    if num_comments >= 15:
-        score += 20
-    elif num_comments >= 5:
-        score += 10
+    if enable_engagement_boost:
+        num_comments = int(post.get("num_comments", 0) or 0)
+        if num_comments >= 15:
+            score += 20
+        elif num_comments >= 5:
+            score += 10
 
     pain_score = min(score, 100)
 
