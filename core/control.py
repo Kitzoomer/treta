@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime
+import json
+from pathlib import Path
 from typing import Dict, List
 
 from core.events import Event
@@ -90,6 +92,26 @@ class Control:
         self.product_proposal_store._save()
         self.product_launch_store._save()
 
+    def _reddit_posts_path(self) -> Path:
+        data_dir = Path(__file__).resolve().parent.parent / ".treta_data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        return data_dir / "reddit_posts.json"
+
+    def _load_reddit_posts(self) -> list[dict]:
+        path = self._reddit_posts_path()
+        if not path.exists():
+            return []
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        if not isinstance(loaded, list):
+            return []
+        return [item for item in loaded if isinstance(item, dict)]
+
+    def _save_reddit_posts(self, items: list[dict]) -> None:
+        self._reddit_posts_path().write_text(json.dumps(items, indent=2), encoding="utf-8")
+
     def run_reddit_public_scan(self) -> Dict[str, object]:
         from core.reddit_public.service import RedditPublicService
 
@@ -110,8 +132,18 @@ class Control:
         qualified_posts: List[Dict[str, object]] = []
         ranked_candidates: List[Dict[str, object]] = []
         by_subreddit: Dict[str, int] = {}
+        stored_posts = self._load_reddit_posts()
+        known_post_ids = {
+            str(item.get("post_id", "")).strip()
+            for item in stored_posts
+            if str(item.get("post_id", "")).strip()
+        }
 
         for post in posts:
+            post_id = str(post.get("id", "")).strip()
+            if post_id and post_id in known_post_ids:
+                continue
+
             title = str(post.get("title", ""))
             body = str(post.get("selftext", ""))
             pain_data = compute_pain_score(post)
@@ -141,6 +173,25 @@ class Control:
             )
             subreddit_name = str(post.get("subreddit", "")).strip() or "unknown"
             by_subreddit[subreddit_name] = by_subreddit.get(subreddit_name, 0) + 1
+            if post_id:
+                known_post_ids.add(post_id)
+            stored_posts.append(
+                {
+                    "id": f"reddit_post_{int(datetime.utcnow().timestamp() * 1000)}_{post_id or len(stored_posts)}",
+                    "post_id": post_id,
+                    "proposal_id": "",
+                    "product_name": "",
+                    "subreddit": subreddit_name,
+                    "post_url": str(post.get("url", "")).strip(),
+                    "upvotes": int(post.get("score", 0) or 0),
+                    "comments": int(post.get("num_comments", 0) or 0),
+                    "status": "open",
+                    "date": datetime.utcnow().strftime("%Y-%m-%d"),
+                    "created_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                }
+            )
+
+        self._save_reddit_posts(stored_posts)
 
         if ranked_candidates and not self.has_active_proposal():
             candidates = sorted(
