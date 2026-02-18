@@ -9,7 +9,6 @@ from core.action_planner import ActionPlanner
 from core.confirmation_queue import ConfirmationQueue
 from core.opportunity_store import OpportunityStore
 from core.bus import event_bus
-from core.opportunity_sources.infoproduct_signals import InfoproductSignals
 from core.product_engine import ProductEngine
 from core.alignment_engine import AlignmentEngine
 from core.product_proposal_store import ProductProposalStore
@@ -78,6 +77,57 @@ class Control:
         self.product_proposal_store._save()
         self.product_launch_store._save()
 
+    def _scan_reddit_public_opportunities(self) -> None:
+        from core.reddit_public.service import RedditPublicService
+
+        subreddits = [
+            "UGCcreators",
+            "freelance",
+            "ContentCreators",
+            "smallbusiness",
+        ]
+        keywords = [
+            "template",
+            "media kit",
+            "proposal",
+            "client",
+            "pricing",
+            "rate",
+            "how do I",
+            "struggling",
+        ]
+
+        posts = RedditPublicService().scan_subreddits(subreddits)
+        print(f"[REDDIT_PUBLIC] analyzed {len(posts)} posts after score/comment filters")
+
+        for post in posts:
+            title = str(post.get("title", ""))
+            body = str(post.get("selftext", ""))
+            text = f"{title} {body}".lower()
+            if not any(keyword.lower() in text for keyword in keywords):
+                continue
+
+            snippet = body[:300]
+            event_bus.push(
+                Event(
+                    type="OpportunityDetected",
+                    payload={
+                        "id": f"reddit-public-{post.get('id', '')}",
+                        "source": "reddit_public",
+                        "title": title,
+                        "subreddit": post.get("subreddit", ""),
+                        "score": post.get("score", 0),
+                        "num_comments": post.get("num_comments", 0),
+                        "snippet": snippet,
+                        "summary": snippet,
+                        "opportunity": {
+                            "confidence": min(10, max(1, int(post.get("score", 0) / 10) + 1)),
+                        },
+                    },
+                    source="reddit_public_scan",
+                )
+            )
+
     def _generate_reddit_daily_plan(self) -> None:
         from core.reddit_intelligence.daily_plan_store import RedditDailyPlanStore
         from core.reddit_intelligence.service import RedditIntelligenceService
@@ -123,8 +173,7 @@ class Control:
             return [Action(type="RunOpportunityScan", payload={"dry_run": True})]
 
         if event.type == "RunInfoproductScan":
-            scanner = InfoproductSignals()
-            scanner.emit_signals(event_bus)
+            self._scan_reddit_public_opportunities()
             self._generate_reddit_daily_plan()
             return []
 
@@ -203,9 +252,12 @@ class Control:
                 item_id=str(event.payload.get("id", "")).strip() or None,
                 source=str(event.payload.get("source", "unknown")),
                 title=str(event.payload.get("title", "")),
-                summary=str(event.payload.get("summary", "")),
+                summary=str(event.payload.get("summary", event.payload.get("snippet", ""))),
                 opportunity=dict(event.payload.get("opportunity", {})),
             )
+
+            if created.get("source") == "reddit_public":
+                return []
 
             alignment = self.alignment_engine.evaluate(
                 created,

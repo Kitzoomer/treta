@@ -64,7 +64,7 @@ class DailyLoopEngineTest(unittest.TestCase):
         ]
 
         control = Control()
-        with patch("core.control.InfoproductSignals.emit_signals", return_value=None), patch(
+        with patch("core.control.Control._scan_reddit_public_opportunities", return_value=None), patch(
             "core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions",
             return_value=signals[:5],
         ):
