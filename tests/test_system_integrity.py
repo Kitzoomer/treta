@@ -1,4 +1,9 @@
+import json
 import unittest
+from urllib.error import HTTPError
+from urllib.request import urlopen
+
+from core.ipc_http import start_http_server
 
 from core.system_integrity import compute_system_integrity
 
@@ -56,3 +61,30 @@ class SystemIntegrityTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _BoomStore:
+    def list(self, *args, **kwargs):
+        raise RuntimeError("boom")
+
+
+class SystemIntegrityEndpointTest(unittest.TestCase):
+    def test_system_integrity_returns_503_when_store_data_unavailable(self):
+        server = start_http_server(
+            host="127.0.0.1",
+            port=0,
+            product_proposal_store=_BoomStore(),
+            product_plan_store=_BoomStore(),
+            product_launch_store=_BoomStore(),
+        )
+        try:
+            with self.assertRaises(HTTPError) as ctx:
+                urlopen(f"http://127.0.0.1:{server.server_port}/system/integrity", timeout=2)
+
+            self.assertEqual(ctx.exception.code, 503)
+            payload = json.loads(ctx.exception.read().decode("utf-8"))
+            self.assertEqual(payload.get("error"), "integrity_data_unavailable")
+            self.assertTrue(payload.get("details"))
+        finally:
+            server.shutdown()
+            server.server_close()

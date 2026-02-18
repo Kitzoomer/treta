@@ -417,19 +417,20 @@ function buildPipelineTrace(stateSnapshot) {
 
     const proposalStatus = normalize(proposal.status) || null;
     const launchStatus = normalize(launch?.status);
-    const isReady = ["ready_to_launch", "ready_for_review"].includes(proposalStatus);
+    const isReadyForExecution = proposalStatus === "ready_to_launch";
+    const isReadyForLaunch = proposalStatus === "ready_for_review";
 
     let primaryAction = { label: "View details", route: "#/work", run: null };
     if (proposalId && proposalStatus === "draft") {
       primaryAction = { label: "Approve", route: "#/work", run: { method: "POST", path: `/product_proposals/${proposalId}/approve`, body: {} } };
     } else if (proposalId && proposalStatus === "approved" && !plan) {
       primaryAction = { label: "Build plan", route: "#/work", run: { method: "POST", path: "/product_plans/build", body: { proposal_id: proposalId } } };
-    } else if (proposalId && plan && !isReady && !["launched", "archived"].includes(proposalStatus)) {
+    } else if (proposalId && plan && isReadyForExecution && !["launched", "archived"].includes(proposalStatus)) {
       primaryAction = { label: "Mark ready", route: "#/work", run: { method: "POST", path: `/product_proposals/${proposalId}/ready`, body: {} } };
-    } else if (proposalId && isReady && !launch) {
+    } else if (proposalId && isReadyForLaunch && !launch) {
       primaryAction = { label: "Launch", route: "#/work", run: { method: "POST", path: `/product_proposals/${proposalId}/launch`, body: {} } };
-    } else if (launch?.id && launchStatus && launchStatus !== "launched") {
-      primaryAction = { label: "Set status launched", route: "#/work", run: { method: "POST", path: `/product_launches/${launch.id}/status`, body: { status: "launched" } } };
+    } else if (launch?.id && launchStatus && launchStatus !== "active") {
+      primaryAction = { label: "Set status active", route: "#/work", run: { method: "POST", path: `/product_launches/${launch.id}/status`, body: { status: "active" } } };
     }
 
     const secondaryActions = [];
@@ -557,7 +558,7 @@ function computePrimaryAttention(stateSnapshot) {
     });
   }
 
-  const launchReadyItems = launches.filter((launch) => helpers.normalizeStatus(launch.status) !== "launched");
+  const launchReadyItems = launches.filter((launch) => helpers.normalizeStatus(launch.status) !== "active");
   if (launchReadyItems.length > 0) {
     const launchScore = launchReadyItems.reduce((maxScore, launch) => {
       const revenueEstimate = toNumber(launch.revenue_estimate ?? launch.projected_revenue ?? launch.target_revenue);
@@ -608,7 +609,7 @@ function computeSystemStatus(stateSnapshot) {
 
   const hasStrategy = strategyPendingActions.length > 0;
   const hasDrafts = proposals.some((proposal) => helpers.normalizeStatus(proposal.status) === "draft");
-  const hasLaunchReady = launches.some((launch) => helpers.normalizeStatus(launch.status) !== "launched");
+  const hasLaunchReady = launches.some((launch) => helpers.normalizeStatus(launch.status) !== "active");
   const hasNewOpps = opportunities.some((opportunity) => helpers.normalizeStatus(opportunity.status) === "new");
 
   return {

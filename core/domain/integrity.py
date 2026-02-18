@@ -4,6 +4,7 @@ class DomainIntegrityError(Exception):
 
 class DomainIntegrityPolicy:
     ACTIVE_STATUSES = ["approved", "building", "ready_to_launch"]
+    PLAN_BUILDABLE_STATUSES = {"approved", "building", "ready_to_launch", "ready_for_review"}
     ALLOWED_TRANSITIONS = {
         "draft": {"approved", "rejected"},
         "approved": {"building", "archived"},
@@ -56,3 +57,10 @@ class DomainIntegrityPolicy:
         # Rule 4: execute requires ready_to_launch
         if new_status == "executed" and current_status != "ready_to_launch":
             raise DomainIntegrityError("Cannot execute unless ready_to_launch.")
+
+    def validate_plan_build_precondition(self, proposal):
+        status = str(proposal.get("status", "")).strip()
+        if status not in self.PLAN_BUILDABLE_STATUSES:
+            raise DomainIntegrityError(
+                f"Cannot build plan for proposal in status: {status}."
+            )
