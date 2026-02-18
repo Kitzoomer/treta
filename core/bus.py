@@ -23,4 +23,5 @@ class EventBus:
             return []
         return list(self._history)[-limit:]
 
+# TODO(arch): replace global singleton with instance-scoped bus injection to avoid cross-request bleed.
 event_bus = EventBus()

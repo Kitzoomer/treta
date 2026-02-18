@@ -4,6 +4,7 @@ from collections import deque
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any, Dict, List
@@ -15,6 +16,8 @@ from core.product_proposal_store import ProductProposalStore
 
 
 ProductLaunch = Dict[str, Any]
+
+logger = logging.getLogger(__name__)
 
 
 class ProductLaunchStore:
@@ -41,11 +44,25 @@ class ProductLaunchStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._items: deque[ProductLaunch] = deque(self._load_items(), maxlen=capacity)
 
+    def _quarantine_corrupt_file(self, reason: Exception) -> None:
+        corrupt_path = self._path.with_suffix(self._path.suffix + ".corrupt")
+        try:
+            self._path.replace(corrupt_path)
+        except OSError:
+            logger.warning("Failed to quarantine corrupt JSON store at %s: %s", self._path, reason)
+            return
+        logger.warning("Corrupt JSON store moved from %s to %s: %s", self._path, corrupt_path, reason)
+
     def _load_items(self) -> List[ProductLaunch]:
         if not self._path.exists():
             return []
-        loaded = json.loads(self._path.read_text(encoding="utf-8"))
+        try:
+            loaded = json.loads(self._path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            self._quarantine_corrupt_file(exc)
+            return []
         if not isinstance(loaded, list):
+            self._quarantine_corrupt_file(ValueError("expected list"))
             return []
         return [self._normalize_item(dict(item)) for item in loaded if isinstance(item, dict)]
 

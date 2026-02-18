@@ -4,7 +4,9 @@ from pathlib import Path
 
 from core.execution_engine import ExecutionEngine
 from core.opportunity_store import OpportunityStore
+from core.product_launch_store import ProductLaunchStore
 from core.product_proposal_store import ProductProposalStore
+from core.strategy_action_store import StrategyActionStore
 
 
 class JsonPersistenceSmokeTest(unittest.TestCase):
@@ -54,6 +56,31 @@ class JsonPersistenceSmokeTest(unittest.TestCase):
             self.assertEqual(len(history), 1)
             self.assertEqual(history[0]["proposal_id"], created_proposal["id"])
             self.assertEqual(history[0]["execution_package"], execution_package)
+
+    def test_corrupt_json_store_is_quarantined(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            opportunities_path = root / "opportunities.json"
+            proposals_path = root / "product_proposals.json"
+            launches_path = root / "product_launches.json"
+            actions_path = root / "strategy_actions.json"
+
+            for path in [opportunities_path, proposals_path, launches_path, actions_path]:
+                path.write_text("{not-json", encoding="utf-8")
+
+            opportunity_store = OpportunityStore(path=opportunities_path)
+            proposal_store = ProductProposalStore(path=proposals_path)
+            launch_store = ProductLaunchStore(proposal_store=proposal_store, path=launches_path)
+            action_store = StrategyActionStore(path=actions_path)
+
+            self.assertEqual(opportunity_store.list(), [])
+            self.assertEqual(proposal_store.list(), [])
+            self.assertEqual(launch_store.list(), [])
+            self.assertEqual(action_store.list(), [])
+
+            for path in [opportunities_path, proposals_path, launches_path, actions_path]:
+                self.assertFalse(path.exists())
+                self.assertTrue(path.with_suffix(path.suffix + ".corrupt").exists())
 
 
 if __name__ == "__main__":

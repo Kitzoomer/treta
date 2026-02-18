@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import Mock
 
 from core.control import Action, Control
+from core.domain.integrity import DomainIntegrityError
 from core.events import Event
 
 
@@ -220,6 +221,14 @@ class ControlSmokeTest(unittest.TestCase):
         self.assertIsNotNone(final_items["opp-1"]["decision"])
         self.assertEqual(final_items["opp-2"]["status"], "dismissed")
         self.assertIsNone(final_items["opp-2"]["decision"])
+
+
+    def test_build_product_plan_requires_preapproved_status(self):
+        control = Control()
+        control.product_proposal_store.add({"id": "proposal-draft", "product_name": "Draft", "status": "draft"})
+
+        with self.assertRaises(DomainIntegrityError):
+            control.consume(Event(type="BuildProductPlanRequested", payload={"proposal_id": "proposal-draft"}, source="test"))
 
 
 if __name__ == "__main__":

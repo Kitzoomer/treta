@@ -482,6 +482,7 @@ class Control:
             proposal = self.product_proposal_store.get(proposal_id)
             if proposal is None:
                 return []
+            self.domain_integrity_policy.validate_plan_build_precondition(proposal)
 
             existing = self.product_plan_store.get_by_proposal_id(proposal_id)
             if existing is not None:

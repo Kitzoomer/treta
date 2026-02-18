@@ -329,3 +329,7 @@ Endpoints disponibles para el módulo independiente `reddit_intelligence`:
 - `PATCH /reddit/signals/{id}/status`
   - Body JSON: `status` (`approved`, `rejected`, `published`)
   - Actualiza el estado de una señal existente.
+
+## Deferred global-state hardening
+- TODO: `core/ipc_http.py::Handler` still uses class-level mutable dependencies; deferred to dedicated refactor.
+- TODO: `core/bus.py::event_bus` remains a process-global singleton; deferred to dedicated refactor.

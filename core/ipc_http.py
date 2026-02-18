@@ -16,6 +16,7 @@ from core.reddit_public.config import get_config, update_config
 
 
 class Handler(BaseHTTPRequestHandler):
+    # TODO(arch): Handler relies on mutable class-level dependencies; move to instance/server-scoped injection.
     state_machine = None
     opportunity_store = None
     product_proposal_store = None
@@ -193,25 +194,34 @@ class Handler(BaseHTTPRequestHandler):
             if self.product_launch_store is None:
                 return self._send(503, {"error": "product_launch_store_unavailable"})
 
+            data_errors: list[str] = []
+
             try:
                 proposals = self.product_proposal_store.list()
-            except Exception:
+            except Exception as exc:
                 proposals = []
+                data_errors.append(f"proposals_load_failed: {exc}")
 
             try:
                 plans = self.product_plan_store.list(limit=10000)
             except TypeError:
                 try:
                     plans = self.product_plan_store.list()
-                except Exception:
+                except Exception as exc:
                     plans = []
-            except Exception:
+                    data_errors.append(f"plans_load_failed: {exc}")
+            except Exception as exc:
                 plans = []
+                data_errors.append(f"plans_load_failed: {exc}")
 
             try:
                 launches = self.product_launch_store.list()
-            except Exception:
+            except Exception as exc:
                 launches = []
+                data_errors.append(f"launches_load_failed: {exc}")
+
+            if data_errors:
+                return self._send(503, {"error": "integrity_data_unavailable", "details": data_errors})
 
             report = compute_system_integrity(
                 proposals=proposals,
