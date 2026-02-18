@@ -22,6 +22,7 @@ from core.execution_focus_engine import ExecutionFocusEngine
 from core.services.gumroad_sync_service import GumroadSyncService
 from core.product_launch_store import ProductLaunchStore
 from core.domain.integrity import DomainIntegrityPolicy
+from core.domain.lifecycle import EXECUTION_STATUSES
 from core.reddit_public.config import get_config
 from core.reddit_public.pain_scoring import compute_pain_score
 
@@ -97,7 +98,7 @@ class Control:
         self.domain_integrity_policy = DomainIntegrityPolicy()
 
     def has_active_proposal(self) -> bool:
-        active_statuses = {"draft", "approved", "building", "ready_to_launch"}
+        active_statuses = {"draft", *self.domain_integrity_policy.ACTIVE_STATUSES}
         return any(
             str(item.get("status", "")).strip() in active_statuses
             for item in self.product_proposal_store.list()
@@ -457,7 +458,7 @@ class Control:
                 new_status=next_status,
             )
             self.domain_integrity_policy.validate_global_invariants(self.product_proposal_store.list())
-            if updated["status"] in {"approved", "building"}:
+            if updated["status"] in EXECUTION_STATUSES:
                 self._refresh_execution_focus()
                 updated = self.product_proposal_store.get(updated["id"]) or updated
             actions = [
