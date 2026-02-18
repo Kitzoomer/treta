@@ -6,6 +6,7 @@ from urllib.request import urlopen
 from core.ipc_http import start_http_server
 
 from core.system_integrity import compute_system_integrity
+from core.version import VERSION
 
 
 class SystemIntegrityTest(unittest.TestCase):
@@ -63,12 +64,50 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class _OkStore:
+    def __init__(self, items):
+        self._items = items
+
+    def list(self, *args, **kwargs):
+        return self._items
+
+
 class _BoomStore:
     def list(self, *args, **kwargs):
         raise RuntimeError("boom")
 
 
 class SystemIntegrityEndpointTest(unittest.TestCase):
+    def test_system_integrity_returns_previous_shape_by_default_and_optional_version(self):
+        server = start_http_server(
+            host="127.0.0.1",
+            port=0,
+            product_proposal_store=_OkStore([]),
+            product_plan_store=_OkStore([]),
+            product_launch_store=_OkStore([]),
+        )
+        try:
+            with urlopen(f"http://127.0.0.1:{server.server_port}/system/integrity", timeout=2) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+                self.assertEqual(response.headers.get("X-Treta-Version"), VERSION)
+
+            self.assertEqual(set(payload.keys()), {"status", "issues", "counts"})
+
+            with urlopen(
+                f"http://127.0.0.1:{server.server_port}/system/integrity?include_version=1",
+                timeout=2,
+            ) as response:
+                payload_with_version = json.loads(response.read().decode("utf-8"))
+                self.assertEqual(response.headers.get("X-Treta-Version"), VERSION)
+
+            self.assertEqual(payload_with_version.get("version"), VERSION)
+            self.assertEqual(payload_with_version.get("status"), payload.get("status"))
+            self.assertEqual(payload_with_version.get("issues"), payload.get("issues"))
+            self.assertEqual(payload_with_version.get("counts"), payload.get("counts"))
+        finally:
+            server.shutdown()
+            server.server_close()
+
     def test_system_integrity_returns_503_when_store_data_unavailable(self):
         server = start_http_server(
             host="127.0.0.1",

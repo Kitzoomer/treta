@@ -13,6 +13,7 @@ from core.services.gumroad_sync_service import GumroadSyncService
 from core.system_integrity import compute_system_integrity
 from core.reddit_intelligence.router import RedditIntelligenceRouter
 from core.reddit_public.config import get_config, update_config
+from core.version import VERSION
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -228,7 +229,17 @@ class Handler(BaseHTTPRequestHandler):
                 plans=plans,
                 launches=launches,
             )
-            return self._send(200, report)
+
+            include_version = parse_qs(parsed.query).get("include_version", [""])[0].strip().lower() in {"1", "true", "yes"}
+            if include_version:
+                report["version"] = VERSION
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("X-Treta-Version", VERSION)
+            self.end_headers()
+            self.wfile.write(json.dumps(report).encode("utf-8"))
+            return
 
         if parsed.path.startswith("/product_launches/"):
             if self.product_launch_store is None:
