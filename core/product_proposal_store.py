@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from core.execution_focus_engine import ExecutionFocusEngine
+from core.domain.lifecycle import ALL_PROPOSAL_STATUSES, PROPOSAL_TRANSITIONS
 
 
 ProductProposal = Dict[str, Any]
@@ -21,26 +22,8 @@ class ProductProposalStore:
     """In-memory bounded store for product proposals."""
 
     _DEFAULT_DATA_DIR = "./.treta_data"
-    _ALLOWED_STATUSES = {
-        "draft",
-        "approved",
-        "building",
-        "ready_to_launch",
-        "ready_for_review",
-        "launched",
-        "rejected",
-        "archived",
-    }
-    _TRANSITIONS = {
-        "draft": {"approved", "rejected"},
-        "approved": {"building", "archived"},
-        "building": {"ready_to_launch"},
-        "ready_to_launch": {"ready_for_review"},
-        "ready_for_review": {"launched"},
-        "launched": {"archived"},
-        "rejected": {"archived"},
-        "archived": set(),
-    }
+    _ALLOWED_STATUSES = ALL_PROPOSAL_STATUSES
+    _TRANSITIONS = PROPOSAL_TRANSITIONS
 
     def __init__(self, capacity: int = 50, path: Path | None = None):
         data_dir = Path(os.getenv("TRETA_DATA_DIR", self._DEFAULT_DATA_DIR))
