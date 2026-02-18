@@ -55,6 +55,11 @@ const state = {
   redditLastScan: {
     message: "No scan executed yet.",
   },
+  strategyDecision: {
+    primary_focus: "unknown",
+    confidence: 0,
+    actions: [],
+  },
   strategyView: {
     pendingActions: [],
     recommendation: {},
@@ -233,6 +238,9 @@ const api = {
   },
   getRedditLastScan() {
     return this.fetchJson("/reddit/last_scan");
+  },
+  getStrategyDecision() {
+    return this.fetchJson("/strategy/decide");
   },
 };
 
@@ -794,17 +802,27 @@ const views = {
     const strategyFeedback = dashboardView.feedback ? `<p class="dashboard-strategy-feedback">${helpers.escape(dashboardView.feedback)}</p>` : "";
     const strategyError = dashboardView.error ? `<p class="empty">${helpers.escape(dashboardView.error)}</p>` : "";
     const integrityStatusRaw = helpers.normalizeStatus(state.systemIntegrity?.status || "unknown");
-    const integrityTone = integrityStatusRaw === "ok"
+    const integrityStatusLabel = integrityStatusRaw === "critical"
+      ? "error"
+      : ["healthy", "warning", "error"].includes(integrityStatusRaw)
+        ? integrityStatusRaw
+        : "unknown";
+    const integrityTone = integrityStatusLabel === "healthy"
       ? "ok"
-      : ["warning", "warn"].includes(integrityStatusRaw)
+      : integrityStatusLabel === "warning"
         ? "warn"
-        : integrityStatusRaw === "error"
+        : integrityStatusLabel === "error"
           ? "error"
           : "info";
+    const lastScanHasData = Number.isFinite(Number(state.redditLastScan?.analyzed)) || Number.isFinite(Number(state.redditLastScan?.qualified));
     const lastScanAnalyzed = Number(state.redditLastScan?.analyzed || 0);
     const lastScanQualified = Number(state.redditLastScan?.qualified || 0);
     const lastScanTimestamp = state.redditLastScan?.timestamp || state.redditLastScan?.last_scan_at || state.redditLastScan?.scanned_at;
-    const lastScanDate = lastScanTimestamp ? new Date(lastScanTimestamp).toLocaleString() : "N/A";
+    const lastScanDate = lastScanTimestamp ? new Date(lastScanTimestamp).toLocaleString() : "-";
+    const strategyDecision = state.strategyDecision || {};
+    const strategyDecisionLabel = helpers.t(strategyDecision.primary_focus, "unknown").replaceAll("_", " ");
+    const strategyDecisionScore = helpers.t(strategyDecision.confidence, "-");
+    const strategyDecisionActionLabel = helpers.t(strategyDecision.actions?.[0]?.type, "No immediate action").replaceAll("_", " ");
 
     this.shell("Dashboard", "Operational summary and next best action", `
       <section class="os-dashboard">
@@ -812,9 +830,14 @@ const views = {
         ${renderAutonomyControls()}
         <article class="card">
           <h3>System Coherence</h3>
-          <p><strong>Integrity:</strong> <span class="badge ${integrityTone}">${helpers.escape(integrityStatusRaw.toUpperCase())}</span></p>
-          <p><strong>Last scan:</strong> analyzed ${helpers.escape(lastScanAnalyzed)} · qualified ${helpers.escape(lastScanQualified)}</p>
-          <p><strong>Last scan date:</strong> ${helpers.escape(lastScanDate)}</p>
+          <p><strong>Integrity:</strong> <span class="badge ${integrityTone}">${helpers.escape(integrityStatusLabel.toUpperCase())}</span></p>
+          ${lastScanHasData
+    ? `<p><strong>Last scan:</strong> analyzed ${helpers.escape(lastScanAnalyzed)} · qualified ${helpers.escape(lastScanQualified)}</p>
+             <p><strong>Last scan date:</strong> ${helpers.escape(lastScanDate)}</p>`
+    : "<p><strong>Last scan:</strong> No scan yet</p>"}
+          <p><strong>Decision:</strong> ${helpers.escape(strategyDecisionLabel)}</p>
+          <p><strong>Decision score:</strong> ${helpers.escape(strategyDecisionScore)}</p>
+          <p><strong>Action label:</strong> ${helpers.escape(strategyDecisionActionLabel)}</p>
         </article>
         <div id="attention-block"></div>
         ${renderRevenueFocus()}
@@ -1910,7 +1933,7 @@ function renderTelemetry() {
 
 async function refreshLoop() {
   try {
-    const [systemData, eventData, memoryData, oppData, proposalData, launchData, planData, perfData, strategyData, pendingData, dailyLoopData, redditConfigData, systemIntegrityData, redditLastScanData] = await Promise.all([
+    const [systemData, eventData, memoryData, oppData, proposalData, launchData, planData, perfData, strategyData, pendingData, dailyLoopData, redditConfigData, systemIntegrityData, redditLastScanData, strategyDecisionData] = await Promise.all([
       api.getState(),
       api.getRecentEvents(),
       api.getMemory(),
@@ -1925,6 +1948,7 @@ async function refreshLoop() {
       api.getRedditConfig(),
       api.getSystemIntegrity(),
       api.getRedditLastScan(),
+      api.getStrategyDecision(),
     ]);
 
     state.system = systemData || { state: "IDLE" };
@@ -1946,6 +1970,7 @@ async function refreshLoop() {
     state.redditConfig = redditConfigData || state.redditConfig;
     state.systemIntegrity = systemIntegrityData || state.systemIntegrity;
     state.redditLastScan = redditLastScanData || state.redditLastScan;
+    state.strategyDecision = strategyDecisionData || state.strategyDecision;
   } catch (error) {
     log("system", `refresh error: ${error.message}`);
   }
