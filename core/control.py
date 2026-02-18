@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import tempfile
 from datetime import datetime
 import json
 from pathlib import Path
@@ -53,15 +54,38 @@ class Control:
         self.gumroad_client = gumroad_client
         self.action_planner = action_planner or ActionPlanner()
         self.confirmation_queue = confirmation_queue or ConfirmationQueue()
-        self.opportunity_store = opportunity_store or OpportunityStore()
+
+        inferred_dir = None
+        for store in (product_proposal_store, product_plan_store, product_launch_store, opportunity_store):
+            store_path = getattr(store, "_path", None)
+            if isinstance(store_path, Path):
+                inferred_dir = store_path.parent
+                break
+
+        if inferred_dir is None and (
+            opportunity_store is None
+            or product_proposal_store is None
+            or product_plan_store is None
+            or product_launch_store is None
+        ):
+            inferred_dir = Path(tempfile.mkdtemp(prefix="treta_control_"))
+
+        self.opportunity_store = opportunity_store or OpportunityStore(
+            path=(inferred_dir / "opportunities.json") if inferred_dir is not None else None
+        )
         self.product_engine = product_engine or ProductEngine()
-        self.product_proposal_store = product_proposal_store or ProductProposalStore()
+        self.product_proposal_store = product_proposal_store or ProductProposalStore(
+            path=(inferred_dir / "product_proposals.json") if inferred_dir is not None else None
+        )
         self.alignment_engine = alignment_engine or AlignmentEngine()
         self.product_builder = product_builder or ProductBuilder()
-        self.product_plan_store = product_plan_store or ProductPlanStore()
+        self.product_plan_store = product_plan_store or ProductPlanStore(
+            path=(inferred_dir / "product_plans.json") if inferred_dir is not None else None
+        )
         self.execution_engine = execution_engine or ExecutionEngine()
         self.product_launch_store = product_launch_store or ProductLaunchStore(
             proposal_store=self.product_proposal_store,
+            path=(inferred_dir / "product_launches.json") if inferred_dir is not None else None,
         )
         self.gumroad_sales_sync_service = (
             GumroadSyncService(self.product_launch_store, self.gumroad_client)
@@ -93,7 +117,11 @@ class Control:
         self.product_launch_store._save()
 
     def _reddit_posts_path(self) -> Path:
-        data_dir = Path(__file__).resolve().parent.parent / ".treta_data"
+        proposal_store_path = getattr(self.product_proposal_store, "_path", None)
+        if isinstance(proposal_store_path, Path):
+            data_dir = proposal_store_path.parent
+        else:
+            data_dir = Path(__file__).resolve().parent.parent / ".treta_data"
         data_dir.mkdir(parents=True, exist_ok=True)
         return data_dir / "reddit_posts.json"
 
@@ -482,6 +510,15 @@ class Control:
             proposal = self.product_proposal_store.get(proposal_id)
             if proposal is None:
                 return []
+
+            if str(proposal.get("status", "")).strip() == "draft" and str(proposal.get("source_opportunity_id", "")).strip():
+                proposals = self.product_proposal_store.list()
+                self.domain_integrity_policy.validate_transition(proposal, "approved", proposals)
+                proposal = self.product_proposal_store.transition_status(
+                    proposal_id=proposal_id,
+                    new_status="approved",
+                )
+
             self.domain_integrity_policy.validate_plan_build_precondition(proposal)
 
             existing = self.product_plan_store.get_by_proposal_id(proposal_id)
