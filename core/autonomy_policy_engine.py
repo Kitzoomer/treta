@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
 from core.adaptive_policy_engine import AdaptivePolicyEngine
-from core.bus import event_bus
+from core.bus import EventBus
 from core.events import Event
 from core.strategy_action_execution_layer import StrategyActionExecutionLayer
 from core.strategy_action_store import StrategyActionStore
@@ -20,6 +20,7 @@ class AutonomyPolicyEngine:
         mode: str = "manual",
         max_auto_executions_per_24h: int = 3,
         adaptive_policy_engine: AdaptivePolicyEngine | None = None,
+        bus: EventBus | None = None,
     ):
         self._strategy_action_store = strategy_action_store
         self._strategy_action_execution_layer = strategy_action_execution_layer
@@ -28,6 +29,8 @@ class AutonomyPolicyEngine:
             impact_threshold=6,
             max_auto_executions_per_24h=max_auto_executions_per_24h,
         )
+        self._bus = bus or EventBus()
+
 
     def _utcnow(self) -> datetime:
         return datetime.now(timezone.utc)
@@ -83,7 +86,7 @@ class AutonomyPolicyEngine:
             updated = self._strategy_action_execution_layer.execute_action(action_id, status="auto_executed")
             revenue_delta = float(action.get("revenue_delta", 0) or 0)
             self._adaptive_policy_engine.record_action_outcome(revenue_delta=revenue_delta)
-            event_bus.push(
+            self._bus.push(
                 Event(
                     type="AutonomyActionAutoExecuted",
                     payload={"action": updated, "mode": self._mode},

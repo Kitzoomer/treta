@@ -10,7 +10,7 @@ from core.dispatcher import Dispatcher
 from core.events import Event
 from core.opportunity_store import OpportunityStore
 from core.state_machine import State, StateMachine
-from core.bus import event_bus
+from core.bus import EventBus
 
 
 class InfoproductSignalsTest(unittest.TestCase):
@@ -21,6 +21,7 @@ class InfoproductSignalsTest(unittest.TestCase):
         self._original_data_dir = os.environ.get("TRETA_DATA_DIR")
         os.environ["TRETA_DATA_DIR"] = str(self._data_dir)
         self._clear_data_dir()
+        self.bus = EventBus()
 
     def tearDown(self):
         if self._original_data_dir is None:
@@ -38,12 +39,12 @@ class InfoproductSignalsTest(unittest.TestCase):
                 child.unlink()
 
     def test_run_infoproduct_scan_populates_opportunity_store(self):
-        while event_bus.pop(timeout=0.001) is not None:
+        while self.bus.pop(timeout=0.001) is not None:
             pass
 
         opportunity_store = OpportunityStore()
-        control = Control(opportunity_store=opportunity_store)
-        dispatcher = Dispatcher(state_machine=StateMachine(initial_state=State.IDLE), control=control)
+        control = Control(opportunity_store=opportunity_store, bus=self.bus)
+        dispatcher = Dispatcher(state_machine=StateMachine(initial_state=State.IDLE), control=control, bus=self.bus)
 
         with unittest.mock.patch(
             "core.reddit_public.service.RedditPublicService.scan_subreddits",
@@ -77,7 +78,7 @@ class InfoproductSignalsTest(unittest.TestCase):
             dispatcher.handle(Event(type="RunInfoproductScan", payload={}, source="test"))
 
         while True:
-            queued = event_bus.pop(timeout=0.01)
+            queued = self.bus.pop(timeout=0.01)
             if queued is None:
                 break
             dispatcher.handle(queued)

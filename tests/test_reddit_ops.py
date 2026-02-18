@@ -5,7 +5,7 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 from unittest.mock import patch
 
-from core.bus import event_bus
+from core.bus import EventBus
 from core.control import Control
 from core.ipc_http import start_http_server
 from core.product_proposal_store import ProductProposalStore
@@ -15,10 +15,11 @@ from core.product_proposal_store import ProductProposalStore
 
 class RedditOpsEndpointTest(unittest.TestCase):
     def _drain_events(self):
-        while event_bus.pop(timeout=0.001) is not None:
+        while self.bus.pop(timeout=0.001) is not None:
             pass
 
     def setUp(self):
+        self.bus = EventBus()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.original_reddit_path = start_http_server.__globals__["Handler"]._reddit_posts_path
 
@@ -28,7 +29,7 @@ class RedditOpsEndpointTest(unittest.TestCase):
         start_http_server.__globals__["Handler"]._reddit_posts_path = _temp_reddit_posts_path
 
         self.proposal_store = ProductProposalStore(path=Path(self.temp_dir.name) / "product_proposals.json")
-        self.control = Control(product_proposal_store=self.proposal_store)
+        self.control = Control(product_proposal_store=self.proposal_store, bus=self.bus)
         self.original_control_reddit_path = self.control._reddit_posts_path
 
         def _control_temp_reddit_posts_path():
@@ -49,6 +50,7 @@ class RedditOpsEndpointTest(unittest.TestCase):
             port=0,
             product_proposal_store=self.proposal_store,
             control=self.control,
+            bus=self.bus,
         )
 
     def tearDown(self):
@@ -134,7 +136,7 @@ class RedditOpsEndpointTest(unittest.TestCase):
 
         emitted = []
         while True:
-            event = event_bus.pop(timeout=0.001)
+            event = self.bus.pop(timeout=0.001)
             if event is None:
                 break
             if event.type == "OpportunityDetected":
@@ -185,7 +187,7 @@ class RedditOpsEndpointTest(unittest.TestCase):
 
         emitted = []
         while True:
-            event = event_bus.pop(timeout=0.001)
+            event = self.bus.pop(timeout=0.001)
             if event is None:
                 break
             if event.type == "OpportunityDetected":

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from core.bus import event_bus
+from core.bus import EventBus
 from core.events import Event
 from core.strategy_action_store import StrategyActionStore
 
@@ -10,8 +10,9 @@ from core.strategy_action_store import StrategyActionStore
 class StrategyActionExecutionLayer:
     """Handles confirmation-gated execution for strategy actions."""
 
-    def __init__(self, strategy_action_store: StrategyActionStore):
+    def __init__(self, strategy_action_store: StrategyActionStore, bus: EventBus):
         self._strategy_action_store = strategy_action_store
+        self._bus = bus
 
     def register_pending_actions(self, actions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         created: List[Dict[str, Any]] = []
@@ -49,7 +50,7 @@ class StrategyActionExecutionLayer:
 
     def execute_action(self, action_id: str, status: str = "executed") -> Dict[str, Any]:
         updated = self._strategy_action_store.set_status(action_id, status)
-        event_bus.push(
+        self._bus.push(
             Event(
                 type="StrategyActionExecuted",
                 payload={"action": updated},

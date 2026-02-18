@@ -1,11 +1,15 @@
 import unittest
 
+from core.bus import EventBus
 from core.confirmation_queue import ConfirmationQueue
 from core.control import Control
 from core.events import Event
 
 
 class ConfirmationQueueTest(unittest.TestCase):
+    def setUp(self):
+        self.bus = EventBus()
+
     def test_queue_add_list_approve_reject(self):
         queue = ConfirmationQueue()
 
@@ -31,7 +35,7 @@ class ConfirmationQueueTest(unittest.TestCase):
         self.assertEqual(queue.list_pending(), [])
 
     def test_control_confirm_reject_and_list_pending(self):
-        control = Control()
+        control = Control(bus=self.bus)
 
         first = control.consume(
             Event(type="ActionPlanGenerated", payload={"id": "p1", "action": "optimize"}, source="test")

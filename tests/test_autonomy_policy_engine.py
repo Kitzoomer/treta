@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.request import urlopen
 
-from core.bus import event_bus
+from core.bus import EventBus
 from core.adaptive_policy_engine import AdaptivePolicyEngine
 from core.autonomy_policy_engine import AutonomyPolicyEngine
 from core.ipc_http import start_http_server
@@ -33,6 +33,9 @@ class _StubExecutionLayer:
 
 
 class AutonomyPolicyEngineTest(unittest.TestCase):
+    def setUp(self):
+        self.bus = EventBus()
+
     def test_only_low_risk_high_impact_pending_actions_are_auto_executed(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             now = datetime(2025, 1, 10, 12, 0, tzinfo=timezone.utc)
@@ -75,6 +78,7 @@ class AutonomyPolicyEngineTest(unittest.TestCase):
                 strategy_action_execution_layer=execution_layer,
                 mode="partial",
                 adaptive_policy_engine=adaptive,
+                bus=self.bus,
             )
             engine._utcnow = lambda: now
 
@@ -86,13 +90,14 @@ class AutonomyPolicyEngineTest(unittest.TestCase):
     def test_partial_mode_auto_executes_eligible_actions_up_to_limit(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             store = StrategyActionStore(path=Path(tmp_dir) / "strategy_actions.json")
-            execution_layer = StrategyActionExecutionLayer(strategy_action_store=store)
+            execution_layer = StrategyActionExecutionLayer(strategy_action_store=store, bus=self.bus)
             adaptive = AdaptivePolicyEngine(path=Path(tmp_dir) / "adaptive_policy.json")
             engine = AutonomyPolicyEngine(
                 strategy_action_store=store,
                 strategy_action_execution_layer=execution_layer,
                 mode="partial",
                 adaptive_policy_engine=adaptive,
+                bus=self.bus,
             )
 
             eligible_ids = []
@@ -127,7 +132,7 @@ class AutonomyPolicyEngineTest(unittest.TestCase):
             pending_ids = {item["id"] for item in pending}
             self.assertIn(eligible_ids[3], pending_ids)
 
-            recent = [event.type for event in event_bus.recent(limit=10)]
+            recent = [event.type for event in self.bus.recent(limit=10)]
             self.assertIn("AutonomyActionAutoExecuted", recent)
 
     def test_status_counts_last_24_hours_deterministically(self):
@@ -166,13 +171,14 @@ class AutonomyPolicyEngineTest(unittest.TestCase):
             path.write_text(json.dumps(entries), encoding="utf-8")
 
             store = StrategyActionStore(path=path)
-            execution_layer = StrategyActionExecutionLayer(strategy_action_store=store)
+            execution_layer = StrategyActionExecutionLayer(strategy_action_store=store, bus=self.bus)
             adaptive = AdaptivePolicyEngine(path=Path(tmp_dir) / "adaptive_policy.json")
             engine = AutonomyPolicyEngine(
                 strategy_action_store=store,
                 strategy_action_execution_layer=execution_layer,
                 mode="partial",
                 adaptive_policy_engine=adaptive,
+                bus=self.bus,
             )
             engine._utcnow = lambda: now
 
@@ -185,13 +191,14 @@ class AutonomyPolicyEngineTest(unittest.TestCase):
     def test_autonomy_status_endpoint(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             store = StrategyActionStore(path=Path(tmp_dir) / "strategy_actions.json")
-            execution_layer = StrategyActionExecutionLayer(strategy_action_store=store)
+            execution_layer = StrategyActionExecutionLayer(strategy_action_store=store, bus=self.bus)
             adaptive = AdaptivePolicyEngine(path=Path(tmp_dir) / "adaptive_policy.json")
             engine = AutonomyPolicyEngine(
                 strategy_action_store=store,
                 strategy_action_execution_layer=execution_layer,
                 mode="manual",
                 adaptive_policy_engine=adaptive,
+                bus=self.bus,
             )
 
             store.add(
@@ -206,6 +213,7 @@ class AutonomyPolicyEngineTest(unittest.TestCase):
                 host="127.0.0.1",
                 port=0,
                 autonomy_policy_engine=engine,
+                bus=self.bus,
             )
             try:
                 port = server.server_port

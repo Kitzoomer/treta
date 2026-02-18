@@ -1,128 +1,16 @@
-import time
-from core.state_machine import StateMachine, State
-from core.storage import Storage
-from core.events import Event
-from core.ipc_http import start_http_server
-from core.bus import event_bus
-from core.dispatcher import Dispatcher
-from core.control import Control
-from core.opportunity_store import OpportunityStore
-from core.scheduler import DailyScheduler
-from core.product_proposal_store import ProductProposalStore
-from core.product_plan_store import ProductPlanStore
-from core.product_launch_store import ProductLaunchStore
-from core.performance_engine import PerformanceEngine
-from core.strategy_engine import StrategyEngine
-from core.strategy_decision_engine import StrategyDecisionEngine
-from core.strategy_action_store import StrategyActionStore
-from core.strategy_action_execution_layer import StrategyActionExecutionLayer
-from core.autonomy_policy_engine import AutonomyPolicyEngine
-from core.config import get_autonomy_mode
-from core.daily_loop import DailyLoopEngine
-from core.memory_store import MemoryStore
-from core.conversation_core import ConversationCore
+from core.app import TretaApp
 
 
 def main():
     print("🧠 Treta Core starting...")
-
-    storage = Storage()
-    last_state = storage.get_state("last_state") or State.IDLE
-
-    sm = StateMachine(initial_state=last_state)
-    opportunity_store = OpportunityStore()
-    product_proposal_store = ProductProposalStore()
-    product_plan_store = ProductPlanStore()
-    product_launch_store = ProductLaunchStore(proposal_store=product_proposal_store)
-    performance_engine = PerformanceEngine(product_launch_store=product_launch_store)
-    strategy_engine = StrategyEngine(product_launch_store=product_launch_store)
-    strategy_action_store = StrategyActionStore()
-    daily_loop_engine = DailyLoopEngine(
-        opportunity_store=opportunity_store,
-        proposal_store=product_proposal_store,
-        launch_store=product_launch_store,
-        strategy_store=strategy_action_store,
-    )
-    strategy_action_execution_layer = StrategyActionExecutionLayer(strategy_action_store=strategy_action_store)
-    autonomy_policy_engine = AutonomyPolicyEngine(
-        strategy_action_store=strategy_action_store,
-        strategy_action_execution_layer=strategy_action_execution_layer,
-        mode=get_autonomy_mode(),
-    )
-    strategy_decision_engine = StrategyDecisionEngine(
-        product_launch_store=product_launch_store,
-        strategy_action_execution_layer=strategy_action_execution_layer,
-        autonomy_policy_engine=autonomy_policy_engine,
-    )
-    memory_store = MemoryStore()
-    control = Control(
-        opportunity_store=opportunity_store,
-        product_proposal_store=product_proposal_store,
-        product_plan_store=product_plan_store,
-        product_launch_store=product_launch_store,
-    )
-    conversation_core = ConversationCore(
-        bus=event_bus,
-        state_machine=sm,
-        memory_store=memory_store,
-        daily_loop_engine=daily_loop_engine,
-    )
-    dispatcher = Dispatcher(
-        state_machine=sm,
-        control=control,
-        memory_store=memory_store,
-        conversation_core=conversation_core,
-    )
-    print(f"🧠 Restored state: {sm.state}")
+    app = TretaApp()
+    print(f"🧠 Restored state: {app.state_machine.state}")
     print("[BOOT] Starting HTTP server")
-    scheduler = DailyScheduler()
-    scheduler.start(event_bus)
-    try:
-        start_http_server(
-            state_machine=sm,
-            opportunity_store=opportunity_store,
-            product_proposal_store=product_proposal_store,
-            product_plan_store=product_plan_store,
-            product_launch_store=product_launch_store,
-            performance_engine=performance_engine,
-            control=control,
-            strategy_engine=strategy_engine,
-            strategy_decision_engine=strategy_decision_engine,
-            strategy_action_execution_layer=strategy_action_execution_layer,
-            autonomy_policy_engine=autonomy_policy_engine,
-            daily_loop_engine=daily_loop_engine,
-            memory_store=memory_store,
-        )
-    except TypeError:
-        start_http_server()
 
     try:
-        while True:
-            event = event_bus.pop(timeout=0.2)
-            if event is not None:
-                dispatcher.handle(event)
-                continue
-
-            # Loop principal (siempre activa)
-            time.sleep(5)
-
-            # Evento dummy (por ahora)
-            heartbeat = Event(
-                type="Heartbeat",
-                payload={"state": sm.state},
-                source="core"
-            )
-
-            print(f"[EVENT] {heartbeat.type} | state={sm.state}")
-
-            # Persistimos estado
-            storage.set_state("last_state", sm.state)
-
+        app.run()
     except KeyboardInterrupt:
         print("🛑 Treta Core stopped by user")
-    finally:
-        scheduler.stop()
-        storage.set_state("last_state", sm.state)
 
 
 if __name__ == "__main__":

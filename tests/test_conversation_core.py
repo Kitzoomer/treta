@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from urllib.request import urlopen
 
-from core.bus import event_bus
+from core.bus import EventBus
 from core.dispatcher import Dispatcher
 from core.events import Event
 from core.ipc_http import start_http_server
@@ -13,14 +13,17 @@ from core.state_machine import State, StateMachine
 
 
 class ConversationCoreTest(unittest.TestCase):
+    def setUp(self):
+        self.bus = EventBus()
+
     def _drain_queue(self):
-        while event_bus.pop(timeout=0.001) is not None:
+        while self.bus.pop(timeout=0.001) is not None:
             pass
 
     def test_user_message_generates_assistant_message_and_persists_history(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             memory_store = MemoryStore(path=Path(tmp_dir) / "memory_store.json")
-            dispatcher = Dispatcher(state_machine=StateMachine(), memory_store=memory_store)
+            dispatcher = Dispatcher(state_machine=StateMachine(), memory_store=memory_store, bus=self.bus)
             self._drain_queue()
 
             dispatcher.handle(
@@ -31,7 +34,7 @@ class ConversationCoreTest(unittest.TestCase):
                 )
             )
 
-            generated = event_bus.pop(timeout=0.05)
+            generated = self.bus.pop(timeout=0.05)
             self.assertIsNotNone(generated)
             self.assertEqual(generated.type, "AssistantMessageGenerated")
             dispatcher.handle(generated)
@@ -50,7 +53,7 @@ class ConversationCoreTest(unittest.TestCase):
             memory_store = MemoryStore(path=Path(tmp_dir) / "memory_store.json")
             memory_store.append_message("user", "saved message")
 
-            server = start_http_server(host="127.0.0.1", port=0, memory_store=memory_store)
+            server = start_http_server(host="127.0.0.1", port=0, memory_store=memory_store, bus=self.bus)
             try:
                 with urlopen(f"http://127.0.0.1:{server.server_port}/memory", timeout=2) as response:
                     payload = json.loads(response.read().decode("utf-8"))

@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from core.events import Event
-from core.bus import event_bus
+from core.bus import EventBus
 from core.integrations.gumroad_client import GumroadAPIError, GumroadClient
 from core.gumroad_oauth import exchange_code_for_token, get_auth_url, load_token, save_token
 from core.services.gumroad_sync_service import GumroadSyncService
@@ -18,23 +18,89 @@ from core.http.response import success
 from core.version import VERSION
 
 
+class TretaHTTPServer(HTTPServer):
+    def __init__(self, server_address, RequestHandlerClass, *, bus: EventBus, **dependencies):
+        super().__init__(server_address, RequestHandlerClass)
+        self.bus = bus
+        self.state_machine = dependencies.get("state_machine")
+        self.opportunity_store = dependencies.get("opportunity_store")
+        self.product_proposal_store = dependencies.get("product_proposal_store")
+        self.product_plan_store = dependencies.get("product_plan_store")
+        self.product_launch_store = dependencies.get("product_launch_store")
+        self.performance_engine = dependencies.get("performance_engine")
+        self.control = dependencies.get("control")
+        self.strategy_engine = dependencies.get("strategy_engine")
+        self.strategy_decision_engine = dependencies.get("strategy_decision_engine")
+        self.strategy_action_execution_layer = dependencies.get("strategy_action_execution_layer")
+        self.autonomy_policy_engine = dependencies.get("autonomy_policy_engine")
+        self.daily_loop_engine = dependencies.get("daily_loop_engine")
+        self.memory_store = dependencies.get("memory_store")
+        self.reddit_router = dependencies.get("reddit_router") or RedditIntelligenceRouter()
+
+
 class Handler(BaseHTTPRequestHandler):
-    # TODO(arch): Handler relies on mutable class-level dependencies; move to instance/server-scoped injection.
-    state_machine = None
-    opportunity_store = None
-    product_proposal_store = None
-    product_plan_store = None
-    product_launch_store = None
-    performance_engine = None
-    control = None
-    strategy_engine = None
-    strategy_decision_engine = None
-    strategy_action_execution_layer = None
-    autonomy_policy_engine = None
-    daily_loop_engine = None
-    memory_store = None
-    reddit_router = None
     ui_dir = Path(__file__).resolve().parent.parent / "ui"
+
+    @property
+    def bus(self) -> EventBus:
+        return self.server.bus
+
+    @property
+    def state_machine(self):
+        return self.server.state_machine
+
+    @property
+    def opportunity_store(self):
+        return self.server.opportunity_store
+
+    @property
+    def product_proposal_store(self):
+        return self.server.product_proposal_store
+
+    @property
+    def product_plan_store(self):
+        return self.server.product_plan_store
+
+    @property
+    def product_launch_store(self):
+        return self.server.product_launch_store
+
+    @property
+    def performance_engine(self):
+        return self.server.performance_engine
+
+    @property
+    def control(self):
+        return self.server.control
+
+    @property
+    def strategy_engine(self):
+        return self.server.strategy_engine
+
+    @property
+    def strategy_decision_engine(self):
+        return self.server.strategy_decision_engine
+
+    @property
+    def strategy_action_execution_layer(self):
+        return self.server.strategy_action_execution_layer
+
+    @property
+    def autonomy_policy_engine(self):
+        return self.server.autonomy_policy_engine
+
+    @property
+    def daily_loop_engine(self):
+        return self.server.daily_loop_engine
+
+    @property
+    def memory_store(self):
+        return self.server.memory_store
+
+    @property
+    def reddit_router(self):
+        return self.server.reddit_router
+
 
     def _reddit_posts_path(self) -> Path:
         data_dir = Path(__file__).resolve().parent.parent / ".treta_data"
@@ -94,8 +160,6 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
 
         try:
-            if self.reddit_router is None:
-                self.reddit_router = RedditIntelligenceRouter()
             reddit_response = self.reddit_router.handle_get(parsed.path, parse_qs(parsed.query))
             if reddit_response is not None:
                 code, body = reddit_response
@@ -128,7 +192,7 @@ class Handler(BaseHTTPRequestHandler):
                     "trace_id": event.trace_id,
                     "timestamp": event.timestamp,
                 }
-                for event in event_bus.recent(limit=10)
+                for event in self.bus.recent(limit=10)
             ]
             return self._send(200, {"events": events})
 
@@ -385,8 +449,6 @@ class Handler(BaseHTTPRequestHandler):
         try:
             data = json.loads(raw)
 
-            if self.reddit_router is None:
-                self.reddit_router = RedditIntelligenceRouter()
             reddit_post_response = self.reddit_router.handle_post(self.path, data)
             if reddit_post_response is not None:
                 code, body = reddit_post_response
@@ -404,10 +466,10 @@ class Handler(BaseHTTPRequestHandler):
                     payload={"proposal_id": proposal_id},
                     source="http",
                 )
-                event_bus.push(transition_event)
+                self.bus.push(transition_event)
                 actions = self.control.consume(transition_event)
                 for action in actions:
-                    event_bus.push(Event(type=action.type, payload=action.payload, source="control"))
+                    self.bus.push(Event(type=action.type, payload=action.payload, source="control"))
                     if action.type == "ProductProposalStatusChanged":
                         return self._send_success(200, action.payload["proposal"])
 
@@ -421,11 +483,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not ev_type:
                     return self._send(400, {"ok": False, "error": "missing_type"})
 
-                event_bus.push(Event(type=ev_type, payload=payload, source=source))
+                self.bus.push(Event(type=ev_type, payload=payload, source=source))
                 return self._send(200, {"ok": True})
 
             if self.path == "/scan/infoproduct":
-                event_bus.push(
+                self.bus.push(
                     Event(
                         type="RunInfoproductScan",
                         payload={},
@@ -438,7 +500,7 @@ class Handler(BaseHTTPRequestHandler):
                 proposal_id = str(data.get("proposal_id", "")).strip()
                 if not proposal_id:
                     return self._send(400, {"ok": False, "error": "missing_proposal_id"})
-                event_bus.push(
+                self.bus.push(
                     Event(
                         type="BuildProductPlanRequested",
                         payload={"proposal_id": proposal_id},
@@ -459,10 +521,10 @@ class Handler(BaseHTTPRequestHandler):
                     payload={"proposal_id": proposal_id},
                     source="http",
                 )
-                event_bus.push(execute_event)
+                self.bus.push(execute_event)
                 actions = self.control.consume(execute_event)
                 for action in actions:
-                    event_bus.push(Event(type=action.type, payload=action.payload, source="control"))
+                    self.bus.push(Event(type=action.type, payload=action.payload, source="control"))
                     if action.type == "ProductPlanExecuted":
                         return self._send_success(200, action.payload["execution_package"])
 
@@ -623,7 +685,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"ok": False, "error": "missing_id"})
 
             if self.path == "/opportunities/evaluate":
-                event_bus.push(
+                self.bus.push(
                     Event(
                         type="EvaluateOpportunityById",
                         payload={"id": event_id},
@@ -633,7 +695,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True})
 
             if self.path == "/opportunities/dismiss":
-                event_bus.push(
+                self.bus.push(
                     Event(
                         type="OpportunityDismissed",
                         payload={"id": event_id},
@@ -661,8 +723,6 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             return self._send(400, {"ok": False, "error": str(e)})
 
-        if self.reddit_router is None:
-            self.reddit_router = RedditIntelligenceRouter()
         patch_response = self.reddit_router.handle_patch(self.path, data)
         if patch_response is None:
             return self._send(404, {"ok": False, "error": "not_found"})
@@ -674,6 +734,7 @@ class Handler(BaseHTTPRequestHandler):
 def start_http_server(
     host="0.0.0.0",
     port=7777,
+    bus: EventBus | None = None,
     state_machine=None,
     opportunity_store=None,
     product_proposal_store=None,
@@ -689,21 +750,26 @@ def start_http_server(
     memory_store=None,
 ):
     # Thread daemon: se muere si se muere el proceso principal (bien para dev)
-    Handler.state_machine = state_machine
-    Handler.opportunity_store = opportunity_store
-    Handler.product_proposal_store = product_proposal_store
-    Handler.product_plan_store = product_plan_store
-    Handler.product_launch_store = product_launch_store
-    Handler.performance_engine = performance_engine
-    Handler.control = control
-    Handler.strategy_engine = strategy_engine
-    Handler.strategy_decision_engine = strategy_decision_engine
-    Handler.strategy_action_execution_layer = strategy_action_execution_layer
-    Handler.autonomy_policy_engine = autonomy_policy_engine
-    Handler.daily_loop_engine = daily_loop_engine
-    Handler.memory_store = memory_store
-    Handler.reddit_router = RedditIntelligenceRouter()
-    server = HTTPServer((host, port), Handler)
+    resolved_bus = bus or EventBus()
+    server = TretaHTTPServer(
+        (host, port),
+        Handler,
+        bus=resolved_bus,
+        state_machine=state_machine,
+        opportunity_store=opportunity_store,
+        product_proposal_store=product_proposal_store,
+        product_plan_store=product_plan_store,
+        product_launch_store=product_launch_store,
+        performance_engine=performance_engine,
+        control=control,
+        strategy_engine=strategy_engine,
+        strategy_decision_engine=strategy_decision_engine,
+        strategy_action_execution_layer=strategy_action_execution_layer,
+        autonomy_policy_engine=autonomy_policy_engine,
+        daily_loop_engine=daily_loop_engine,
+        memory_store=memory_store,
+        reddit_router=RedditIntelligenceRouter(),
+    )
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     return server

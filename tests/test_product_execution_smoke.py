@@ -1,6 +1,6 @@
 import unittest
 
-from core.bus import event_bus
+from core.bus import EventBus
 from core.control import Control
 from core.dispatcher import Dispatcher
 from core.events import Event
@@ -8,9 +8,12 @@ from core.state_machine import StateMachine
 
 
 class ProductExecutionSmokeTest(unittest.TestCase):
+    def setUp(self):
+        self.bus = EventBus()
+
     def test_generate_proposal_then_execute(self):
-        dispatcher = Dispatcher(state_machine=StateMachine(), control=Control())
-        history_before = len(event_bus.recent(limit=300))
+        dispatcher = Dispatcher(state_machine=StateMachine(), control=Control(bus=self.bus), bus=self.bus)
+        history_before = len(self.bus.recent(limit=300))
 
         dispatcher.handle(
             Event(
@@ -26,7 +29,7 @@ class ProductExecutionSmokeTest(unittest.TestCase):
             )
         )
 
-        events_after_proposal = event_bus.recent(limit=300)
+        events_after_proposal = self.bus.recent(limit=300)
         new_events = events_after_proposal[history_before:]
         generated = [event for event in new_events if event.type == "ProductProposalGenerated"]
         self.assertEqual(len(generated), 1)
@@ -49,7 +52,7 @@ class ProductExecutionSmokeTest(unittest.TestCase):
             )
         )
 
-        events_after_execution = event_bus.recent(limit=300)
+        events_after_execution = self.bus.recent(limit=300)
         execution_events = [
             event
             for event in events_after_execution[history_before:]

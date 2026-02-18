@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from core.bus import event_bus, EventBus
+from core.bus import EventBus
 from core.events import Event
 
 
@@ -17,7 +17,7 @@ class AutonomyController:
     ):
         self.risk_tolerance = risk_tolerance
         self.auto_execute_money_threshold = auto_execute_money_threshold
-        self.bus = bus or event_bus
+        self.bus = bus or EventBus()
 
     def handle_evaluated_opportunity(self, decision_result: Dict[str, Any]) -> List[Event]:
         decision = decision_result.get("decision")

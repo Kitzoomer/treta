@@ -3,6 +3,7 @@ import unittest
 from urllib.request import Request, urlopen
 from unittest.mock import patch
 
+from core.bus import EventBus
 from core.control import Control
 from core.ipc_http import start_http_server
 from core.reddit_public.config import DEFAULT_CONFIG, update_config
@@ -10,13 +11,14 @@ from core.reddit_public.config import DEFAULT_CONFIG, update_config
 
 class RedditConfigEndpointTest(unittest.TestCase):
     def setUp(self):
+        self.bus = EventBus()
         update_config(DEFAULT_CONFIG.copy())
 
     def tearDown(self):
         update_config(DEFAULT_CONFIG.copy())
 
     def test_get_and_update_config(self):
-        server = start_http_server(host="127.0.0.1", port=0, control=Control())
+        server = start_http_server(host="127.0.0.1", port=0, control=Control(), bus=self.bus)
         try:
             with urlopen(f"http://127.0.0.1:{server.server_port}/reddit/config", timeout=2) as response:
                 payload = json.loads(response.read().decode("utf-8"))
@@ -67,10 +69,10 @@ class RedditConfigEndpointTest(unittest.TestCase):
                 }
             ],
         }
-        control = Control()
+        control = Control(bus=self.bus)
 
         with patch.object(control, "run_reddit_public_scan", return_value=expected):
-            server = start_http_server(host="127.0.0.1", port=0, control=control)
+            server = start_http_server(host="127.0.0.1", port=0, control=control, bus=self.bus)
             try:
                 req = Request(
                     f"http://127.0.0.1:{server.server_port}/reddit/run_scan",
@@ -102,9 +104,9 @@ class RedditConfigEndpointTest(unittest.TestCase):
                 }
             ],
         }
-        control = Control()
+        control = Control(bus=self.bus)
 
-        server = start_http_server(host="127.0.0.1", port=0, control=control)
+        server = start_http_server(host="127.0.0.1", port=0, control=control, bus=self.bus)
         try:
             with urlopen(f"http://127.0.0.1:{server.server_port}/reddit/last_scan", timeout=2) as response:
                 empty_payload = json.loads(response.read().decode("utf-8"))
