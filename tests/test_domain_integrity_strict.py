@@ -39,3 +39,35 @@ def test_global_invariant_fails_with_two_active_proposals():
 
     with pytest.raises(DomainIntegrityError):
         policy.validate_global_invariants(proposals)
+
+
+def test_cannot_transition_directly_from_draft_to_ready_to_launch():
+    policy = DomainIntegrityPolicy()
+    proposal = _proposal("proposal-1", status="draft")
+    proposals = [proposal]
+
+    with pytest.raises(DomainIntegrityError):
+        policy.validate_transition(proposal, "ready_to_launch", proposals)
+
+
+def test_illegal_backward_transition_from_ready_to_launch_to_draft_raises():
+    policy = DomainIntegrityPolicy()
+    proposal = _proposal("proposal-1", status="ready_to_launch")
+    proposals = [proposal]
+
+    with pytest.raises(DomainIntegrityError):
+        policy.validate_transition(proposal, "draft", proposals)
+
+
+def test_valid_lifecycle_transitions_do_not_raise_errors():
+    policy = DomainIntegrityPolicy()
+    proposal = _proposal("proposal-1", status="draft")
+    proposals = [proposal]
+
+    policy.validate_transition(proposal, "approved", proposals)
+    proposal["status"] = "approved"
+
+    policy.validate_transition(proposal, "building", proposals)
+    proposal["status"] = "building"
+
+    policy.validate_transition(proposal, "ready_to_launch", proposals)

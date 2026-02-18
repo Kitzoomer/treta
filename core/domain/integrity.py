@@ -4,6 +4,16 @@ class DomainIntegrityError(Exception):
 
 class DomainIntegrityPolicy:
     ACTIVE_STATUSES = ["approved", "building", "ready_to_launch"]
+    ALLOWED_TRANSITIONS = {
+        "draft": {"approved", "rejected"},
+        "approved": {"building", "archived"},
+        "building": {"ready_to_launch"},
+        "ready_to_launch": {"ready_for_review"},
+        "ready_for_review": {"launched", "executed"},
+        "launched": {"archived"},
+        "rejected": {"archived"},
+        "archived": set(),
+    }
 
     def validate_global_invariants(self, proposals):
         active = [p for p in proposals if p["status"] in self.ACTIVE_STATUSES]
@@ -12,6 +22,12 @@ class DomainIntegrityPolicy:
 
     def validate_transition(self, proposal, new_status, proposals):
         current_status = proposal["status"]
+
+        allowed_targets = self.ALLOWED_TRANSITIONS.get(current_status, set())
+        if new_status not in allowed_targets:
+            raise DomainIntegrityError(
+                f"Invalid transition: {current_status} -> {new_status}."
+            )
 
         # Rule 1: only one active proposal
         if new_status in self.ACTIVE_STATUSES:
