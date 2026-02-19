@@ -9,6 +9,7 @@ from core.product_proposal_store import ProductProposalStore
 from core.events import Event
 from core.reddit_public.config import DEFAULT_CONFIG, update_config
 from core.reddit_public.pain_scoring import compute_pain_score
+from core.revenue_attribution.store import RevenueAttributionStore
 
 
 class PainScoringTest(unittest.TestCase):
@@ -129,6 +130,63 @@ class RedditPublicPainGateTest(unittest.TestCase):
 
 
 
+
+
+    def test_revenue_bonus_prioritizes_subreddit_with_sales(self):
+        while self.bus.pop(timeout=0.001) is not None:
+            pass
+
+        posts = [
+            {
+                "id": "freelance-post",
+                "title": "Need help pricing retainers",
+                "selftext": "need help with proposal rate",
+                "score": 10,
+                "num_comments": 5,
+                "subreddit": "r/freelance",
+            },
+            {
+                "id": "other-post",
+                "title": "Need help pricing retainers",
+                "selftext": "need help with proposal rate",
+                "score": 10,
+                "num_comments": 5,
+                "subreddit": "r/other",
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            proposal_store = ProductProposalStore(path=Path(temp_dir) / "product_proposals.json")
+            revenue_store = RevenueAttributionStore(path=Path(temp_dir) / "revenue_attribution.json")
+            revenue_store.upsert_tracking("treta-freelance", "proposal-1", subreddit="r/freelance")
+            revenue_store.record_sale("treta-freelance", sale_count=1, revenue_delta=20.0)
+
+            control = Control(
+                product_proposal_store=proposal_store,
+                revenue_attribution_store=revenue_store,
+                bus=self.bus,
+            )
+            with patch("core.reddit_public.service.RedditPublicService.scan_subreddits", return_value=posts), patch(
+                "core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions",
+                return_value=[],
+            ):
+                result = control.run_reddit_public_scan()
+
+        self.assertEqual(result["qualified"], 2)
+        self.assertEqual(result["posts"][0]["pain_score"], result["posts"][1]["pain_score"])
+
+        emitted = []
+        while True:
+            event = self.bus.pop(timeout=0.001)
+            if event is None:
+                break
+            if event.type == "OpportunityDetected":
+                emitted.append(event)
+
+        self.assertEqual(len(emitted), 1)
+        self.assertEqual(emitted[0].payload["id"], "reddit-public-freelance-post")
+        self.assertEqual(emitted[0].payload["revenue_bonus"], 15)
+        self.assertGreater(emitted[0].payload["score"], emitted[0].payload["pain_score"])
 
     def test_scan_emits_only_top_scoring_opportunity(self):
         while self.bus.pop(timeout=0.001) is not None:

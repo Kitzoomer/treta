@@ -167,6 +167,20 @@ class Control:
     def _save_reddit_posts(self, items: list[dict]) -> None:
         self._reddit_posts_path().write_text(json.dumps(items, indent=2), encoding="utf-8")
 
+    def _compute_revenue_bonus(self, subreddit: str) -> int:
+        summary = self.revenue_attribution_store.summary() if self.revenue_attribution_store is not None else {}
+        by_subreddit = summary.get("by_subreddit", {}) if isinstance(summary, dict) else {}
+        subreddit_data = by_subreddit.get(subreddit, {}) if isinstance(by_subreddit, dict) else {}
+
+        sales = int(subreddit_data.get("sales", 0) or 0) if isinstance(subreddit_data, dict) else 0
+        revenue = float(subreddit_data.get("revenue", 0.0) or 0.0) if isinstance(subreddit_data, dict) else 0.0
+
+        if sales < 1:
+            return 0
+        if revenue >= 50:
+            return 25
+        return 15
+
     def run_reddit_public_scan(self) -> Dict[str, object]:
         from core.reddit_public.service import RedditPublicService
 
@@ -203,8 +217,12 @@ class Control:
             body = str(post.get("selftext", ""))
             pain_data = compute_pain_score(post)
             pain_score = int(pain_data["pain_score"])
+            subreddit_name = str(post.get("subreddit", "")).strip() or "unknown"
+            revenue_bonus = self._compute_revenue_bonus(subreddit_name)
+            final_score = pain_score + revenue_bonus
             print(
                 f"[REDDIT_PUBLIC] post={post.get('id', '')} pain_score={pain_score} "
+                f"bonus={revenue_bonus} final_score={final_score} "
                 f"intent={pain_data['intent_type']} urgency={pain_data['urgency_level']}"
             )
             if pain_score < pain_threshold:
@@ -212,8 +230,10 @@ class Control:
 
             qualified_payload = {
                 "title": title,
-                "subreddit": str(post.get("subreddit", "")),
+                "subreddit": subreddit_name,
                 "pain_score": pain_score,
+                "revenue_bonus": revenue_bonus,
+                "score": final_score,
                 "intent_type": str(pain_data["intent_type"]),
                 "urgency_level": str(pain_data["urgency_level"]),
             }
@@ -223,10 +243,10 @@ class Control:
                     "post": post,
                     "pain_data": pain_data,
                     "pain_score": pain_score,
-                    "score": pain_score,
+                    "revenue_bonus": revenue_bonus,
+                    "score": final_score,
                 }
             )
-            subreddit_name = str(post.get("subreddit", "")).strip() or "unknown"
             by_subreddit[subreddit_name] = by_subreddit.get(subreddit_name, 0) + 1
             if post_id:
                 known_post_ids.add(post_id)
@@ -259,6 +279,8 @@ class Control:
                 top_post = selected["post"]
                 top_pain_data = selected["pain_data"]
                 top_pain_score = int(selected["pain_score"])
+                top_revenue_bonus = int(selected.get("revenue_bonus", 0) or 0)
+                top_final_score = int(selected.get("score", top_pain_score) or top_pain_score)
                 snippet = str(top_post.get("selftext", ""))[:300]
                 self.bus.push(
                     Event(
@@ -268,9 +290,11 @@ class Control:
                             "source": "reddit_public",
                             "title": str(top_post.get("title", "")),
                             "subreddit": top_post.get("subreddit", ""),
-                            "score": top_post.get("score", 0),
+                            "reddit_score": top_post.get("score", 0),
                             "num_comments": top_post.get("num_comments", 0),
                             "pain_score": top_pain_score,
+                            "revenue_bonus": top_revenue_bonus,
+                            "score": top_final_score,
                             "intent_type": top_pain_data["intent_type"],
                             "urgency_level": top_pain_data["urgency_level"],
                             "snippet": snippet,

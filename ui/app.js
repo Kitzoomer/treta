@@ -31,6 +31,7 @@ const state = {
   performance: {},
   strategy: {},
   strategyPendingActions: [],
+  revenueSummary: null,
   dailyLoop: {
     phase: "IDLE",
     summary: "System operating normally.",
@@ -93,16 +94,19 @@ const state = {
       system: null,
       reddit: null,
       strategy: null,
+      revenue: null,
     },
     lastApiErrors: {
       system: "",
       reddit: "",
       strategy: "",
+      revenue: "",
     },
     sliceHealth: {
       system: { stale: false, lastSuccessAt: null, staleSince: null },
       reddit: { stale: false, lastSuccessAt: null, staleSince: null },
       strategy: { stale: false, lastSuccessAt: null, staleSince: null },
+      revenue: { stale: false, lastSuccessAt: null, staleSince: null },
     },
     integrity: {
       lastStatusCode: 0,
@@ -261,6 +265,9 @@ const api = {
   getPerformanceSummary() {
     return this.fetchJson("/performance/summary");
   },
+  getRevenueSummary() {
+    return this.fetchJson("/revenue/summary");
+  },
   getStrategyRecommendations() {
     return this.fetchJson("/strategy/recommendations");
   },
@@ -418,7 +425,7 @@ const helpers = {
     return date.toLocaleTimeString();
   },
   isCoreSlice(slice) {
-    return ["system", "reddit", "strategy"].includes(slice);
+    return ["system", "reddit", "strategy", "revenue"].includes(slice);
   },
 };
 
@@ -899,6 +906,24 @@ const views = {
       `;
     };
 
+    const renderRevenueSummary = () => {
+      const summary = state.revenueSummary;
+      if (!summary) {
+        return `<p><strong>Revenue:</strong> unavailable</p>`;
+      }
+      const totals = summary.totals || {};
+      const trackedRevenue = Number(totals.revenue || 0).toFixed(2);
+      const trackedSales = Number(totals.sales || 0);
+      const bySubreddit = summary.by_subreddit && typeof summary.by_subreddit === "object" ? summary.by_subreddit : {};
+      const topSubreddit = Object.entries(bySubreddit)
+        .sort((left, right) => Number((right[1] || {}).revenue || 0) - Number((left[1] || {}).revenue || 0))[0]?.[0];
+
+      return `
+        <p><strong>Revenue (tracked):</strong> $${helpers.escape(trackedRevenue)} — ${helpers.escape(trackedSales)} sales</p>
+        ${topSubreddit ? `<p><strong>Top subreddit:</strong> ${helpers.escape(topSubreddit)}</p>` : ""}
+      `;
+    };
+
     const renderStrategicCompact = () => {
       if (dashboardView.loading) return "<p class='empty'>Loading pending strategic actions…</p>";
       if (!topStrategicActions.length) return "<p class='empty'>No pending strategic actions.</p>";
@@ -1051,6 +1076,7 @@ const views = {
         <article class="card">
           <h3>Backend</h3>
           <p><strong>Status:</strong> <span class="badge ${state.diagnostics.backendConnected ? "ok" : "error"}">${state.diagnostics.backendConnected ? "CONNECTED" : "DISCONNECTED"}</span></p>
+          ${renderRevenueSummary()}
           <p class="muted-note">Preview mode without backend will show disconnected status.</p>
         </article>
 
@@ -2402,6 +2428,14 @@ async function refreshLoop() {
       state.strategyDecision = degradedMode.preserveOnFailure(state.strategyDecision, strategyDecisionData || state.strategyDecision, false);
       markSliceSuccess("strategy");
     },
+    revenue: async () => {
+      const revenueSummaryData = await api.getRevenueSummary();
+      const normalized = revenueSummaryData?.totals
+        ? revenueSummaryData
+        : (revenueSummaryData?.ok ? revenueSummaryData.data : null);
+      state.revenueSummary = degradedMode.preserveOnFailure(state.revenueSummary, normalized, false);
+      markSliceSuccess("revenue");
+    },
     reddit: async () => {
       const [redditConfigData, redditLastScanData, redditSignalsData, redditTodayPlanData, redditDailyActionsData, redditPostsData] = await Promise.all([
         api.getRedditConfig(),
@@ -2925,10 +2959,10 @@ function renderRouteBanner() {
 }
 
 function renderDiagnosticsPanel() {
-  const refreshRows = ["system", "reddit", "strategy"]
+  const refreshRows = ["system", "reddit", "strategy", "revenue"]
     .map((slice) => `<li>${helpers.escape(slice)}: ${helpers.escape(helpers.formatTimestamp(state.diagnostics.lastRefreshAt[slice]))}</li>`)
     .join("");
-  const errorRows = ["system", "reddit", "strategy"]
+  const errorRows = ["system", "reddit", "strategy", "revenue"]
     .map((slice) => `<li>${helpers.escape(slice)}: ${helpers.escape(state.diagnostics.lastApiErrors[slice] || "none")}</li>`)
     .join("");
   return `
