@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from core.bus import EventBus
 from core.events import Event
+from core.scheduler_state import load_scheduler_state, save_scheduler_state
 
 
 class DailyScheduler:
@@ -21,7 +22,17 @@ class DailyScheduler:
         self._stop_event = threading.Event()
         self._thread = None
         self._last_run_date = None
+        self._last_run_timestamp = None
         self._next_scan_at = None
+
+        state = load_scheduler_state()
+        last_run_date = state.get("last_run_date")
+        if isinstance(last_run_date, str):
+            try:
+                self._last_run_date = datetime.fromisoformat(last_run_date).date()
+            except ValueError:
+                self._last_run_date = None
+        self._last_run_timestamp = state.get("last_run_timestamp")
 
     def start(self, bus: EventBus | None = None):
         if self._thread and self._thread.is_alive():
@@ -62,6 +73,8 @@ class DailyScheduler:
             print("[SCHEDULER] Running daily scan")
             self._bus.push(Event(type="RunInfoproductScan", payload={}, source="scheduler"))
             self._last_run_date = now.date()
+            self._last_run_timestamp = now.isoformat()
+            save_scheduler_state(self._last_run_date.isoformat(), self._last_run_timestamp)
             return True
 
         return False
