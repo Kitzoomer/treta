@@ -78,6 +78,9 @@ class ProductExecutionSmokeTest(unittest.TestCase):
         self.assertTrue(package.get("reddit_post", {}).get("title"))
         self.assertTrue(package.get("gumroad_description"))
         self.assertTrue(package.get("pricing_strategy"))
+        self.assertIn("Tracking: treta-", package.get("reddit_post", {}).get("body", ""))
+        self.assertIn("Tracking: treta-", package.get("gumroad_description", ""))
+        self.assertIn("Tracking: treta-", package.get("short_pitch", ""))
 
 
 if __name__ == "__main__":

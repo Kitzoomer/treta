@@ -24,6 +24,7 @@ from core.strategy_action_execution_layer import StrategyActionExecutionLayer
 from core.strategy_action_store import StrategyActionStore
 from core.strategy_decision_engine import StrategyDecisionEngine
 from core.strategy_engine import StrategyEngine
+from core.revenue_attribution.store import RevenueAttributionStore
 
 
 class TretaApp:
@@ -37,6 +38,7 @@ class TretaApp:
         self.product_proposal_store = ProductProposalStore()
         self.product_plan_store = ProductPlanStore()
         self.product_launch_store = ProductLaunchStore(proposal_store=self.product_proposal_store)
+        self.revenue_attribution_store = RevenueAttributionStore()
         self.performance_engine = PerformanceEngine(product_launch_store=self.product_launch_store)
         self.strategy_engine = StrategyEngine(product_launch_store=self.product_launch_store)
         self.strategy_action_store = StrategyActionStore()
@@ -67,6 +69,7 @@ class TretaApp:
             product_proposal_store=self.product_proposal_store,
             product_plan_store=self.product_plan_store,
             product_launch_store=self.product_launch_store,
+            revenue_attribution_store=self.revenue_attribution_store,
             bus=self.bus,
         )
         self.conversation_core = ConversationCore(
@@ -103,6 +106,7 @@ class TretaApp:
             autonomy_policy_engine=self.autonomy_policy_engine,
             daily_loop_engine=self.daily_loop_engine,
             memory_store=self.memory_store,
+            revenue_attribution_store=self.revenue_attribution_store,
         )
         return self.http_server
 

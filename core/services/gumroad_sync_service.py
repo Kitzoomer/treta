@@ -1,15 +1,49 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
+from typing import Any
 
 from core.integrations.gumroad_client import GumroadClient
 from core.product_launch_store import ProductLaunchStore
+from core.revenue_attribution.store import RevenueAttributionStore
+
+
+_TRACKING_PATTERN = re.compile(r"treta-[a-z0-9]{6}-\d+")
+
+
+def extract_tracking_id(value: Any) -> str | None:
+    if isinstance(value, str):
+        match = _TRACKING_PATTERN.search(value.lower())
+        return match.group(0) if match else None
+
+    if isinstance(value, dict):
+        for candidate in value.values():
+            found = extract_tracking_id(candidate)
+            if found:
+                return found
+        return None
+
+    if isinstance(value, list):
+        for candidate in value:
+            found = extract_tracking_id(candidate)
+            if found:
+                return found
+        return None
+
+    return None
 
 
 class GumroadSyncService:
-    def __init__(self, launch_store: ProductLaunchStore, gumroad_client: GumroadClient) -> None:
+    def __init__(
+        self,
+        launch_store: ProductLaunchStore,
+        gumroad_client: GumroadClient,
+        revenue_attribution_store: RevenueAttributionStore | None = None,
+    ) -> None:
         self._launch_store = launch_store
         self._gumroad_client = gumroad_client
+        self._revenue_attribution_store = revenue_attribution_store
 
     def sync_sales(self) -> dict[str, float | int]:
         synced_launches = 0
@@ -40,6 +74,17 @@ class GumroadSyncService:
                 revenue_added = round(sum(float(sale.get("amount", 0.0)) for sale in new_sales), 2)
                 self._launch_store.add_sales_batch(launch_id, len(new_sales), revenue_added)
                 newest_sale_id = str(new_sales[0]["sale_id"])
+
+                if self._revenue_attribution_store is not None:
+                    for sale in new_sales:
+                        tracking_id = extract_tracking_id(sale)
+                        if not tracking_id:
+                            continue
+                        self._revenue_attribution_store.record_sale(
+                            tracking_id,
+                            sale_count=1,
+                            revenue_delta=float(sale.get("amount", 0.0) or 0.0),
+                        )
             else:
                 revenue_added = 0.0
                 newest_sale_id = last_sale_id

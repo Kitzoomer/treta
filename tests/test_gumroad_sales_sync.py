@@ -6,6 +6,7 @@ from unittest.mock import Mock
 from core.product_launch_store import ProductLaunchStore
 from core.product_proposal_store import ProductProposalStore
 from core.services.gumroad_sync_service import GumroadSyncService
+from core.revenue_attribution.store import RevenueAttributionStore
 
 
 class GumroadSalesSyncServiceTest(unittest.TestCase):
@@ -39,6 +40,36 @@ class GumroadSalesSyncServiceTest(unittest.TestCase):
             self.assertEqual(updated["metrics"]["revenue"], 29.99)
             self.assertEqual(updated["last_gumroad_sale_id"], "sale-2")
             self.assertIsNotNone(updated["last_gumroad_sync_at"])
+
+
+    def test_gumroad_sync_links_sale_when_tracking_present(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            proposals, launches = self._stores(root)
+            proposals.add({"id": "proposal-3", "product_name": "Track Kit"})
+            launch = launches.add_from_proposal("proposal-3")
+            launches.link_gumroad_product(launch["id"], "gumroad-product-3")
+
+            revenue_store = RevenueAttributionStore(path=root / "revenue_attribution.json")
+            revenue_store.upsert_tracking("treta-abc123-1700000000", "proposal-3", subreddit="r/saas", price=29)
+
+            gumroad_client = Mock()
+            gumroad_client.get_sales.return_value = [
+                {
+                    "sale_id": "sale-3",
+                    "amount": 29.0,
+                    "description": "Customer bought product. Tracking: treta-abc123-1700000000",
+                }
+            ]
+
+            service = GumroadSyncService(launches, gumroad_client, revenue_store)
+            summary = service.sync_sales()
+
+            attributed = revenue_store.get_by_tracking("treta-abc123-1700000000")
+            self.assertEqual(summary["new_sales"], 1)
+            self.assertIsNotNone(attributed)
+            self.assertEqual(attributed["sales"], 1)
+            self.assertEqual(attributed["revenue"], 29.0)
 
     def test_cursor_prevents_double_counting(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

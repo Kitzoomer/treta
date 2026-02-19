@@ -21,6 +21,7 @@ from core.execution_engine import ExecutionEngine
 from core.execution_focus_engine import ExecutionFocusEngine
 from core.services.gumroad_sync_service import GumroadSyncService
 from core.product_launch_store import ProductLaunchStore
+from core.revenue_attribution.store import RevenueAttributionStore
 from core.domain.integrity import DomainIntegrityError, DomainIntegrityPolicy
 from core.errors import InvariantViolationError
 from core.domain.lifecycle import EXECUTION_STATUSES
@@ -55,6 +56,7 @@ class Control:
         product_plan_store: ProductPlanStore | None = None,
         execution_engine: ExecutionEngine | None = None,
         product_launch_store: ProductLaunchStore | None = None,
+        revenue_attribution_store: RevenueAttributionStore | None = None,
         bus: EventBus | None = None,
     ):
         self.decision_engine = decision_engine or DecisionEngine()
@@ -94,8 +96,11 @@ class Control:
             proposal_store=self.product_proposal_store,
             path=(inferred_dir / "product_launches.json") if inferred_dir is not None else None,
         )
+        self.revenue_attribution_store = revenue_attribution_store or RevenueAttributionStore(
+            path=(inferred_dir / "revenue_attribution.json") if inferred_dir is not None else None,
+        )
         self.gumroad_sales_sync_service = (
-            GumroadSyncService(self.product_launch_store, self.gumroad_client)
+            GumroadSyncService(self.product_launch_store, self.gumroad_client, self.revenue_attribution_store)
             if self.gumroad_client is not None
             else None
         )
@@ -632,6 +637,31 @@ class Control:
                 return []
 
             execution_package = self.execution_engine.generate_execution_package(proposal)
+            tracking_id = f"treta-{proposal_id[:6]}-{int(datetime.utcnow().timestamp())}"
+            reddit_post = execution_package.get("reddit_post")
+            if isinstance(reddit_post, dict):
+                reddit_post["body"] = f"{str(reddit_post.get('body', '')).rstrip()}\n\nTracking: {tracking_id}"
+            execution_package["gumroad_description"] = (
+                f"{str(execution_package.get('gumroad_description', '')).rstrip()}\n\nTracking: {tracking_id}"
+            )
+            execution_package["short_pitch"] = (
+                f"{str(execution_package.get('short_pitch', '')).rstrip()} (Tracking: {tracking_id})"
+            )
+
+            source_opportunity_id = str(proposal.get("source_opportunity_id", "")).strip()
+            subreddit = None
+            if source_opportunity_id:
+                opportunity = self.opportunity_store.get(source_opportunity_id)
+                if opportunity is not None:
+                    subreddit = opportunity.get("subreddit") or opportunity.get("opportunity", {}).get("subreddit")
+
+            self.revenue_attribution_store.upsert_tracking(
+                tracking_id=tracking_id,
+                proposal_id=proposal_id,
+                subreddit=str(subreddit).strip() if subreddit else None,
+                price=proposal.get("price_suggestion"),
+                created_at=datetime.utcnow().isoformat() + "Z",
+            )
             print(f"[EXECUTION] proposal_id={proposal_id}")
             actions = [
                 Action(
@@ -639,6 +669,7 @@ class Control:
                     payload={
                         "proposal_id": proposal_id,
                         "execution_package": execution_package,
+                        "tracking_id": tracking_id,
                     },
                 )
             ]
