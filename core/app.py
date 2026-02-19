@@ -8,6 +8,7 @@ from core.config import get_autonomy_mode
 from core.control import Control
 from core.conversation_core import ConversationCore
 from core.daily_loop import DailyLoopEngine
+from core.gpt_client import GPTClient, GPTClientConfigurationError
 from core.dispatcher import Dispatcher
 from core.events import Event
 from core.ipc_http import start_http_server
@@ -75,10 +76,16 @@ class TretaApp:
             subreddit_performance_store=self.subreddit_performance_store,
             bus=self.bus,
         )
+        try:
+            gpt_client = GPTClient()
+        except GPTClientConfigurationError:
+            gpt_client = None
+
         self.conversation_core = ConversationCore(
             bus=self.bus,
             state_machine=self.state_machine,
             memory_store=self.memory_store,
+            gpt_client_optional=gpt_client,
             daily_loop_engine=self.daily_loop_engine,
         )
         self.dispatcher = Dispatcher(

@@ -25,28 +25,22 @@ class ConversationCore:
         self.gpt_client = gpt_client_optional
         self.daily_loop_engine = daily_loop_engine
 
-    def _build_stub_response(self, text: str) -> str:
-        snapshot = self.memory_store.snapshot()
-        profile = snapshot.get("profile", {})
-        name = str(profile.get("name", "Marian"))
-        objective = str(profile.get("objective", "advance the daily loop"))
+    def _generate_response(self, user_message: str) -> str:
+        if self.gpt_client is None or not hasattr(self.gpt_client, "chat"):
+            return "Treta GPT connection error. Check configuration."
 
-        phase = "IDLE"
-        if self.daily_loop_engine is not None:
-            phase = str(self.daily_loop_engine.compute_phase())
+        messages = [
+            {
+                "role": "system",
+                "content": "You are Treta. You help build and monetize infoproducts using Reddit pain detection and Gumroad sales.",
+            },
+            {"role": "user", "content": user_message},
+        ]
 
-        user_text = text.strip()
-        return (
-            f"{name}, I got your message: '{user_text}'. "
-            f"Current loop phase is {phase}. Objective: {objective}. "
-            "Suggested next steps: 1) run an opportunity scan, 2) review top proposal, "
-            "3) execute one concrete launch task today."
-        )
-
-    def _generate_response(self, text: str) -> str:
-        if self.gpt_client is not None and hasattr(self.gpt_client, "generate"):
-            return str(self.gpt_client.generate(text))
-        return self._build_stub_response(text)
+        try:
+            return str(self.gpt_client.chat(messages))
+        except Exception:
+            return "Treta GPT connection error. Check configuration."
 
     def consume(self, event: Event) -> None:
         if event.type != "UserMessageSubmitted":
