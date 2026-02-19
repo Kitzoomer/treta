@@ -18,6 +18,7 @@ from core.bus import EventBus
 from core.integrations.gumroad_client import GumroadAPIError, GumroadClient
 from core.gumroad_oauth import exchange_code_for_token, get_auth_url, load_token, save_token
 from core.services.gumroad_sync_service import GumroadSyncService
+from core.revenue_attribution.store import RevenueAttributionStore
 from core.system_integrity import compute_system_integrity
 from core.reddit_intelligence.router import RedditIntelligenceRouter
 from core.reddit_public.config import get_config, update_config
@@ -45,6 +46,7 @@ class TretaHTTPServer(ThreadingHTTPServer):
         self.memory_store = dependencies.get("memory_store")
         self.reddit_router = dependencies.get("reddit_router") or RedditIntelligenceRouter()
         self.mutation_lock = threading.Lock()
+        self.revenue_attribution_store = dependencies.get("revenue_attribution_store")
         self.integrity_cache_ttl_seconds = 15
         self.integrity_cache = None
         self.operation_timeout_seconds = 8
@@ -140,6 +142,10 @@ class Handler(BaseHTTPRequestHandler):
     @property
     def reddit_router(self):
         return self.server.reddit_router
+
+    @property
+    def revenue_attribution_store(self):
+        return self.server.revenue_attribution_store
 
 
     def _reddit_posts_path(self) -> Path:
@@ -352,6 +358,11 @@ class Handler(BaseHTTPRequestHandler):
             if self.performance_engine is None:
                 return self._send(503, {"error": "performance_engine_unavailable"})
             return self._send(200, self.performance_engine.generate_insights())
+
+        if parsed.path == "/revenue/summary":
+            if self.revenue_attribution_store is None:
+                return self._send_success(200, {"totals": {"sales": 0, "revenue": 0.0}, "by_proposal": {}, "by_subreddit": {}})
+            return self._send_success(200, self.revenue_attribution_store.summary())
 
         if parsed.path == "/strategy/recommendations":
             if self.strategy_engine is None:
@@ -759,7 +770,11 @@ class Handler(BaseHTTPRequestHandler):
                     if not access_token:
                         return self._send(400, {"ok": False, "error": "Gumroad not connected. Visit /gumroad/auth first."})
                     gumroad_client = GumroadClient(access_token)
-                    service = GumroadSyncService(self.product_launch_store, gumroad_client)
+                    service = GumroadSyncService(
+                        self.product_launch_store,
+                        gumroad_client,
+                        self.revenue_attribution_store,
+                    )
                     ok, summary = self._run_with_timeout("gumroad_sync", service.sync_sales)
                     if not ok:
                         return self._send_timeout_error("gumroad_sync")
@@ -951,6 +966,7 @@ def start_http_server(
     autonomy_policy_engine=None,
     daily_loop_engine=None,
     memory_store=None,
+    revenue_attribution_store: RevenueAttributionStore | None = None,
 ):
     # Thread daemon: se muere si se muere el proceso principal (bien para dev)
     resolved_bus = bus or EventBus()
@@ -971,6 +987,7 @@ def start_http_server(
         autonomy_policy_engine=autonomy_policy_engine,
         daily_loop_engine=daily_loop_engine,
         memory_store=memory_store,
+        revenue_attribution_store=revenue_attribution_store,
         reddit_router=RedditIntelligenceRouter(),
     )
     t = threading.Thread(target=server.serve_forever, daemon=True)
