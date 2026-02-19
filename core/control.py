@@ -22,6 +22,7 @@ from core.execution_focus_engine import ExecutionFocusEngine
 from core.services.gumroad_sync_service import GumroadSyncService
 from core.product_launch_store import ProductLaunchStore
 from core.revenue_attribution.store import RevenueAttributionStore
+from core.subreddit_performance_store import SubredditPerformanceStore
 from core.domain.integrity import DomainIntegrityError, DomainIntegrityPolicy
 from core.errors import InvariantViolationError
 from core.domain.lifecycle import EXECUTION_STATUSES
@@ -57,6 +58,7 @@ class Control:
         execution_engine: ExecutionEngine | None = None,
         product_launch_store: ProductLaunchStore | None = None,
         revenue_attribution_store: RevenueAttributionStore | None = None,
+        subreddit_performance_store: SubredditPerformanceStore | None = None,
         bus: EventBus | None = None,
     ):
         self.decision_engine = decision_engine or DecisionEngine()
@@ -99,15 +101,47 @@ class Control:
         self.revenue_attribution_store = revenue_attribution_store or RevenueAttributionStore(
             path=(inferred_dir / "revenue_attribution.json") if inferred_dir is not None else None,
         )
+        self.subreddit_performance_store = subreddit_performance_store or SubredditPerformanceStore(
+            path=(inferred_dir / "subreddit_performance.json") if inferred_dir is not None else None,
+        )
         self.gumroad_sales_sync_service = (
-            GumroadSyncService(self.product_launch_store, self.gumroad_client, self.revenue_attribution_store)
+            GumroadSyncService(
+                self.product_launch_store,
+                self.gumroad_client,
+                self.revenue_attribution_store,
+                self.subreddit_performance_store,
+            )
             if self.gumroad_client is not None
             else None
         )
+        self._hydrate_subreddit_sales_from_revenue()
         self._last_reddit_scan: Dict[str, object] | None = None
         self.only_top_proposal = True
         self.domain_integrity_policy = DomainIntegrityPolicy()
         self.bus = bus or EventBus()
+
+    def _hydrate_subreddit_sales_from_revenue(self) -> None:
+        summary = self.revenue_attribution_store.summary() if self.revenue_attribution_store is not None else {}
+        by_subreddit = summary.get("by_subreddit", {}) if isinstance(summary, dict) else {}
+        if not isinstance(by_subreddit, dict):
+            return
+
+        for subreddit, values in by_subreddit.items():
+            if not isinstance(values, dict):
+                continue
+            name = str(subreddit).strip()
+            if not name:
+                continue
+            stats = self.subreddit_performance_store.get_subreddit_stats(name)
+            if int(stats.get("sales", 0) or 0) > 0 or float(stats.get("revenue", 0.0) or 0.0) > 0:
+                continue
+            sales = int(values.get("sales", 0) or 0)
+            revenue = float(values.get("revenue", 0.0) or 0.0)
+            if sales < 1:
+                continue
+            amount = revenue / sales if sales > 0 else 0.0
+            for _ in range(sales):
+                self.subreddit_performance_store.record_sale(name, amount)
 
     def has_active_proposal(self) -> bool:
         active_statuses = {"draft", *self.domain_integrity_policy.ACTIVE_STATUSES}
@@ -167,19 +201,25 @@ class Control:
     def _save_reddit_posts(self, items: list[dict]) -> None:
         self._reddit_posts_path().write_text(json.dumps(items, indent=2), encoding="utf-8")
 
-    def _compute_revenue_bonus(self, subreddit: str) -> int:
-        summary = self.revenue_attribution_store.summary() if self.revenue_attribution_store is not None else {}
-        by_subreddit = summary.get("by_subreddit", {}) if isinstance(summary, dict) else {}
-        subreddit_data = by_subreddit.get(subreddit, {}) if isinstance(by_subreddit, dict) else {}
+    def _compute_ranking_bonuses(self, subreddit: str) -> dict[str, int]:
+        stats = self.subreddit_performance_store.get_subreddit_stats(subreddit)
+        posts_attempted = int(stats.get("posts_attempted", 0) or 0)
+        plans_executed = int(stats.get("plans_executed", 0) or 0)
+        sales = int(stats.get("sales", 0) or 0)
+        revenue = float(stats.get("revenue", 0.0) or 0.0)
 
-        sales = int(subreddit_data.get("sales", 0) or 0) if isinstance(subreddit_data, dict) else 0
-        revenue = float(subreddit_data.get("revenue", 0.0) or 0.0) if isinstance(subreddit_data, dict) else 0.0
+        revenue_bonus = 25 if revenue >= 50 else 15 if revenue >= 10 else 0
+        execution_bonus = 10 if plans_executed >= 3 else 0
 
-        if sales < 1:
-            return 0
-        if revenue >= 50:
-            return 25
-        return 15
+        conversion_bonus = 0
+        if posts_attempted > 0 and (sales / posts_attempted) >= 0.1:
+            conversion_bonus = 20
+
+        return {
+            "revenue_bonus": revenue_bonus,
+            "execution_bonus": execution_bonus,
+            "conversion_bonus": conversion_bonus,
+        }
 
     def run_reddit_public_scan(self) -> Dict[str, object]:
         from core.reddit_public.service import RedditPublicService
@@ -218,11 +258,14 @@ class Control:
             pain_data = compute_pain_score(post)
             pain_score = int(pain_data["pain_score"])
             subreddit_name = str(post.get("subreddit", "")).strip() or "unknown"
-            revenue_bonus = self._compute_revenue_bonus(subreddit_name)
-            final_score = pain_score + revenue_bonus
+            bonuses = self._compute_ranking_bonuses(subreddit_name)
+            revenue_bonus = int(bonuses["revenue_bonus"])
+            execution_bonus = int(bonuses["execution_bonus"])
+            conversion_bonus = int(bonuses["conversion_bonus"])
+            final_score = pain_score + revenue_bonus + execution_bonus + conversion_bonus
             print(
                 f"[REDDIT_PUBLIC] post={post.get('id', '')} pain_score={pain_score} "
-                f"bonus={revenue_bonus} final_score={final_score} "
+                f"bonuses=(rev={revenue_bonus},exec={execution_bonus},conv={conversion_bonus}) final_score={final_score} "
                 f"intent={pain_data['intent_type']} urgency={pain_data['urgency_level']}"
             )
             if pain_score < pain_threshold:
@@ -233,6 +276,8 @@ class Control:
                 "subreddit": subreddit_name,
                 "pain_score": pain_score,
                 "revenue_bonus": revenue_bonus,
+                "execution_bonus": execution_bonus,
+                "conversion_bonus": conversion_bonus,
                 "score": final_score,
                 "intent_type": str(pain_data["intent_type"]),
                 "urgency_level": str(pain_data["urgency_level"]),
@@ -244,6 +289,8 @@ class Control:
                     "pain_data": pain_data,
                     "pain_score": pain_score,
                     "revenue_bonus": revenue_bonus,
+                    "execution_bonus": execution_bonus,
+                    "conversion_bonus": conversion_bonus,
                     "score": final_score,
                 }
             )
@@ -280,8 +327,11 @@ class Control:
                 top_pain_data = selected["pain_data"]
                 top_pain_score = int(selected["pain_score"])
                 top_revenue_bonus = int(selected.get("revenue_bonus", 0) or 0)
+                top_execution_bonus = int(selected.get("execution_bonus", 0) or 0)
+                top_conversion_bonus = int(selected.get("conversion_bonus", 0) or 0)
                 top_final_score = int(selected.get("score", top_pain_score) or top_pain_score)
                 snippet = str(top_post.get("selftext", ""))[:300]
+                self.subreddit_performance_store.record_post_attempt(str(top_post.get("subreddit", "")).strip() or "unknown")
                 self.bus.push(
                     Event(
                         type="OpportunityDetected",
@@ -294,6 +344,8 @@ class Control:
                             "num_comments": top_post.get("num_comments", 0),
                             "pain_score": top_pain_score,
                             "revenue_bonus": top_revenue_bonus,
+                            "execution_bonus": top_execution_bonus,
+                            "conversion_bonus": top_conversion_bonus,
                             "score": top_final_score,
                             "intent_type": top_pain_data["intent_type"],
                             "urgency_level": top_pain_data["urgency_level"],
@@ -505,9 +557,11 @@ class Control:
                 return []
 
             proposal = self.product_engine.generate(created)
+            subreddit = str(event.payload.get("subreddit", "")).strip() or "unknown"
             proposal["alignment_score"] = alignment["alignment_score"]
             proposal["alignment_reason"] = alignment["reason"]
             self.product_proposal_store.add(proposal)
+            self.subreddit_performance_store.record_proposal_generated(subreddit)
             return [
                 Action(
                     type="ProductProposalGenerated",
@@ -686,6 +740,8 @@ class Control:
                 price=proposal.get("price_suggestion"),
                 created_at=datetime.utcnow().isoformat() + "Z",
             )
+            if subreddit:
+                self.subreddit_performance_store.record_plan_executed(str(subreddit).strip())
             print(f"[EXECUTION] proposal_id={proposal_id}")
             actions = [
                 Action(

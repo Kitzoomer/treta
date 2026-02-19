@@ -25,6 +25,7 @@ from core.strategy_action_store import StrategyActionStore
 from core.strategy_decision_engine import StrategyDecisionEngine
 from core.strategy_engine import StrategyEngine
 from core.revenue_attribution.store import RevenueAttributionStore
+from core.subreddit_performance_store import SubredditPerformanceStore
 
 
 class TretaApp:
@@ -39,6 +40,7 @@ class TretaApp:
         self.product_plan_store = ProductPlanStore()
         self.product_launch_store = ProductLaunchStore(proposal_store=self.product_proposal_store)
         self.revenue_attribution_store = RevenueAttributionStore()
+        self.subreddit_performance_store = SubredditPerformanceStore()
         self.performance_engine = PerformanceEngine(product_launch_store=self.product_launch_store)
         self.strategy_engine = StrategyEngine(product_launch_store=self.product_launch_store)
         self.strategy_action_store = StrategyActionStore()
@@ -70,6 +72,7 @@ class TretaApp:
             product_plan_store=self.product_plan_store,
             product_launch_store=self.product_launch_store,
             revenue_attribution_store=self.revenue_attribution_store,
+            subreddit_performance_store=self.subreddit_performance_store,
             bus=self.bus,
         )
         self.conversation_core = ConversationCore(
@@ -107,6 +110,7 @@ class TretaApp:
             daily_loop_engine=self.daily_loop_engine,
             memory_store=self.memory_store,
             revenue_attribution_store=self.revenue_attribution_store,
+            subreddit_performance_store=self.subreddit_performance_store,
         )
         return self.http_server
 

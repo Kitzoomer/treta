@@ -7,6 +7,7 @@ from typing import Any
 from core.integrations.gumroad_client import GumroadClient
 from core.product_launch_store import ProductLaunchStore
 from core.revenue_attribution.store import RevenueAttributionStore
+from core.subreddit_performance_store import SubredditPerformanceStore
 
 
 _TRACKING_PATTERN = re.compile(r"treta-[a-z0-9]{6}-\d+")
@@ -40,10 +41,12 @@ class GumroadSyncService:
         launch_store: ProductLaunchStore,
         gumroad_client: GumroadClient,
         revenue_attribution_store: RevenueAttributionStore | None = None,
+        subreddit_performance_store: SubredditPerformanceStore | None = None,
     ) -> None:
         self._launch_store = launch_store
         self._gumroad_client = gumroad_client
         self._revenue_attribution_store = revenue_attribution_store
+        self._subreddit_performance_store = subreddit_performance_store
 
     def sync_sales(self) -> dict[str, float | int]:
         synced_launches = 0
@@ -80,11 +83,20 @@ class GumroadSyncService:
                         tracking_id = extract_tracking_id(sale)
                         if not tracking_id:
                             continue
-                        self._revenue_attribution_store.record_sale(
+                        attributed = self._revenue_attribution_store.record_sale(
                             tracking_id,
                             sale_count=1,
                             revenue_delta=float(sale.get("amount", 0.0) or 0.0),
                         )
+                        if (
+                            attributed is not None
+                            and self._subreddit_performance_store is not None
+                            and str(attributed.get("subreddit") or "").strip()
+                        ):
+                            self._subreddit_performance_store.record_sale(
+                                str(attributed.get("subreddit") or "").strip(),
+                                float(sale.get("amount", 0.0) or 0.0),
+                            )
             else:
                 revenue_added = 0.0
                 newest_sale_id = last_sale_id
