@@ -391,6 +391,27 @@ class Handler(BaseHTTPRequestHandler):
                 )
             return self._send_success(200, {"subreddits": subreddits})
 
+        if parsed.path == "/revenue/roi":
+            if self.subreddit_performance_store is None:
+                return self._send_success(200, {"subreddits": []})
+
+            summary = self.subreddit_performance_store.get_summary()
+            subreddits = []
+            for item in summary.get("subreddits", []):
+                posts_attempted = int(item.get("posts_attempted", 0) or 0)
+                revenue = round(float(item.get("revenue", 0.0) or 0.0), 2)
+                roi = (revenue / posts_attempted) if posts_attempted > 0 else 0.0
+                subreddits.append(
+                    {
+                        "name": str(item.get("name", "")),
+                        "roi": round(roi, 4),
+                        "posts_attempted": posts_attempted,
+                        "sales": int(item.get("sales", 0) or 0),
+                        "revenue": revenue,
+                    }
+                )
+            return self._send_success(200, {"subreddits": subreddits})
+
         if parsed.path == "/strategy/recommendations":
             if self.strategy_engine is None:
                 return self._send(503, {"error": "strategy_engine_unavailable"})

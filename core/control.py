@@ -204,22 +204,30 @@ class Control:
     def _compute_ranking_bonuses(self, subreddit: str) -> dict[str, int]:
         stats = self.subreddit_performance_store.get_subreddit_stats(subreddit)
         posts_attempted = int(stats.get("posts_attempted", 0) or 0)
-        plans_executed = int(stats.get("plans_executed", 0) or 0)
         sales = int(stats.get("sales", 0) or 0)
-        revenue = float(stats.get("revenue", 0.0) or 0.0)
+        roi = self._compute_subreddit_roi(stats)
 
-        revenue_bonus = 25 if revenue >= 50 else 15 if revenue >= 10 else 0
-        execution_bonus = 10 if plans_executed >= 3 else 0
+        roi_priority_bonus = 30 if roi > 20 else 15 if roi > 10 else 0
+        zero_roi_penalty = -20 if posts_attempted >= 3 and roi == 0 else 0
+        throttle_penalty = -50 if posts_attempted >= 5 and sales == 0 else 0
 
         conversion_bonus = 0
         if posts_attempted > 0 and (sales / posts_attempted) >= 0.1:
             conversion_bonus = 20
 
         return {
-            "revenue_bonus": revenue_bonus,
-            "execution_bonus": execution_bonus,
+            "roi_priority_bonus": roi_priority_bonus,
+            "zero_roi_penalty": zero_roi_penalty,
+            "throttle_penalty": throttle_penalty,
             "conversion_bonus": conversion_bonus,
         }
+
+    def _compute_subreddit_roi(self, subreddit_stats: dict[str, object]) -> float:
+        posts_attempted = int(subreddit_stats.get("posts_attempted", 0) or 0)
+        if posts_attempted == 0:
+            return 0.0
+        revenue = float(subreddit_stats.get("revenue", 0.0) or 0.0)
+        return revenue / posts_attempted
 
     def run_reddit_public_scan(self) -> Dict[str, object]:
         from core.reddit_public.service import RedditPublicService
@@ -241,6 +249,7 @@ class Control:
         qualified_posts: List[Dict[str, object]] = []
         ranked_candidates: List[Dict[str, object]] = []
         by_subreddit: Dict[str, int] = {}
+        throttled_subreddits: set[str] = set()
         stored_posts = self._load_reddit_posts()
         known_post_ids = {
             str(item.get("post_id", "")).strip()
@@ -259,13 +268,16 @@ class Control:
             pain_score = int(pain_data["pain_score"])
             subreddit_name = str(post.get("subreddit", "")).strip() or "unknown"
             bonuses = self._compute_ranking_bonuses(subreddit_name)
-            revenue_bonus = int(bonuses["revenue_bonus"])
-            execution_bonus = int(bonuses["execution_bonus"])
+            roi_priority_bonus = int(bonuses["roi_priority_bonus"])
+            zero_roi_penalty = int(bonuses["zero_roi_penalty"])
+            throttle_penalty = int(bonuses["throttle_penalty"])
             conversion_bonus = int(bonuses["conversion_bonus"])
-            final_score = pain_score + revenue_bonus + execution_bonus + conversion_bonus
+            final_score = pain_score + roi_priority_bonus + zero_roi_penalty + throttle_penalty + conversion_bonus
+            if throttle_penalty < 0:
+                throttled_subreddits.add(subreddit_name)
             print(
                 f"[REDDIT_PUBLIC] post={post.get('id', '')} pain_score={pain_score} "
-                f"bonuses=(rev={revenue_bonus},exec={execution_bonus},conv={conversion_bonus}) final_score={final_score} "
+                f"bonuses=(roi={roi_priority_bonus},zero_roi={zero_roi_penalty},throttle={throttle_penalty},conv={conversion_bonus}) final_score={final_score} "
                 f"intent={pain_data['intent_type']} urgency={pain_data['urgency_level']}"
             )
             if pain_score < pain_threshold:
@@ -275,9 +287,12 @@ class Control:
                 "title": title,
                 "subreddit": subreddit_name,
                 "pain_score": pain_score,
-                "revenue_bonus": revenue_bonus,
-                "execution_bonus": execution_bonus,
+                "revenue_bonus": roi_priority_bonus,
+                "execution_bonus": 0,
                 "conversion_bonus": conversion_bonus,
+                "roi_priority_bonus": roi_priority_bonus,
+                "zero_roi_penalty": zero_roi_penalty,
+                "throttle_penalty": throttle_penalty,
                 "score": final_score,
                 "intent_type": str(pain_data["intent_type"]),
                 "urgency_level": str(pain_data["urgency_level"]),
@@ -288,9 +303,12 @@ class Control:
                     "post": post,
                     "pain_data": pain_data,
                     "pain_score": pain_score,
-                    "revenue_bonus": revenue_bonus,
-                    "execution_bonus": execution_bonus,
+                    "revenue_bonus": roi_priority_bonus,
+                    "execution_bonus": 0,
                     "conversion_bonus": conversion_bonus,
+                    "roi_priority_bonus": roi_priority_bonus,
+                    "zero_roi_penalty": zero_roi_penalty,
+                    "throttle_penalty": throttle_penalty,
                     "score": final_score,
                 }
             )
@@ -329,6 +347,9 @@ class Control:
                 top_revenue_bonus = int(selected.get("revenue_bonus", 0) or 0)
                 top_execution_bonus = int(selected.get("execution_bonus", 0) or 0)
                 top_conversion_bonus = int(selected.get("conversion_bonus", 0) or 0)
+                top_roi_priority_bonus = int(selected.get("roi_priority_bonus", 0) or 0)
+                top_zero_roi_penalty = int(selected.get("zero_roi_penalty", 0) or 0)
+                top_throttle_penalty = int(selected.get("throttle_penalty", 0) or 0)
                 top_final_score = int(selected.get("score", top_pain_score) or top_pain_score)
                 snippet = str(top_post.get("selftext", ""))[:300]
                 self.subreddit_performance_store.record_post_attempt(str(top_post.get("subreddit", "")).strip() or "unknown")
@@ -346,6 +367,9 @@ class Control:
                             "revenue_bonus": top_revenue_bonus,
                             "execution_bonus": top_execution_bonus,
                             "conversion_bonus": top_conversion_bonus,
+                            "roi_priority_bonus": top_roi_priority_bonus,
+                            "zero_roi_penalty": top_zero_roi_penalty,
+                            "throttle_penalty": top_throttle_penalty,
                             "score": top_final_score,
                             "intent_type": top_pain_data["intent_type"],
                             "urgency_level": top_pain_data["urgency_level"],
@@ -365,6 +389,8 @@ class Control:
             "by_subreddit": by_subreddit,
             "posts": qualified_posts,
         }
+        if throttled_subreddits:
+            result["diagnostics"] = {"throttled_subreddits": sorted(throttled_subreddits)}
         self._last_reddit_scan = result
         return result
 
