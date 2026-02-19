@@ -28,6 +28,8 @@ from core.http.response import error as error_response
 from core.http.response import success
 from core.version import VERSION
 
+UI_DIR = Path(__file__).parent.parent / "ui"
+
 try:
     from openai import OpenAI
 except ImportError:
@@ -85,7 +87,7 @@ class TretaHTTPServer(ThreadingHTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
-    ui_dir = Path(__file__).resolve().parent.parent / "ui"
+    ui_dir = UI_DIR
 
     def _ensure_request_id(self) -> str:
         if not hasattr(self, "request_id"):
@@ -293,17 +295,33 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
 
-    def _send_static(self, file_name: str):
-        file_path = self.ui_dir / file_name
-        if not file_path.exists() or not file_path.is_file():
+    def _resolve_static_path(self, request_path: str) -> Path | None:
+        if request_path == "/":
+            relative_path = "index.html"
+        else:
+            relative_path = request_path.lstrip("/")
+
+        if not relative_path:
+            return None
+
+        candidate = (self.ui_dir / relative_path).resolve()
+        ui_root = self.ui_dir.resolve()
+        if ui_root not in candidate.parents and candidate != ui_root:
+            return None
+        return candidate
+
+    def _send_static(self, request_path: str):
+        file_path = self._resolve_static_path(request_path)
+        if file_path is None or not file_path.exists() or not file_path.is_file():
             return self._send(404, error_response(ErrorType.NOT_FOUND, ErrorType.NOT_FOUND, ErrorType.NOT_FOUND))
 
-        content_type = "text/plain; charset=utf-8"
-        if file_name.endswith(".html"):
+        content_type = "application/octet-stream"
+        suffix = file_path.suffix.lower()
+        if suffix == ".html":
             content_type = "text/html; charset=utf-8"
-        elif file_name.endswith(".js"):
+        elif suffix == ".js":
             content_type = "application/javascript; charset=utf-8"
-        elif file_name.endswith(".css"):
+        elif suffix == ".css":
             content_type = "text/css; charset=utf-8"
 
         self.send_response(200)
@@ -324,17 +342,9 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return self._send_error(400, ErrorType.CLIENT_ERROR, "invalid_limit", "invalid_limit")
 
-        if parsed.path == "/":
-            return self._send_static("index.html")
-
-        if parsed.path == "/app.js":
-            return self._send_static("app.js")
-
-        if parsed.path == "/style.css":
-            return self._send_static("style.css")
-
-        if parsed.path == "/degraded_mode.js":
-            return self._send_static("degraded_mode.js")
+        static_path = self._resolve_static_path(parsed.path)
+        if static_path is not None and static_path.exists() and static_path.is_file():
+            return self._send_static(parsed.path)
 
         if parsed.path == "/state":
             sm = self.state_machine
