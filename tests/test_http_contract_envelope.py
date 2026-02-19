@@ -5,6 +5,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from core.control import Control
+from core.errors import DependencyError, InvariantViolationError, NotFoundError
 from core.ipc_http import start_http_server
 
 
@@ -25,6 +26,27 @@ class _CrashControl(Control):
     def consume(self, _event):
         raise RuntimeError("unexpected boom")
 
+
+
+
+class _InvariantCrashControl(Control):
+    def consume(self, _event):
+        raise InvariantViolationError("invariant broken")
+
+
+class _NotFoundCrashControl(Control):
+    def consume(self, _event):
+        raise NotFoundError("proposal_not_found")
+
+
+class _DependencyCrashControl(Control):
+    def consume(self, _event):
+        raise DependencyError("storage unavailable")
+
+
+class _ValidationCrashControl(Control):
+    def consume(self, _event):
+        raise ValueError("invalid input")
 
 class HttpContractEnvelopeTest(unittest.TestCase):
     def test_success_response_contains_ok_true_and_data(self):
@@ -128,6 +150,82 @@ class HttpContractEnvelopeTest(unittest.TestCase):
             payload = json.loads(ctx.exception.read().decode("utf-8"))
             self.assertFalse(payload["ok"])
             self.assertEqual(payload["error"]["type"], "dependency_error")
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_invariant_exception_is_classified_as_invariant_violation(self):
+        server = start_http_server(host="127.0.0.1", port=0, control=_InvariantCrashControl())
+        try:
+            req = Request(
+                f"http://127.0.0.1:{server.server_port}/product_proposals/abc/approve",
+                data=b"{}",
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with self.assertRaises(HTTPError) as ctx:
+                urlopen(req, timeout=2)
+
+            self.assertEqual(ctx.exception.code, 500)
+            payload = json.loads(ctx.exception.read().decode("utf-8"))
+            self.assertEqual(payload["error"]["type"], "invariant_violation")
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_not_found_exception_is_classified_as_not_found(self):
+        server = start_http_server(host="127.0.0.1", port=0, control=_NotFoundCrashControl())
+        try:
+            req = Request(
+                f"http://127.0.0.1:{server.server_port}/product_proposals/abc/approve",
+                data=b"{}",
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with self.assertRaises(HTTPError) as ctx:
+                urlopen(req, timeout=2)
+
+            self.assertEqual(ctx.exception.code, 404)
+            payload = json.loads(ctx.exception.read().decode("utf-8"))
+            self.assertEqual(payload["error"]["type"], "not_found")
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_dependency_exception_is_classified_as_dependency_error(self):
+        server = start_http_server(host="127.0.0.1", port=0, control=_DependencyCrashControl())
+        try:
+            req = Request(
+                f"http://127.0.0.1:{server.server_port}/product_proposals/abc/approve",
+                data=b"{}",
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with self.assertRaises(HTTPError) as ctx:
+                urlopen(req, timeout=2)
+
+            self.assertEqual(ctx.exception.code, 503)
+            payload = json.loads(ctx.exception.read().decode("utf-8"))
+            self.assertEqual(payload["error"]["type"], "dependency_error")
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_validation_exception_is_classified_as_client_error(self):
+        server = start_http_server(host="127.0.0.1", port=0, control=_ValidationCrashControl())
+        try:
+            req = Request(
+                f"http://127.0.0.1:{server.server_port}/product_proposals/abc/approve",
+                data=b"{}",
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with self.assertRaises(HTTPError) as ctx:
+                urlopen(req, timeout=2)
+
+            self.assertEqual(ctx.exception.code, 400)
+            payload = json.loads(ctx.exception.read().decode("utf-8"))
+            self.assertEqual(payload["error"]["type"], "client_error")
         finally:
             server.shutdown()
             server.server_close()
