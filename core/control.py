@@ -229,6 +229,28 @@ class Control:
         revenue = float(subreddit_stats.get("revenue", 0.0) or 0.0)
         return revenue / posts_attempted
 
+    def _get_top_subreddits_by_roi(self, limit: int = 2) -> list[str]:
+        summary = self.subreddit_performance_store.get_summary()
+        rows = list(summary.get("subreddits", [])) if isinstance(summary, dict) else []
+        ranked = sorted(
+            [item for item in rows if isinstance(item, dict)],
+            key=lambda item: (
+                self._compute_subreddit_roi(item),
+                float(item.get("revenue", 0.0) or 0.0),
+                int(item.get("sales", 0) or 0),
+            ),
+            reverse=True,
+        )
+        return [str(item.get("name", "")).strip() for item in ranked[: max(0, int(limit))] if str(item.get("name", "")).strip()]
+
+    def get_dominant_subreddits(self, limit: int = 2) -> dict[str, object]:
+        summary = self.subreddit_performance_store.get_summary()
+        rows = list(summary.get("subreddits", [])) if isinstance(summary, dict) else []
+        return {
+            "dominant_subreddits": self._get_top_subreddits_by_roi(limit=limit),
+            "total_tracked": len([item for item in rows if isinstance(item, dict)]),
+        }
+
     def run_reddit_public_scan(self) -> Dict[str, object]:
         from core.reddit_public.service import RedditPublicService
 
@@ -240,6 +262,19 @@ class Control:
             if str(item).strip()
         ]
 
+        summary = self.subreddit_performance_store.get_summary()
+        stats_rows = list(summary.get("subreddits", [])) if isinstance(summary, dict) else []
+        warmed_subreddits = [
+            item
+            for item in stats_rows
+            if isinstance(item, dict) and int(item.get("posts_attempted", 0) or 0) >= 3
+        ]
+        dominant_subreddits: list[str] = []
+        if len(warmed_subreddits) >= 2:
+            dominant_subreddits = self._get_top_subreddits_by_roi(limit=2)
+            allowed = set(dominant_subreddits)
+            subreddits = [name for name in subreddits if name in allowed]
+
         posts = RedditPublicService().scan_subreddits(subreddits)
         print(
             f"[REDDIT_PUBLIC] analyzed {len(posts)} posts after score/comment filters; "
@@ -250,6 +285,7 @@ class Control:
         ranked_candidates: List[Dict[str, object]] = []
         by_subreddit: Dict[str, int] = {}
         throttled_subreddits: set[str] = set()
+        skipped_due_to_channel_lock: list[str] = []
         stored_posts = self._load_reddit_posts()
         known_post_ids = {
             str(item.get("post_id", "")).strip()
@@ -342,46 +378,50 @@ class Control:
             selected = candidates[0] if self.only_top_proposal else None
             if selected is not None:
                 top_post = selected["post"]
-                top_pain_data = selected["pain_data"]
-                top_pain_score = int(selected["pain_score"])
-                top_revenue_bonus = int(selected.get("revenue_bonus", 0) or 0)
-                top_execution_bonus = int(selected.get("execution_bonus", 0) or 0)
-                top_conversion_bonus = int(selected.get("conversion_bonus", 0) or 0)
-                top_roi_priority_bonus = int(selected.get("roi_priority_bonus", 0) or 0)
-                top_zero_roi_penalty = int(selected.get("zero_roi_penalty", 0) or 0)
-                top_throttle_penalty = int(selected.get("throttle_penalty", 0) or 0)
-                top_final_score = int(selected.get("score", top_pain_score) or top_pain_score)
-                snippet = str(top_post.get("selftext", ""))[:300]
-                self.subreddit_performance_store.record_post_attempt(str(top_post.get("subreddit", "")).strip() or "unknown")
-                self.bus.push(
-                    Event(
-                        type="OpportunityDetected",
-                        payload={
-                            "id": f"reddit-public-{top_post.get('id', '')}",
-                            "source": "reddit_public",
-                            "title": str(top_post.get("title", "")),
-                            "subreddit": top_post.get("subreddit", ""),
-                            "reddit_score": top_post.get("score", 0),
-                            "num_comments": top_post.get("num_comments", 0),
-                            "pain_score": top_pain_score,
-                            "revenue_bonus": top_revenue_bonus,
-                            "execution_bonus": top_execution_bonus,
-                            "conversion_bonus": top_conversion_bonus,
-                            "roi_priority_bonus": top_roi_priority_bonus,
-                            "zero_roi_penalty": top_zero_roi_penalty,
-                            "throttle_penalty": top_throttle_penalty,
-                            "score": top_final_score,
-                            "intent_type": top_pain_data["intent_type"],
-                            "urgency_level": top_pain_data["urgency_level"],
-                            "snippet": snippet,
-                            "summary": snippet,
-                            "opportunity": {
-                                "confidence": min(10, max(1, int(top_post.get("score", 0) / 10) + 1)),
+                top_subreddit = str(top_post.get("subreddit", "")).strip() or "unknown"
+                if dominant_subreddits and top_subreddit not in set(dominant_subreddits):
+                    skipped_due_to_channel_lock.append(top_subreddit)
+                else:
+                    top_pain_data = selected["pain_data"]
+                    top_pain_score = int(selected["pain_score"])
+                    top_revenue_bonus = int(selected.get("revenue_bonus", 0) or 0)
+                    top_execution_bonus = int(selected.get("execution_bonus", 0) or 0)
+                    top_conversion_bonus = int(selected.get("conversion_bonus", 0) or 0)
+                    top_roi_priority_bonus = int(selected.get("roi_priority_bonus", 0) or 0)
+                    top_zero_roi_penalty = int(selected.get("zero_roi_penalty", 0) or 0)
+                    top_throttle_penalty = int(selected.get("throttle_penalty", 0) or 0)
+                    top_final_score = int(selected.get("score", top_pain_score) or top_pain_score)
+                    snippet = str(top_post.get("selftext", ""))[:300]
+                    self.subreddit_performance_store.record_post_attempt(top_subreddit)
+                    self.bus.push(
+                        Event(
+                            type="OpportunityDetected",
+                            payload={
+                                "id": f"reddit-public-{top_post.get('id', '')}",
+                                "source": "reddit_public",
+                                "title": str(top_post.get("title", "")),
+                                "subreddit": top_post.get("subreddit", ""),
+                                "reddit_score": top_post.get("score", 0),
+                                "num_comments": top_post.get("num_comments", 0),
+                                "pain_score": top_pain_score,
+                                "revenue_bonus": top_revenue_bonus,
+                                "execution_bonus": top_execution_bonus,
+                                "conversion_bonus": top_conversion_bonus,
+                                "roi_priority_bonus": top_roi_priority_bonus,
+                                "zero_roi_penalty": top_zero_roi_penalty,
+                                "throttle_penalty": top_throttle_penalty,
+                                "score": top_final_score,
+                                "intent_type": top_pain_data["intent_type"],
+                                "urgency_level": top_pain_data["urgency_level"],
+                                "snippet": snippet,
+                                "summary": snippet,
+                                "opportunity": {
+                                    "confidence": min(10, max(1, int(top_post.get("score", 0) / 10) + 1)),
+                                },
                             },
-                        },
-                        source="reddit_public_scan",
+                            source="reddit_public_scan",
+                        )
                     )
-                )
 
         result = {
             "analyzed": len(posts),
@@ -389,8 +429,15 @@ class Control:
             "by_subreddit": by_subreddit,
             "posts": qualified_posts,
         }
+        diagnostics: dict[str, object] = {}
         if throttled_subreddits:
-            result["diagnostics"] = {"throttled_subreddits": sorted(throttled_subreddits)}
+            diagnostics["throttled_subreddits"] = sorted(throttled_subreddits)
+        if dominant_subreddits:
+            diagnostics["dominant_subreddits"] = dominant_subreddits
+        if skipped_due_to_channel_lock:
+            diagnostics["skipped_due_to_channel_lock"] = skipped_due_to_channel_lock
+        if diagnostics:
+            result["diagnostics"] = diagnostics
         self._last_reddit_scan = result
         return result
 

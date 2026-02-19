@@ -412,6 +412,11 @@ class Handler(BaseHTTPRequestHandler):
                 )
             return self._send_success(200, {"subreddits": subreddits})
 
+        if parsed.path == "/revenue/dominant":
+            if self.control is None:
+                return self._send_success(200, {"dominant_subreddits": [], "total_tracked": 0})
+            return self._send_success(200, self.control.get_dominant_subreddits(limit=2))
+
         if parsed.path == "/strategy/recommendations":
             if self.strategy_engine is None:
                 return self._send(503, {"error": "strategy_engine_unavailable"})
