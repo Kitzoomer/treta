@@ -72,7 +72,7 @@ class HttpContractEnvelopeTest(unittest.TestCase):
             server.shutdown()
             server.server_close()
 
-    def test_client_error_uses_client_error_type(self):
+    def test_missing_entity_returns_not_found_type(self):
         server = start_http_server(host="127.0.0.1", port=0, control=Control())
         try:
             req = Request(
@@ -87,7 +87,7 @@ class HttpContractEnvelopeTest(unittest.TestCase):
             self.assertEqual(ctx.exception.code, 404)
             payload = json.loads(ctx.exception.read().decode("utf-8"))
             self.assertFalse(payload["ok"])
-            self.assertEqual(payload["error"]["type"], "client_error")
+            self.assertEqual(payload["error"]["type"], "not_found")
         finally:
             server.shutdown()
             server.server_close()
