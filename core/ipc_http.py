@@ -2,7 +2,7 @@ import json
 import threading
 import time
 from pathlib import Path
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from core.events import Event
@@ -18,7 +18,7 @@ from core.http.response import success
 from core.version import VERSION
 
 
-class TretaHTTPServer(HTTPServer):
+class TretaHTTPServer(ThreadingHTTPServer):
     def __init__(self, server_address, RequestHandlerClass, *, bus: EventBus, **dependencies):
         super().__init__(server_address, RequestHandlerClass)
         self.bus = bus
