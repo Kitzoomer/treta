@@ -1,4 +1,5 @@
 import json
+import threading
 import unittest
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -40,6 +41,33 @@ class HttpContractEnvelopeTest(unittest.TestCase):
 
             self.assertTrue(payload["ok"])
             self.assertIn("data", payload)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_concurrent_get_requests_return_200(self):
+        server = start_http_server(host="127.0.0.1", port=0)
+        try:
+            statuses = [None, None]
+            errors = []
+            start = threading.Barrier(2)
+
+            def fire_get(index):
+                try:
+                    start.wait(timeout=2)
+                    with urlopen(f"http://127.0.0.1:{server.server_port}/events", timeout=2) as response:
+                        statuses[index] = response.status
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(exc)
+
+            threads = [threading.Thread(target=fire_get, args=(idx,)) for idx in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=3)
+
+            self.assertEqual(errors, [])
+            self.assertEqual(statuses, [200, 200])
         finally:
             server.shutdown()
             server.server_close()
