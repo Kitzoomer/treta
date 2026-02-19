@@ -45,6 +45,7 @@ class TretaHTTPServer(ThreadingHTTPServer):
         self.autonomy_policy_engine = dependencies.get("autonomy_policy_engine")
         self.daily_loop_engine = dependencies.get("daily_loop_engine")
         self.memory_store = dependencies.get("memory_store")
+        self.conversation_core = dependencies.get("conversation_core")
         self.reddit_router = dependencies.get("reddit_router") or RedditIntelligenceRouter()
         self.mutation_lock = threading.Lock()
         self.revenue_attribution_store = dependencies.get("revenue_attribution_store")
@@ -140,6 +141,10 @@ class Handler(BaseHTTPRequestHandler):
     @property
     def memory_store(self):
         return self.server.memory_store
+
+    @property
+    def conversation_core(self):
+        return self.server.conversation_core
 
     @property
     def reddit_router(self):
@@ -697,6 +702,7 @@ class Handler(BaseHTTPRequestHandler):
             "/reddit/config",
             "/reddit/run_scan",
             "/reddit/mark_posted",
+            "/conversation/message",
         }
         if self.path not in allowed_paths and transition_event_type is None and launch_sale_id is None and launch_status_id is None and launch_link_gumroad_id is None and strategy_execute_id is None and strategy_reject_id is None:
             return self._send(404, error_response(ErrorType.NOT_FOUND, ErrorType.NOT_FOUND, ErrorType.NOT_FOUND))
@@ -789,6 +795,16 @@ class Handler(BaseHTTPRequestHandler):
                             return self._send_success(200, action.payload["execution_package"])
 
                     return self._send_error(404, ErrorType.NOT_FOUND, "proposal_not_found", "proposal_not_found")
+
+                if self.path == "/conversation/message":
+                    if self.conversation_core is None:
+                        return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "conversation_core_unavailable", "conversation_core_unavailable")
+                    text = str(data.get("text", "")).strip()
+                    source = str(data.get("source", "ui")).strip() or "ui"
+                    if not text:
+                        return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_text", "missing_text")
+                    reply_text = self.conversation_core.reply(text, source=source)
+                    return self._send_success(200, {"reply_text": reply_text})
 
                 if launch_sale_id is not None:
                     if self.product_launch_store is None:
@@ -1025,6 +1041,7 @@ def start_http_server(
     autonomy_policy_engine=None,
     daily_loop_engine=None,
     memory_store=None,
+    conversation_core=None,
     revenue_attribution_store: RevenueAttributionStore | None = None,
     subreddit_performance_store: SubredditPerformanceStore | None = None,
 ):
@@ -1047,6 +1064,7 @@ def start_http_server(
         autonomy_policy_engine=autonomy_policy_engine,
         daily_loop_engine=daily_loop_engine,
         memory_store=memory_store,
+        conversation_core=conversation_core,
         revenue_attribution_store=revenue_attribution_store,
         subreddit_performance_store=subreddit_performance_store,
         reddit_router=RedditIntelligenceRouter(),

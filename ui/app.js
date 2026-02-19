@@ -127,8 +127,11 @@ const state = {
   autonomyEnabled: localStorage.getItem(STORAGE_KEYS.autonomyEnabled) === "true",
   chatMode: localStorage.getItem(STORAGE_KEYS.chatMode) === "auto" ? "auto" : "manual",
   voiceEnabled: false,
+  speakEnabled: true,
   voiceSupported: false,
   voiceStatusMessage: "",
+  voiceAwaitingCommand: false,
+  pendingVoiceConfirmation: null,
   currentRoute: CONFIG.defaultRoute,
   workView: {
     messages: {},
@@ -339,6 +342,9 @@ const api = {
   },
   getRedditPosts() {
     return this.fetchJson("/reddit/posts");
+  },
+  sendConversationMessage(text, source = "text") {
+    return this.fetchJson("/conversation/message", { method: "POST", body: JSON.stringify({ text, source }) });
   },
 };
 
@@ -2019,6 +2025,16 @@ function renderConversation() {
         `;
       }
 
+      if (item.text) {
+        const text = helpers.escape(helpers.t(item.text, ""));
+        return `
+          <article class="chat-message assistant">
+            <div class="chat-role">assistant</div>
+            <div>${text}</div>
+          </article>
+        `;
+      }
+
       const card = item.card || {};
       const title = helpers.escape(helpers.t(card.title, "Treta"));
       const summary = helpers.escape(helpers.t(card.summary, ""));
@@ -2089,25 +2105,26 @@ function renderCommandBar() {
   if (!ui.chatPanel) return;
   const title = ui.chatPanel.querySelector("h2");
   if (!title) return;
-  title.innerHTML = `Conversation <span class="chat-mode-toggle"><button type="button" class="secondary-btn ${state.chatMode === "manual" ? "active" : ""}" data-action="chat-mode" data-mode="manual">Manual</button><button type="button" class="secondary-btn ${state.chatMode === "auto" ? "active" : ""}" data-action="chat-mode" data-mode="auto">Auto</button><button type="button" class="secondary-btn voice-toggle ${state.voiceEnabled ? "active" : ""}" data-action="voice-toggle">VOICE: ${state.voiceEnabled ? "ON" : "OFF"}</button><span class="voice-indicator ${state.voiceEnabled ? "on" : "off"}" aria-label="Voice mode status"></span></span>`;
+  title.innerHTML = `Conversation <span class="chat-mode-toggle"><button type="button" class="secondary-btn ${state.chatMode === "manual" ? "active" : ""}" data-action="chat-mode" data-mode="manual">Manual</button><button type="button" class="secondary-btn ${state.chatMode === "auto" ? "active" : ""}" data-action="chat-mode" data-mode="auto">Auto</button><button type="button" class="secondary-btn voice-toggle ${state.voiceEnabled ? "active" : ""}" data-action="voice-toggle">Voice Mode: ${state.voiceEnabled ? "ON" : "OFF"}</button><button type="button" class="secondary-btn ${state.speakEnabled ? "active" : ""}" data-action="speak-toggle">Speak: ${state.speakEnabled ? "ON" : "OFF"}</button><span class="voice-indicator ${state.voiceEnabled ? "on" : "off"}" aria-label="Voice mode status"></span></span>`;
 
   const existingBanner = ui.chatPanel.querySelector(".voice-support-banner");
   if (existingBanner) existingBanner.remove();
   if (!state.voiceSupported) {
     const banner = document.createElement("p");
     banner.className = "voice-support-banner";
-    banner.textContent = "Voice mode no soportado en este navegador";
+    banner.textContent = "Voice not supported in this browser";
     ui.chatPanel.insertBefore(banner, ui.chatHistory);
   }
 
   const existingStatus = ui.chatPanel.querySelector(".voice-status");
   if (existingStatus) existingStatus.remove();
-  if (state.voiceSupported && state.voiceStatusMessage) {
+  if (state.voiceStatusMessage) {
     const status = document.createElement("p");
     status.className = "voice-status";
     status.textContent = state.voiceStatusMessage;
     ui.chatPanel.insertBefore(status, ui.chatHistory);
   }
+
   title.querySelectorAll("button[data-action='chat-mode']").forEach((button) => {
     button.addEventListener("click", () => {
       state.chatMode = button.dataset.mode === "auto" ? "auto" : "manual";
@@ -2116,41 +2133,179 @@ function renderCommandBar() {
     });
   });
 
-  const voiceToggle = title.querySelector("button[data-action='voice-toggle']");
-  if (voiceToggle) {
-    voiceToggle.addEventListener("click", () => {
-      setVoiceEnabled(!state.voiceEnabled);
-    });
-  }
+  title.querySelector("button[data-action='voice-toggle']")?.addEventListener("click", () => {
+    setVoiceEnabled(!state.voiceEnabled);
+  });
+
+  title.querySelector("button[data-action='speak-toggle']")?.addEventListener("click", () => {
+    state.speakEnabled = !state.speakEnabled;
+    if (!state.speakEnabled && voiceMode) voiceMode.stopTts();
+    renderCommandBar();
+  });
+}
+
+function startVoice() {
+  if (!voiceMode) return false;
+  return voiceMode.startVoice();
+}
+
+function stopVoice() {
+  if (!voiceMode) return;
+  voiceMode.stopVoice();
 }
 
 function setVoiceEnabled(enabled) {
   if (!state.voiceSupported || !voiceMode) {
     state.voiceEnabled = false;
-    state.voiceStatusMessage = "Voice mode no soportado en este navegador";
+    state.voiceStatusMessage = "Voice not supported in this browser";
     renderCommandBar();
     return;
   }
 
   state.voiceEnabled = Boolean(enabled);
+  state.voiceAwaitingCommand = false;
   if (state.voiceEnabled) {
-    const started = voiceMode.startListening();
-    state.voiceStatusMessage = started ? "Escuchando wake word: \"Treta\"" : "No se pudo iniciar el micrófono";
-    if (!started) {
-      state.voiceEnabled = false;
-    }
+    const started = startVoice();
+    state.voiceStatusMessage = started ? "Listening for wake word: Treta" : "No se pudo iniciar el micrófono";
+    if (!started) state.voiceEnabled = false;
   } else {
-    voiceMode.stopListening();
-    state.voiceStatusMessage = "Voice desactivado";
+    stopVoice();
+    state.pendingVoiceConfirmation = null;
+    state.voiceStatusMessage = "Voice mode OFF";
   }
   renderCommandBar();
+}
+
+function parseCommand(text) {
+  const lower = text.toLowerCase();
+  const approveMatch = lower.match(/(?:approve proposal|aprueba propuesta)\s+([\w-]+)/i);
+  if (approveMatch) return { kind: "approve_proposal", requiresConfirmation: true, id: approveMatch[1] };
+  const executeMatch = lower.match(/(?:execute plan|ejecuta plan)\s+([\w-]+)/i);
+  if (executeMatch) return { kind: "execute_plan", requiresConfirmation: true, id: executeMatch[1] };
+  if (/scan reddit|escanea reddit/i.test(lower)) return { kind: "scan_reddit", requiresConfirmation: true };
+  if (/show opportunities|oportunidades/i.test(lower)) return { kind: "show_opportunities", requiresConfirmation: false };
+  if (/today plan|plan de hoy/i.test(lower)) return { kind: "today_plan", requiresConfirmation: false };
+  if (/integrity|integridad/i.test(lower)) return { kind: "integrity", requiresConfirmation: false };
+  if (/help|ayuda/i.test(lower)) return { kind: "help", requiresConfirmation: false };
+  if (/cancel|para/i.test(lower)) return { kind: "cancel", requiresConfirmation: false };
+  return null;
+}
+
+async function runVoiceCommand(command) {
+  if (command.kind === "show_opportunities") return JSON.stringify(await api.getOpportunities());
+  if (command.kind === "today_plan") return JSON.stringify(await api.getRedditTodayPlan());
+  if (command.kind === "integrity") return JSON.stringify(await api.getSystemIntegrity());
+  if (command.kind === "scan_reddit") return JSON.stringify(await api.runRedditScan());
+  if (command.kind === "approve_proposal") return JSON.stringify(await api.fetchJson(`/product_proposals/${command.id}/approve`, { method: "POST", body: JSON.stringify({}) }));
+  if (command.kind === "execute_plan") return JSON.stringify(await api.executeProposal(command.id));
+  if (command.kind === "help") {
+    return "Comandos: scan reddit, show opportunities, today plan, integrity, approve proposal <id>, execute plan <id>, cancel.";
+  }
+  if (command.kind === "cancel") {
+    state.pendingVoiceConfirmation = null;
+    if (voiceMode) voiceMode.stopTts();
+    return "Cancelado.";
+  }
+  return "No entendí. Di 'Treta, ayuda'.";
+}
+
+async function confirmFlow(heardText) {
+  const lower = heardText.toLowerCase();
+  if (!state.pendingVoiceConfirmation) return false;
+  if (/^s[ií]$|^si$/.test(lower.trim())) {
+    const pending = state.pendingVoiceConfirmation;
+    state.pendingVoiceConfirmation = null;
+    const reply = await runVoiceCommand(pending.command);
+    state.chatCards.push({ id: `assistant-${Date.now()}`, type: "assistant", text: `Treta: ${reply}` });
+    if (state.speakEnabled && voiceMode) voiceMode.speak(reply);
+    renderConversation();
+    return true;
+  }
+  if (/^no$/.test(lower.trim())) {
+    state.pendingVoiceConfirmation = null;
+    const reply = "Acción cancelada.";
+    state.chatCards.push({ id: `assistant-${Date.now()}`, type: "assistant", text: `Treta: ${reply}` });
+    if (state.speakEnabled && voiceMode) voiceMode.speak(reply);
+    renderConversation();
+    return true;
+  }
+  return false;
+}
+
+async function onTranscript(payload) {
+  const transcript = helpers.t(payload?.text, "").trim();
+  if (!transcript) return;
+  const lower = transcript.toLowerCase();
+
+  if (await confirmFlow(transcript)) return;
+
+  let commandText = "";
+  const wakeIndex = lower.indexOf("treta");
+  if (wakeIndex >= 0) {
+    const afterWake = transcript.slice(wakeIndex + "treta".length).replace(/^\s*[,.:-]?\s*/, "").trim();
+    if (afterWake) {
+      commandText = afterWake;
+      state.voiceAwaitingCommand = false;
+    } else {
+      state.voiceAwaitingCommand = true;
+      state.voiceStatusMessage = "Wake word detectada. Esperando comando...";
+      renderCommandBar();
+      return;
+    }
+  } else if (state.voiceAwaitingCommand && payload?.isFinal) {
+    commandText = transcript;
+    state.voiceAwaitingCommand = false;
+  }
+
+  if (!commandText || !payload?.isFinal) return;
+
+  state.chatCards.push({ id: `heard-${Date.now()}`, type: "user", text: `(heard) ${commandText}` });
+  const parsed = parseCommand(commandText);
+
+  if (parsed?.kind === "cancel") {
+    const cancelText = await runVoiceCommand(parsed);
+    state.chatCards.push({ id: `assistant-${Date.now()}`, type: "assistant", text: `Treta: ${cancelText}` });
+    if (state.speakEnabled && voiceMode) voiceMode.speak(cancelText);
+    renderConversation();
+    return;
+  }
+
+  if (parsed && parsed.requiresConfirmation) {
+    state.pendingVoiceConfirmation = { command: parsed };
+    const summary = parsed.kind === "approve_proposal"
+      ? `aprobar propuesta ${parsed.id}`
+      : parsed.kind === "execute_plan"
+        ? `ejecutar plan ${parsed.id}`
+        : "ejecutar scan reddit";
+    const ask = `Voy a ejecutar ${summary}. ¿Confirmas? (sí/no)`;
+    state.chatCards.push({ id: `assistant-${Date.now()}`, type: "assistant", text: `Treta: ${ask}` });
+    if (state.speakEnabled && voiceMode) voiceMode.speak(ask);
+    renderConversation();
+    return;
+  }
+
+  let reply = "";
+  try {
+    if (parsed) {
+      reply = await runVoiceCommand(parsed);
+    } else {
+      const response = await api.sendConversationMessage(commandText, "voice");
+      reply = helpers.t(response.reply_text, "No entendí. Di 'Treta, ayuda'.");
+    }
+  } catch (error) {
+    reply = `Error: ${error.message}`;
+  }
+
+  state.chatCards.push({ id: `assistant-${Date.now()}`, type: "assistant", text: `Treta: ${reply}` });
+  if (state.speakEnabled && voiceMode) voiceMode.speak(reply);
+  renderConversation();
 }
 
 async function processChatInput(rawInput, source = "text") {
   const input = rawInput.trim();
   if (!input) return;
 
-  const labelPrefix = source === "voice" ? "[USER - VOICE]: " : "";
+  const labelPrefix = source === "voice" ? "(heard) " : "";
   state.chatCards.push({ id: `user-${Date.now()}`, type: "user", text: `${labelPrefix}${input}` });
 
   const snapshot = getChatStateSnapshot();
@@ -2168,29 +2323,23 @@ async function processChatInput(rawInput, source = "text") {
     return;
   }
 
-  const responseText = await executeDecision(decision);
-
-  if (source === "voice" && voiceMode) {
-    const tretaReply = responseText || decision?.ui?.summary || "Hecho.";
-    state.chatCards.push({ id: `voice-assistant-${Date.now()}`, type: "assistant", text: `[TRETA]: ${tretaReply}` });
-    voiceMode.speak(tretaReply);
-    renderConversation();
-  }
+  await executeDecision(decision);
 }
 
 function initVoiceIntegration() {
   if (!voiceMode) {
     state.voiceSupported = false;
-    state.voiceStatusMessage = "Voice mode no soportado en este navegador";
+    state.voiceStatusMessage = "Voice not supported in this browser";
     return;
   }
 
   const voiceInit = voiceMode.initVoiceMode({
-    onCommand: async (commandText) => {
-      await processChatInput(commandText, "voice");
-    },
+    onTranscript,
     onError: (errorCode) => {
       state.voiceStatusMessage = `Voice error: ${errorCode}`;
+      if (errorCode === "not-allowed" || errorCode === "service-not-allowed") {
+        state.voiceEnabled = false;
+      }
       renderCommandBar();
     },
   });
@@ -2198,7 +2347,7 @@ function initVoiceIntegration() {
   state.voiceSupported = Boolean(voiceInit?.supported);
   if (!state.voiceSupported) {
     state.voiceEnabled = false;
-    state.voiceStatusMessage = "Voice mode no soportado en este navegador";
+    state.voiceStatusMessage = "Voice not supported in this browser";
   }
 }
 
