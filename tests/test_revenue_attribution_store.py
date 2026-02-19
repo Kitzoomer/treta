@@ -17,13 +17,14 @@ class RevenueAttributionStoreTest(unittest.TestCase):
                 created_at="2026-01-01T00:00:00Z",
             )
 
-            store.record_sale("treta-abc123-1700000000", sale_count=2, revenue_delta=58.0)
+            store.record_sale("treta-abc123-1700000000", sale_count=2, revenue_delta=58.0, sold_at="2026-01-01T01:00:00Z")
             summary = store.summary()
 
             self.assertEqual(summary["totals"]["sales"], 2)
             self.assertEqual(summary["totals"]["revenue"], 58.0)
             self.assertEqual(summary["by_proposal"]["proposal-1"]["sales"], 2)
             self.assertEqual(summary["by_subreddit"]["r/test"]["revenue"], 58.0)
+            self.assertEqual(summary["by_channel"]["reddit"]["sales"], 2)
 
 
 if __name__ == "__main__":

@@ -66,10 +66,11 @@ class GumroadSalesSyncServiceTest(unittest.TestCase):
             summary = service.sync_sales()
 
             attributed = revenue_store.get_by_tracking("treta-abc123-1700000000")
+            revenue_summary = revenue_store.summary()
             self.assertEqual(summary["new_sales"], 1)
             self.assertIsNotNone(attributed)
-            self.assertEqual(attributed["sales"], 1)
-            self.assertEqual(attributed["revenue"], 29.0)
+            self.assertEqual(revenue_summary["totals"]["sales"], 1)
+            self.assertEqual(revenue_summary["totals"]["revenue"], 29.0)
 
     def test_cursor_prevents_double_counting(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

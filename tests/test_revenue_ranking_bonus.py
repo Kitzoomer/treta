@@ -11,6 +11,7 @@ from core.product_plan_store import ProductPlanStore
 from core.product_proposal_store import ProductProposalStore
 from core.reddit_public.config import update_config
 from core.subreddit_performance_store import SubredditPerformanceStore
+from core.revenue_attribution.store import RevenueAttributionStore
 
 
 class RevenueRankingBonusTest(unittest.TestCase):
@@ -26,24 +27,27 @@ class RevenueRankingBonusTest(unittest.TestCase):
                 product_launch_store=ProductLaunchStore(proposal_store=proposal_store, path=root / "product_launches.json"),
                 subreddit_performance_store=SubredditPerformanceStore(path=root / "subreddit_performance.json"),
             )
-            stats = {"posts_attempted": 4, "revenue": 80.0}
-            self.assertEqual(control._compute_subreddit_roi(stats), 20.0)
-            self.assertEqual(control._compute_subreddit_roi({"posts_attempted": 0, "revenue": 100.0}), 0.0)
+            stats = {"name": "alpha", "posts_attempted": 4}
+            self.assertEqual(control._compute_subreddit_roi(stats), 0.0)
+            self.assertEqual(control._compute_subreddit_roi({"posts_attempted": 0}), 0.0)
 
     def test_dynamic_revenue_bonus_growth(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             proposal_store = ProductProposalStore(path=root / "product_proposals.json")
+            revenue_store = RevenueAttributionStore(path=root / "revenue_attribution.json")
+            revenue_store.upsert_tracking("treta-a", "proposal-a", subreddit="freelance", created_at="2026-01-01T00:00:00Z")
             control = Control(
                 opportunity_store=OpportunityStore(path=root / "opportunities.json"),
                 product_proposal_store=proposal_store,
                 product_plan_store=ProductPlanStore(path=root / "product_plans.json"),
                 product_launch_store=ProductLaunchStore(proposal_store=proposal_store, path=root / "product_launches.json"),
                 subreddit_performance_store=SubredditPerformanceStore(path=root / "subreddit_performance.json"),
+                revenue_attribution_store=revenue_store,
             )
-            control.subreddit_performance_store.record_sale("freelance", 20.0)
+            revenue_store.record_sale("treta-a", revenue_delta=20.0, sold_at="2026-01-01T01:00:00Z")
             low_bonus = control._compute_ranking_bonuses("freelance")["revenue_bonus"]
-            control.subreddit_performance_store.record_sale("freelance", 100.0)
+            revenue_store.record_sale("treta-a", revenue_delta=100.0, sold_at="2026-01-01T02:00:00Z")
             high_bonus = control._compute_ranking_bonuses("freelance")["revenue_bonus"]
 
             self.assertGreater(high_bonus, low_bonus)
@@ -61,8 +65,8 @@ class RevenueRankingBonusTest(unittest.TestCase):
                 subreddit_performance_store=SubredditPerformanceStore(path=root / "subreddit_performance.json"),
             )
             control.subreddit_performance_store.record_post_attempt("saas")
-            control.subreddit_performance_store.record_sale("saas", 10.0)
-            control.subreddit_performance_store.record_sale("saas", 15.0)
+            control.subreddit_performance_store.record_sale("saas")
+            control.subreddit_performance_store.record_sale("saas")
             bonuses = control._compute_ranking_bonuses("saas")
             self.assertEqual(bonuses["conversion_bonus"], 30.0)
 
@@ -78,8 +82,10 @@ class RevenueRankingBonusTest(unittest.TestCase):
                 subreddit_performance_store=SubredditPerformanceStore(path=root / "subreddit_performance.json"),
             )
             control._reddit_posts_path = lambda: root / "reddit_posts.json"
-            control.subreddit_performance_store.record_sale("highrev", 80.0)
-            control.subreddit_performance_store.record_sale("lowrev", 20.0)
+            control.revenue_attribution_store.upsert_tracking("treta-high", "proposal-high", subreddit="highrev", created_at="2026-01-01T00:00:00Z")
+            control.revenue_attribution_store.upsert_tracking("treta-low", "proposal-low", subreddit="lowrev", created_at="2026-01-01T00:00:00Z")
+            control.revenue_attribution_store.record_sale("treta-high", revenue_delta=80.0, sold_at="2026-01-01T01:00:00Z")
+            control.revenue_attribution_store.record_sale("treta-low", revenue_delta=20.0, sold_at="2026-01-01T01:00:00Z")
 
             update_config({"subreddits": ["highrev", "lowrev"], "pain_threshold": 60, "source": "reddit_public"})
             posts = [
@@ -131,7 +137,8 @@ class RevenueRankingBonusTest(unittest.TestCase):
                 control.subreddit_performance_store.record_post_attempt("freelance")
             for _ in range(3):
                 control.subreddit_performance_store.record_plan_executed("freelance")
-            control.subreddit_performance_store.record_sale("freelance", 200)
+            control.revenue_attribution_store.upsert_tracking("treta-free", "proposal-f", subreddit="freelance", created_at="2026-01-01T00:00:00Z")
+            control.revenue_attribution_store.record_sale("treta-free", revenue_delta=200.0, sold_at="2026-01-01T01:00:00Z")
 
             update_config({"subreddits": ["freelance"], "pain_threshold": 60, "source": "reddit_public"})
             posts = [

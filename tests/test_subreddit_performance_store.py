@@ -14,14 +14,13 @@ class SubredditPerformanceStoreTest(unittest.TestCase):
             store.record_post_attempt("freelance")
             store.record_proposal_generated("freelance")
             store.record_plan_executed("freelance")
-            store.record_sale("freelance", 19.5)
+            store.record_sale("freelance")
 
             stats = store.get_subreddit_stats("freelance")
             self.assertEqual(stats["posts_attempted"], 1)
             self.assertEqual(stats["proposals_generated"], 1)
             self.assertEqual(stats["plans_executed"], 1)
             self.assertEqual(stats["sales"], 1)
-            self.assertEqual(stats["revenue"], 19.5)
 
             reloaded = SubredditPerformanceStore(path=path)
             self.assertEqual(reloaded.get_subreddit_stats("freelance")["sales"], 1)

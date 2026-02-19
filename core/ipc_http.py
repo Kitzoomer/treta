@@ -366,7 +366,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/revenue/summary":
             if self.revenue_attribution_store is None:
-                return self._send_success(200, {"totals": {"sales": 0, "revenue": 0.0}, "by_proposal": {}, "by_subreddit": {}})
+                return self._send_success(200, {"totals": {"sales": 0, "revenue": 0.0}, "by_product": {}, "by_channel": {}, "by_subreddit": {}, "sales": []})
             return self._send_success(200, self.revenue_attribution_store.summary())
 
         if parsed.path == "/revenue/subreddits":
@@ -374,18 +374,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_success(200, {"subreddits": []})
 
             summary = self.subreddit_performance_store.get_summary()
+            revenue_summary = self.revenue_attribution_store.summary() if self.revenue_attribution_store is not None else {}
+            by_subreddit = revenue_summary.get("by_subreddit", {}) if isinstance(revenue_summary, dict) else {}
             subreddits = []
             for item in summary.get("subreddits", []):
+                name = str(item.get("name", ""))
                 posts_attempted = int(item.get("posts_attempted", 0) or 0)
-                sales = int(item.get("sales", 0) or 0)
+                revenue_item = by_subreddit.get(name, {}) if isinstance(by_subreddit, dict) else {}
+                sales = int(revenue_item.get("sales", item.get("sales", 0)) or 0)
                 conversion_rate = (sales / posts_attempted) if posts_attempted > 0 else 0.0
                 subreddits.append(
                     {
-                        "name": str(item.get("name", "")),
+                        "name": name,
                         "posts_attempted": posts_attempted,
                         "plans_executed": int(item.get("plans_executed", 0) or 0),
                         "sales": sales,
-                        "revenue": round(float(item.get("revenue", 0.0) or 0.0), 2),
                         "conversion_rate": round(conversion_rate, 4),
                     }
                 )
@@ -396,18 +399,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_success(200, {"subreddits": []})
 
             summary = self.subreddit_performance_store.get_summary()
+            revenue_summary = self.revenue_attribution_store.summary() if self.revenue_attribution_store is not None else {}
+            by_subreddit = revenue_summary.get("by_subreddit", {}) if isinstance(revenue_summary, dict) else {}
             subreddits = []
             for item in summary.get("subreddits", []):
+                name = str(item.get("name", ""))
                 posts_attempted = int(item.get("posts_attempted", 0) or 0)
-                revenue = round(float(item.get("revenue", 0.0) or 0.0), 2)
-                roi = (revenue / posts_attempted) if posts_attempted > 0 else 0.0
+                revenue_item = by_subreddit.get(name, {}) if isinstance(by_subreddit, dict) else {}
+                sales = int(revenue_item.get("sales", item.get("sales", 0)) or 0)
+                roi = (sales / posts_attempted) if posts_attempted > 0 else 0.0
                 subreddits.append(
                     {
-                        "name": str(item.get("name", "")),
+                        "name": name,
                         "roi": round(roi, 4),
                         "posts_attempted": posts_attempted,
-                        "sales": int(item.get("sales", 0) or 0),
-                        "revenue": revenue,
+                        "sales": sales,
                     }
                 )
             return self._send_success(200, {"subreddits": subreddits})

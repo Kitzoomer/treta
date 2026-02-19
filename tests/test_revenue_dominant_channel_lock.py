@@ -37,17 +37,17 @@ class DominantChannelLockTest(unittest.TestCase):
 
             for _ in range(5):
                 control.subreddit_performance_store.record_post_attempt("alpha")
-            control.subreddit_performance_store.record_sale("alpha", 50.0)
+            control.subreddit_performance_store.record_sale("alpha")
 
             for _ in range(3):
                 control.subreddit_performance_store.record_post_attempt("beta")
-            control.subreddit_performance_store.record_sale("beta", 36.0)
+            control.subreddit_performance_store.record_sale("beta")
 
             for _ in range(4):
                 control.subreddit_performance_store.record_post_attempt("gamma")
-            control.subreddit_performance_store.record_sale("gamma", 8.0)
+            control.subreddit_performance_store.record_sale("gamma")
 
-            self.assertEqual(control._get_top_subreddits_by_roi(limit=2), ["beta", "alpha"])
+            self.assertEqual(control._get_top_subreddits_by_roi(limit=2), ["alpha", "beta"])
 
     def test_scan_restricted_to_top_two(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -57,15 +57,15 @@ class DominantChannelLockTest(unittest.TestCase):
 
             for _ in range(3):
                 control.subreddit_performance_store.record_post_attempt("alpha")
-            control.subreddit_performance_store.record_sale("alpha", 30.0)
+            control.subreddit_performance_store.record_sale("alpha")
 
             for _ in range(3):
                 control.subreddit_performance_store.record_post_attempt("beta")
-            control.subreddit_performance_store.record_sale("beta", 24.0)
+            control.subreddit_performance_store.record_sale("beta")
 
             for _ in range(3):
                 control.subreddit_performance_store.record_post_attempt("gamma")
-            control.subreddit_performance_store.record_sale("gamma", 9.0)
+            control.subreddit_performance_store.record_sale("gamma")
 
             update_config({"subreddits": ["alpha", "beta", "gamma"], "pain_threshold": 60, "source": "reddit_public"})
 
@@ -89,15 +89,15 @@ class DominantChannelLockTest(unittest.TestCase):
 
             for _ in range(3):
                 control.subreddit_performance_store.record_post_attempt("alpha")
-            control.subreddit_performance_store.record_sale("alpha", 30.0)
+            control.subreddit_performance_store.record_sale("alpha")
 
             for _ in range(3):
                 control.subreddit_performance_store.record_post_attempt("beta")
-            control.subreddit_performance_store.record_sale("beta", 24.0)
+            control.subreddit_performance_store.record_sale("beta")
 
             for _ in range(3):
                 control.subreddit_performance_store.record_post_attempt("gamma")
-            control.subreddit_performance_store.record_sale("gamma", 9.0)
+            control.subreddit_performance_store.record_sale("gamma")
 
             posts = [
                 {
@@ -139,15 +139,15 @@ class DominantChannelLockTest(unittest.TestCase):
 
             for _ in range(3):
                 control.subreddit_performance_store.record_post_attempt("alpha")
-            control.subreddit_performance_store.record_sale("alpha", 30.0)
+            control.subreddit_performance_store.record_sale("alpha")
 
             for _ in range(3):
                 control.subreddit_performance_store.record_post_attempt("beta")
-            control.subreddit_performance_store.record_sale("beta", 24.0)
+            control.subreddit_performance_store.record_sale("beta")
 
             for _ in range(3):
                 control.subreddit_performance_store.record_post_attempt("gamma")
-            control.subreddit_performance_store.record_sale("gamma", 9.0)
+            control.subreddit_performance_store.record_sale("gamma")
 
             server = start_http_server(host="127.0.0.1", port=0, bus=bus, control=control)
             try:

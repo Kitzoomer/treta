@@ -16,7 +16,7 @@ class RevenueSubredditEndpointTest(unittest.TestCase):
                 store.record_post_attempt("freelance")
             for _ in range(3):
                 store.record_plan_executed("freelance")
-            store.record_sale("freelance", 29.0)
+            store.record_sale("freelance")
 
             server = start_http_server(host="127.0.0.1", port=0, subreddit_performance_store=store)
             try:
@@ -30,7 +30,6 @@ class RevenueSubredditEndpointTest(unittest.TestCase):
                 self.assertEqual(rows[0]["posts_attempted"], 10)
                 self.assertEqual(rows[0]["plans_executed"], 3)
                 self.assertEqual(rows[0]["sales"], 1)
-                self.assertEqual(rows[0]["revenue"], 29.0)
                 self.assertEqual(rows[0]["conversion_rate"], 0.1)
             finally:
                 server.shutdown()
@@ -42,7 +41,7 @@ class RevenueSubredditEndpointTest(unittest.TestCase):
             store = SubredditPerformanceStore(path=Path(tmp_dir) / "subreddit_performance.json")
             for _ in range(4):
                 store.record_post_attempt("buildinpublic")
-            store.record_sale("buildinpublic", 20.0)
+            store.record_sale("buildinpublic")
 
             server = start_http_server(host="127.0.0.1", port=0, subreddit_performance_store=store)
             try:
@@ -55,8 +54,7 @@ class RevenueSubredditEndpointTest(unittest.TestCase):
                 self.assertEqual(rows[0]["name"], "buildinpublic")
                 self.assertEqual(rows[0]["posts_attempted"], 4)
                 self.assertEqual(rows[0]["sales"], 1)
-                self.assertEqual(rows[0]["revenue"], 20.0)
-                self.assertEqual(rows[0]["roi"], 5.0)
+                self.assertEqual(rows[0]["roi"], 0.25)
             finally:
                 server.shutdown()
                 server.server_close()
