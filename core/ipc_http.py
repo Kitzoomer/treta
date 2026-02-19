@@ -19,6 +19,7 @@ from core.integrations.gumroad_client import GumroadAPIError, GumroadClient
 from core.gumroad_oauth import exchange_code_for_token, get_auth_url, load_token, save_token
 from core.services.gumroad_sync_service import GumroadSyncService
 from core.revenue_attribution.store import RevenueAttributionStore
+from core.subreddit_performance_store import SubredditPerformanceStore
 from core.system_integrity import compute_system_integrity
 from core.reddit_intelligence.router import RedditIntelligenceRouter
 from core.reddit_public.config import get_config, update_config
@@ -47,6 +48,7 @@ class TretaHTTPServer(ThreadingHTTPServer):
         self.reddit_router = dependencies.get("reddit_router") or RedditIntelligenceRouter()
         self.mutation_lock = threading.Lock()
         self.revenue_attribution_store = dependencies.get("revenue_attribution_store")
+        self.subreddit_performance_store = dependencies.get("subreddit_performance_store")
         self.integrity_cache_ttl_seconds = 15
         self.integrity_cache = None
         self.operation_timeout_seconds = 8
@@ -147,6 +149,9 @@ class Handler(BaseHTTPRequestHandler):
     def revenue_attribution_store(self):
         return self.server.revenue_attribution_store
 
+    @property
+    def subreddit_performance_store(self):
+        return self.server.subreddit_performance_store
 
     def _reddit_posts_path(self) -> Path:
         data_dir = Path(__file__).resolve().parent.parent / ".treta_data"
@@ -363,6 +368,28 @@ class Handler(BaseHTTPRequestHandler):
             if self.revenue_attribution_store is None:
                 return self._send_success(200, {"totals": {"sales": 0, "revenue": 0.0}, "by_proposal": {}, "by_subreddit": {}})
             return self._send_success(200, self.revenue_attribution_store.summary())
+
+        if parsed.path == "/revenue/subreddits":
+            if self.subreddit_performance_store is None:
+                return self._send_success(200, {"subreddits": []})
+
+            summary = self.subreddit_performance_store.get_summary()
+            subreddits = []
+            for item in summary.get("subreddits", []):
+                posts_attempted = int(item.get("posts_attempted", 0) or 0)
+                sales = int(item.get("sales", 0) or 0)
+                conversion_rate = (sales / posts_attempted) if posts_attempted > 0 else 0.0
+                subreddits.append(
+                    {
+                        "name": str(item.get("name", "")),
+                        "posts_attempted": posts_attempted,
+                        "plans_executed": int(item.get("plans_executed", 0) or 0),
+                        "sales": sales,
+                        "revenue": round(float(item.get("revenue", 0.0) or 0.0), 2),
+                        "conversion_rate": round(conversion_rate, 4),
+                    }
+                )
+            return self._send_success(200, {"subreddits": subreddits})
 
         if parsed.path == "/strategy/recommendations":
             if self.strategy_engine is None:
@@ -967,6 +994,7 @@ def start_http_server(
     daily_loop_engine=None,
     memory_store=None,
     revenue_attribution_store: RevenueAttributionStore | None = None,
+    subreddit_performance_store: SubredditPerformanceStore | None = None,
 ):
     # Thread daemon: se muere si se muere el proceso principal (bien para dev)
     resolved_bus = bus or EventBus()
@@ -988,6 +1016,7 @@ def start_http_server(
         daily_loop_engine=daily_loop_engine,
         memory_store=memory_store,
         revenue_attribution_store=revenue_attribution_store,
+        subreddit_performance_store=subreddit_performance_store,
         reddit_router=RedditIntelligenceRouter(),
     )
     t = threading.Thread(target=server.serve_forever, daemon=True)
