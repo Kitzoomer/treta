@@ -20,6 +20,7 @@ class HealthEndpointsTest(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertTrue(payload["ok"])
             self.assertEqual(payload["data"]["status"], "live")
+            self.assertTrue(response.headers.get("X-Request-Id"))
         finally:
             server.shutdown()
             server.server_close()
@@ -55,6 +56,7 @@ class HealthEndpointsTest(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertTrue(payload["ok"])
             self.assertEqual(payload["data"]["status"], "ready")
+            self.assertIn("metrics", payload["data"])
         finally:
             server.shutdown()
             server.server_close()

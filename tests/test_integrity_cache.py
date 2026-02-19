@@ -25,10 +25,11 @@ class IntegrityCacheTest(unittest.TestCase):
             with patch("core.ipc_http.compute_system_integrity", return_value={"score": 1}) as mocked:
                 with urlopen(f"http://127.0.0.1:{server.server_port}/system/integrity", timeout=2):
                     pass
-                with urlopen(f"http://127.0.0.1:{server.server_port}/system/integrity", timeout=2):
-                    pass
+                with urlopen(f"http://127.0.0.1:{server.server_port}/system/integrity", timeout=2) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
 
             self.assertEqual(mocked.call_count, 1)
+            self.assertEqual(payload["data"]["metrics"]["integrity_cache_hit"], 1)
         finally:
             server.shutdown()
             server.server_close()
@@ -57,6 +58,7 @@ class IntegrityCacheTest(unittest.TestCase):
             self.assertEqual(payload["data"]["score"], 42)
             self.assertTrue(payload["data"]["stale"])
             self.assertTrue(payload["data"]["recompute_failed"])
+            self.assertIn("metrics", payload["data"])
         finally:
             server.shutdown()
             server.server_close()

@@ -52,6 +52,22 @@ class HttpMutationLockTest(unittest.TestCase):
             server.shutdown()
             server.server_close()
 
+    def test_mutation_endpoint_sets_request_id_header(self):
+        store = _RaceyLaunchStore()
+        server = start_http_server(host="127.0.0.1", port=0, product_launch_store=store)
+        try:
+            req = Request(
+                f"http://127.0.0.1:{server.server_port}/product_launches/l1/add_sale",
+                data=json.dumps({"amount": 1.0}).encode("utf-8"),
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with urlopen(req, timeout=2) as response:
+                self.assertTrue(response.headers.get("X-Request-Id"))
+        finally:
+            server.shutdown()
+            server.server_close()
+
 
 if __name__ == "__main__":
     unittest.main()

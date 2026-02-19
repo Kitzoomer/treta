@@ -1,6 +1,8 @@
 import json
 import threading
 import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -45,10 +47,39 @@ class TretaHTTPServer(ThreadingHTTPServer):
         self.mutation_lock = threading.Lock()
         self.integrity_cache_ttl_seconds = 15
         self.integrity_cache = None
+        self.operation_timeout_seconds = 8
+        self.metrics_lock = threading.Lock()
+        self.metrics = {
+            "last_integrity_compute_ms": None,
+            "last_integrity_at": None,
+            "integrity_cache_hit": 0,
+            "last_mutation_at": None,
+        }
+
+    def update_metrics(self, **updates):
+        with self.metrics_lock:
+            self.metrics.update(updates)
+
+    def increment_metric(self, metric_name: str):
+        with self.metrics_lock:
+            current = int(self.metrics.get(metric_name, 0))
+            self.metrics[metric_name] = current + 1
+
+    def snapshot_metrics(self) -> dict:
+        with self.metrics_lock:
+            snapshot = dict(self.metrics)
+        if self.bus is not None and hasattr(self.bus, "_q") and hasattr(self.bus._q, "qsize"):
+            snapshot["event_queue_depth"] = self.bus._q.qsize()
+        return snapshot
 
 
 class Handler(BaseHTTPRequestHandler):
     ui_dir = Path(__file__).resolve().parent.parent / "ui"
+
+    def _ensure_request_id(self) -> str:
+        if not hasattr(self, "request_id"):
+            self.request_id = str(uuid.uuid4())
+        return self.request_id
 
     @property
     def bus(self) -> EventBus:
@@ -136,6 +167,7 @@ class Handler(BaseHTTPRequestHandler):
         normalized_body = self._normalize_body(code, body)
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
+        self.send_header("X-Request-Id", self._ensure_request_id())
         self.end_headers()
         self.wfile.write(json.dumps(normalized_body).encode("utf-8"))
 
@@ -196,8 +228,34 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def _send_mapped_exception(self, exc: Exception):
+        request_id = self._ensure_request_id()
+        self.log_error("request_id=%s exception=%r", request_id, exc)
         status_code, error_type, code = self._classify_exception(exc)
-        return self._send_error(status_code, error_type, code, str(exc))
+        details = {"request_id": request_id} if status_code >= 500 else None
+        return self._send_error(status_code, error_type, code, str(exc), details=details)
+
+    def _send_timeout_error(self, operation_name: str):
+        request_id = self._ensure_request_id()
+        self.log_error("request_id=%s timeout operation=%s", request_id, operation_name)
+        return self._send_error(
+            500,
+            ErrorType.SERVER_ERROR,
+            "server_error",
+            f"{operation_name}_timeout",
+            details={"request_id": request_id, "operation": operation_name},
+        )
+
+    def _run_with_timeout(self, operation_name: str, func):
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"treta-{operation_name}")
+        future = executor.submit(func)
+        try:
+            return True, future.result(timeout=self.server.operation_timeout_seconds)
+        except TimeoutError:
+            future.cancel()
+            executor.shutdown(wait=False, cancel_futures=True)
+            return False, None
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     def _send_static(self, file_name: str):
         file_path = self.ui_dir / file_name
@@ -214,10 +272,12 @@ class Handler(BaseHTTPRequestHandler):
 
         self.send_response(200)
         self.send_header("Content-Type", content_type)
+        self.send_header("X-Request-Id", self._ensure_request_id())
         self.end_headers()
         self.wfile.write(file_path.read_bytes())
 
     def do_GET(self):
+        self._ensure_request_id()
         parsed = urlparse(self.path)
 
         try:
@@ -337,7 +397,7 @@ class Handler(BaseHTTPRequestHandler):
                 "bus_present": self.bus is not None,
             }
             if all(checks.values()):
-                return self._send_success(200, {"status": "ready", "checks": checks})
+                return self._send_success(200, {"status": "ready", "checks": checks, "metrics": self.server.snapshot_metrics()})
             return self._send_error(
                 503,
                 ErrorType.DEPENDENCY_ERROR,
@@ -393,17 +453,35 @@ class Handler(BaseHTTPRequestHandler):
             cache_entry = self.server.integrity_cache
             now = time.time()
             if cache_entry is not None and now - cache_entry["computed_at"] < self.server.integrity_cache_ttl_seconds:
-                return self._send_success(200, cache_entry["snapshot"])
+                self.server.increment_metric("integrity_cache_hit")
+                cached_snapshot = dict(cache_entry["snapshot"])
+                cached_snapshot["metrics"] = self.server.snapshot_metrics()
+                return self._send_success(200, cached_snapshot)
 
             try:
-                report = compute_system_integrity(
-                    proposals=proposals,
-                    plans=plans,
-                    launches=launches,
+                started_at = time.perf_counter()
+
+                ok, report = self._run_with_timeout(
+                    "integrity_recompute",
+                    lambda: compute_system_integrity(
+                        proposals=proposals,
+                        plans=plans,
+                        launches=launches,
+                    ),
+                )
+                if not ok:
+                    return self._send_timeout_error("integrity_recompute")
+
+                finished_at = time.time()
+                compute_ms = round((time.perf_counter() - started_at) * 1000, 2)
+                self.server.update_metrics(
+                    last_integrity_compute_ms=compute_ms,
+                    last_integrity_at=finished_at,
                 )
                 report["version"] = VERSION
                 report["stale"] = False
                 report["recompute_failed"] = False
+                report["metrics"] = self.server.snapshot_metrics()
                 self.server.integrity_cache = {
                     "snapshot": report,
                     "computed_at": now,
@@ -415,6 +493,7 @@ class Handler(BaseHTTPRequestHandler):
                 stale_report = dict(cache_entry["snapshot"])
                 stale_report["stale"] = True
                 stale_report["recompute_failed"] = True
+                stale_report["metrics"] = self.server.snapshot_metrics()
                 return self._send_success(200, stale_report)
 
         if parsed.path.startswith("/product_launches/"):
@@ -458,6 +537,7 @@ class Handler(BaseHTTPRequestHandler):
 
             self.send_response(302)
             self.send_header("Location", auth_url)
+            self.send_header("X-Request-Id", self._ensure_request_id())
             self.end_headers()
             return
 
@@ -493,6 +573,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, error_response(ErrorType.NOT_FOUND, ErrorType.NOT_FOUND, ErrorType.NOT_FOUND))
 
     def do_POST(self):
+        self._ensure_request_id()
         proposal_transition_paths = {
             "/approve": "ApproveProposal",
             "/reject": "RejectProposal",
@@ -554,6 +635,7 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(raw)
 
             with self.server.mutation_lock:
+                self.server.update_metrics(last_mutation_at=time.time())
                 reddit_post_response = self.reddit_router.handle_post(self.path, data)
                 if reddit_post_response is not None:
                     code, body = reddit_post_response
@@ -675,7 +757,9 @@ class Handler(BaseHTTPRequestHandler):
                         return self._send(400, {"ok": False, "error": "Gumroad not connected. Visit /gumroad/auth first."})
                     gumroad_client = GumroadClient(access_token)
                     service = GumroadSyncService(self.product_launch_store, gumroad_client)
-                    summary = service.sync_sales()
+                    ok, summary = self._run_with_timeout("gumroad_sync", service.sync_sales)
+                    if not ok:
+                        return self._send_timeout_error("gumroad_sync")
                     return self._send(200, summary)
 
                 if self.path == "/reddit/config":
@@ -712,7 +796,10 @@ class Handler(BaseHTTPRequestHandler):
                 if self.path == "/reddit/run_scan":
                     if self.control is None:
                         return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "control_unavailable", "control_unavailable")
-                    return self._send_success(200, self.control.run_reddit_public_scan())
+                    ok, result = self._run_with_timeout("reddit_scan", self.control.run_reddit_public_scan)
+                    if not ok:
+                        return self._send_timeout_error("reddit_scan")
+                    return self._send_success(200, result)
 
                 if self.path == "/reddit/mark_posted":
                     proposal_id = str(data.get("proposal_id", "")).strip()
@@ -814,6 +901,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_mapped_exception(e)
 
     def do_PATCH(self):
+        self._ensure_request_id()
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
 
@@ -823,6 +911,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_mapped_exception(ValueError(str(e)))
 
         with self.server.mutation_lock:
+            self.server.update_metrics(last_mutation_at=time.time())
             patch_response = self.reddit_router.handle_patch(self.path, data)
             if patch_response is None:
                 return self._send(404, error_response(ErrorType.NOT_FOUND, ErrorType.NOT_FOUND, ErrorType.NOT_FOUND))
