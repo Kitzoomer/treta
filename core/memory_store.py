@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
-import json
 import os
 from pathlib import Path
 from typing import Any, Dict, List
+
+from core.persistence.json_io import atomic_read_json, atomic_write_json
 
 
 class MemoryStore:
@@ -33,7 +34,7 @@ class MemoryStore:
             self.save(state)
             return state
 
-        loaded = json.loads(self._path.read_text(encoding="utf-8"))
+        loaded = atomic_read_json(self._path, self._default_state())
         if not isinstance(loaded, dict):
             return self._default_state()
 
@@ -54,7 +55,7 @@ class MemoryStore:
         if state is not None:
             self._state = dict(state)
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(self._state, indent=2), encoding="utf-8")
+        atomic_write_json(self._path, self._state)
 
     def snapshot(self) -> Dict[str, Any]:
         return deepcopy(self._state)
