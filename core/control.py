@@ -26,7 +26,10 @@ from core.errors import InvariantViolationError
 from core.domain.lifecycle import EXECUTION_STATUSES
 from core.reddit_public.config import get_config
 from core.reddit_public.pain_scoring import compute_pain_score
-from core.openclaw_agent import OpenClawRedditScanner
+from core.openclaw_agent import (
+    OpenClawRedditScanner,
+    normalize_openclaw_to_scan_summary,
+)
 
 
 @dataclass(frozen=True)
@@ -287,13 +290,35 @@ class Control:
     def get_last_reddit_scan(self) -> Dict[str, object] | None:
         return self._last_reddit_scan
 
-    def _scan_reddit_public_opportunities(self) -> None:
+    def run_reddit_scan(self) -> Dict[str, object]:
         config = get_config()
         source = str(config.get("source", "reddit_public")).strip().lower()
-        if source == "openclaw":
-            self.run_openclaw_reddit_scan()
-            return
-        self.run_reddit_public_scan()
+
+        if source != "openclaw":
+            return self.run_reddit_public_scan()
+
+        try:
+            result = self.run_openclaw_reddit_scan()
+            print(
+                f"[OPENCLAW] scan ok: analyzed={int(result.get('analyzed', 0))} "
+                f"qualified={int(result.get('qualified', 0))}"
+            )
+            return result
+        except Exception as exc:
+            print(f"[OPENCLAW] failed -> falling back to reddit_public: {exc}")
+            fallback = self.run_reddit_public_scan()
+            diagnostics = {
+                "source": "openclaw",
+                "fallback_to": "reddit_public",
+                "error": str(exc),
+            }
+            fallback_with_diagnostics = dict(fallback)
+            fallback_with_diagnostics["diagnostics"] = diagnostics
+            self._last_reddit_scan = fallback_with_diagnostics
+            return fallback_with_diagnostics
+
+    def _scan_reddit_public_opportunities(self) -> None:
+        self.run_reddit_scan()
 
     def run_openclaw_reddit_scan(self) -> Dict[str, object]:
         config = get_config()
@@ -303,18 +328,7 @@ class Control:
             if str(item).strip()
         ]
         scan_data = OpenClawRedditScanner().scan(subreddits=subreddits, limit=10)
-        posts = list(scan_data.get("posts", [])) if isinstance(scan_data, dict) else []
-        by_subreddit: Dict[str, int] = {}
-        for post in posts:
-            subreddit_name = str(post.get("subreddit", "")).strip() or "unknown"
-            by_subreddit[subreddit_name] = by_subreddit.get(subreddit_name, 0) + 1
-
-        result = {
-            "analyzed": len(posts),
-            "qualified": 0,
-            "by_subreddit": by_subreddit,
-            "posts": [],
-        }
+        result = normalize_openclaw_to_scan_summary(scan_data)
         self._last_reddit_scan = result
         return result
 
