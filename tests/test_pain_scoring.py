@@ -166,6 +166,7 @@ class RedditPublicPainGateTest(unittest.TestCase):
                 revenue_attribution_store=revenue_store,
                 bus=self.bus,
             )
+            control.subreddit_performance_store.record_post_attempt("r/freelance")
             with patch("core.reddit_public.service.RedditPublicService.scan_subreddits", return_value=posts), patch(
                 "core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions",
                 return_value=[],

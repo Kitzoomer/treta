@@ -37,5 +37,30 @@ class RevenueSubredditEndpointTest(unittest.TestCase):
                 server.server_close()
 
 
+    def test_revenue_roi_endpoint_shape(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = SubredditPerformanceStore(path=Path(tmp_dir) / "subreddit_performance.json")
+            for _ in range(4):
+                store.record_post_attempt("buildinpublic")
+            store.record_sale("buildinpublic", 20.0)
+
+            server = start_http_server(host="127.0.0.1", port=0, subreddit_performance_store=store)
+            try:
+                with urlopen(f"http://127.0.0.1:{server.server_port}/revenue/roi", timeout=2) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+
+                self.assertTrue(payload["ok"])
+                rows = payload["data"]["subreddits"]
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]["name"], "buildinpublic")
+                self.assertEqual(rows[0]["posts_attempted"], 4)
+                self.assertEqual(rows[0]["sales"], 1)
+                self.assertEqual(rows[0]["revenue"], 20.0)
+                self.assertEqual(rows[0]["roi"], 5.0)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+
 if __name__ == "__main__":
     unittest.main()
