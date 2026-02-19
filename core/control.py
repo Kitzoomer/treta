@@ -114,34 +114,17 @@ class Control:
             if self.gumroad_client is not None
             else None
         )
-        self._hydrate_subreddit_sales_from_revenue()
         self._last_reddit_scan: Dict[str, object] | None = None
         self.only_top_proposal = True
         self.domain_integrity_policy = DomainIntegrityPolicy()
         self.bus = bus or EventBus()
 
-    def _hydrate_subreddit_sales_from_revenue(self) -> None:
-        summary = self.revenue_attribution_store.summary() if self.revenue_attribution_store is not None else {}
-        by_subreddit = summary.get("by_subreddit", {}) if isinstance(summary, dict) else {}
-        if not isinstance(by_subreddit, dict):
-            return
+    def _revenue_summary(self) -> dict:
+        if self.revenue_attribution_store is None:
+            return {}
+        summary = self.revenue_attribution_store.summary()
+        return summary if isinstance(summary, dict) else {}
 
-        for subreddit, values in by_subreddit.items():
-            if not isinstance(values, dict):
-                continue
-            name = str(subreddit).strip()
-            if not name:
-                continue
-            stats = self.subreddit_performance_store.get_subreddit_stats(name)
-            if int(stats.get("sales", 0) or 0) > 0 or float(stats.get("revenue", 0.0) or 0.0) > 0:
-                continue
-            sales = int(values.get("sales", 0) or 0)
-            revenue = float(values.get("revenue", 0.0) or 0.0)
-            if sales < 1:
-                continue
-            amount = revenue / sales if sales > 0 else 0.0
-            for _ in range(sales):
-                self.subreddit_performance_store.record_sale(name, amount)
 
     def has_active_proposal(self) -> bool:
         active_statuses = {"draft", *self.domain_integrity_policy.ACTIVE_STATUSES}
@@ -204,8 +187,12 @@ class Control:
     def _compute_ranking_bonuses(self, subreddit: str) -> dict[str, float]:
         stats = self.subreddit_performance_store.get_subreddit_stats(subreddit)
         posts_attempted = int(stats.get("posts_attempted", 0) or 0)
-        sales = int(stats.get("sales", 0) or 0)
-        revenue = float(stats.get("revenue", 0.0) or 0.0)
+        performance_sales = int(stats.get("sales", 0) or 0)
+
+        by_subreddit = self._revenue_summary().get("by_subreddit", {})
+        revenue_stats = by_subreddit.get(subreddit, {}) if isinstance(by_subreddit, dict) else {}
+        sales = int(revenue_stats.get("sales", performance_sales) or 0)
+        revenue = float(revenue_stats.get("revenue", 0.0) or 0.0)
 
         revenue_bonus = round(min(50.0, revenue / 2.0), 2)
         conversion_rate = sales / max(posts_attempted, 1)
@@ -225,7 +212,10 @@ class Control:
         posts_attempted = int(subreddit_stats.get("posts_attempted", 0) or 0)
         if posts_attempted == 0:
             return 0.0
-        revenue = float(subreddit_stats.get("revenue", 0.0) or 0.0)
+        subreddit = str(subreddit_stats.get("name", "")).strip()
+        by_subreddit = self._revenue_summary().get("by_subreddit", {})
+        revenue_stats = by_subreddit.get(subreddit, {}) if isinstance(by_subreddit, dict) else {}
+        revenue = float(revenue_stats.get("revenue", 0.0) or 0.0)
         return revenue / posts_attempted
 
     def _get_top_subreddits_by_roi(self, limit: int = 2) -> list[str]:
@@ -236,7 +226,7 @@ class Control:
             key=lambda item: (
                 self._compute_subreddit_roi(item),
                 float(item.get("revenue", 0.0) or 0.0),
-                int(item.get("sales", 0) or 0),
+                int(self._revenue_summary().get("by_subreddit", {}).get(str(item.get("name", "")).strip(), {}).get("sales", 0) or 0),
             ),
             reverse=True,
         )
@@ -808,7 +798,9 @@ class Control:
             self.revenue_attribution_store.upsert_tracking(
                 tracking_id=tracking_id,
                 proposal_id=proposal_id,
+                product_id=proposal_id,
                 subreddit=str(subreddit).strip() if subreddit else None,
+                post_id=str(source_opportunity_id).strip() if source_opportunity_id else None,
                 price=proposal.get("price_suggestion"),
                 created_at=datetime.utcnow().isoformat() + "Z",
             )

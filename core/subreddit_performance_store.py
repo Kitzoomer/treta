@@ -23,7 +23,6 @@ class SubredditPerformanceStore:
             "proposals_generated": 0,
             "plans_executed": 0,
             "sales": 0,
-            "revenue": 0.0,
         }
 
     def _load_items(self) -> dict[str, dict[str, float | int | str]]:
@@ -48,7 +47,6 @@ class SubredditPerformanceStore:
                 "proposals_generated": int(row.get("proposals_generated", 0) or 0),
                 "plans_executed": int(row.get("plans_executed", 0) or 0),
                 "sales": int(row.get("sales", 0) or 0),
-                "revenue": round(float(row.get("revenue", 0.0) or 0.0), 2),
             }
         return items
 
@@ -78,10 +76,9 @@ class SubredditPerformanceStore:
         stats["plans_executed"] = int(stats["plans_executed"]) + 1
         self._save()
 
-    def record_sale(self, subreddit: str, revenue_amount: float | int) -> None:
+    def record_sale(self, subreddit: str) -> None:
         stats = self._ensure(subreddit)
         stats["sales"] = int(stats["sales"]) + 1
-        stats["revenue"] = round(float(stats["revenue"]) + float(revenue_amount or 0.0), 2)
         self._save()
 
     def get_subreddit_stats(self, subreddit: str) -> dict[str, float | int | str]:

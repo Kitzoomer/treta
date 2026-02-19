@@ -87,6 +87,8 @@ class GumroadSyncService:
                             tracking_id,
                             sale_count=1,
                             revenue_delta=float(sale.get("amount", 0.0) or 0.0),
+                            sale_id=str(sale.get("sale_id") or "").strip() or None,
+                            sold_at=str(sale.get("created_at") or "").strip() or None,
                         )
                         if (
                             attributed is not None
@@ -95,7 +97,6 @@ class GumroadSyncService:
                         ):
                             self._subreddit_performance_store.record_sale(
                                 str(attributed.get("subreddit") or "").strip(),
-                                float(sale.get("amount", 0.0) or 0.0),
                             )
             else:
                 revenue_added = 0.0
