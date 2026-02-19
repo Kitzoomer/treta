@@ -3,7 +3,10 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from openai import OpenAI
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
 
 
 @dataclass
@@ -17,6 +20,9 @@ class GPTClientConfigurationError(Exception):
 
 class GPTClient:
     def __init__(self):
+        if OpenAI is None:
+            raise GPTClientConfigurationError("openai package not installed")
+
         api_key = os.getenv("OPENAI_API_KEY", "").strip()
         if not api_key:
             raise GPTClientConfigurationError(message="OPENAI_API_KEY is not set")
