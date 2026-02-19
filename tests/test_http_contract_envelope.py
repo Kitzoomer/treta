@@ -230,6 +230,66 @@ class HttpContractEnvelopeTest(unittest.TestCase):
             server.shutdown()
             server.server_close()
 
+    def test_representative_endpoints_use_standard_envelope(self):
+        server = start_http_server(host="127.0.0.1", port=0)
+        try:
+            # system
+            with self.assertRaises(HTTPError) as state_err:
+                urlopen(f"http://127.0.0.1:{server.server_port}/state", timeout=2)
+            self.assertEqual(state_err.exception.code, 503)
+            state_payload = json.loads(state_err.exception.read().decode("utf-8"))
+            self.assertFalse(state_payload["ok"])
+            self.assertEqual(state_payload["error"]["type"], "dependency_error")
+
+            # proposals
+            with self.assertRaises(HTTPError) as proposals_err:
+                urlopen(f"http://127.0.0.1:{server.server_port}/product_proposals", timeout=2)
+            self.assertEqual(proposals_err.exception.code, 503)
+            proposals_payload = json.loads(proposals_err.exception.read().decode("utf-8"))
+            self.assertEqual(proposals_payload["error"]["type"], "dependency_error")
+
+            # plans
+            with self.assertRaises(HTTPError) as plans_err:
+                urlopen(f"http://127.0.0.1:{server.server_port}/product_plans", timeout=2)
+            self.assertEqual(plans_err.exception.code, 503)
+
+            # launches
+            with self.assertRaises(HTTPError) as launches_err:
+                urlopen(f"http://127.0.0.1:{server.server_port}/product_launches", timeout=2)
+            self.assertEqual(launches_err.exception.code, 503)
+
+            # strategy
+            with self.assertRaises(HTTPError) as strategy_err:
+                urlopen(f"http://127.0.0.1:{server.server_port}/strategy/recommendations", timeout=2)
+            self.assertEqual(strategy_err.exception.code, 503)
+
+            # reddit
+            with urlopen(f"http://127.0.0.1:{server.server_port}/reddit/config", timeout=2) as response:
+                reddit_payload = json.loads(response.read().decode("utf-8"))
+            self.assertTrue(reddit_payload["ok"])
+
+            # gumroad
+            with self.assertRaises(HTTPError) as gumroad_err:
+                urlopen(f"http://127.0.0.1:{server.server_port}/gumroad/callback", timeout=2)
+            self.assertEqual(gumroad_err.exception.code, 400)
+            gumroad_payload = json.loads(gumroad_err.exception.read().decode("utf-8"))
+            self.assertEqual(gumroad_payload["error"]["type"], "client_error")
+
+            # memory
+            with self.assertRaises(HTTPError) as memory_err:
+                urlopen(f"http://127.0.0.1:{server.server_port}/memory", timeout=2)
+            self.assertEqual(memory_err.exception.code, 503)
+
+            # not found matrix
+            with self.assertRaises(HTTPError) as not_found_err:
+                urlopen(f"http://127.0.0.1:{server.server_port}/does-not-exist", timeout=2)
+            self.assertEqual(not_found_err.exception.code, 404)
+            not_found_payload = json.loads(not_found_err.exception.read().decode("utf-8"))
+            self.assertEqual(not_found_payload["error"]["type"], "not_found")
+        finally:
+            server.shutdown()
+            server.server_close()
+
 
 if __name__ == "__main__":
     unittest.main()

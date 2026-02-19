@@ -19,7 +19,7 @@ def success(data: Any) -> dict[str, Any]:
     }
 
 
-def error(error_type: str, code: str, message: str) -> dict[str, Any]:
+def error(error_type: str, code: str, message: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
     normalized_error_type = error_type if error_type in ERROR_TYPES else ErrorType.SERVER_ERROR
     return {
         "ok": False,
@@ -27,5 +27,6 @@ def error(error_type: str, code: str, message: str) -> dict[str, Any]:
             "type": normalized_error_type,
             "code": code,
             "message": message,
+            "details": details or {},
         },
     }
