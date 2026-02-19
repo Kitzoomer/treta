@@ -35,6 +35,7 @@ class RedditConfigEndpointTest(unittest.TestCase):
                         "commercial_keywords": "pricing, proposal",
                         "enable_engagement_boost": False,
                         "subreddits": "freelance, UGCcreators",
+                        "source": "openclaw",
                     }
                 ).encode("utf-8"),
                 method="POST",
@@ -50,6 +51,24 @@ class RedditConfigEndpointTest(unittest.TestCase):
             self.assertEqual(updated_data["commercial_keywords"], ["pricing", "proposal"])
             self.assertFalse(updated_data["enable_engagement_boost"])
             self.assertEqual(updated_data["subreddits"], ["freelance", "UGCcreators"])
+            self.assertEqual(updated_data["source"], "openclaw")
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_update_config_rejects_invalid_source(self):
+        server = start_http_server(host="127.0.0.1", port=0, control=Control(), bus=self.bus)
+        try:
+            req = Request(
+                f"http://127.0.0.1:{server.server_port}/reddit/config",
+                data=json.dumps({"source": "bad_source"}).encode("utf-8"),
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with self.assertRaises(Exception) as context:
+                urlopen(req, timeout=2)
+
+            self.assertIn("HTTP Error 400", str(context.exception))
         finally:
             server.shutdown()
             server.server_close()
@@ -71,7 +90,7 @@ class RedditConfigEndpointTest(unittest.TestCase):
         }
         control = Control(bus=self.bus)
 
-        with patch.object(control, "run_reddit_public_scan", return_value=expected):
+        with patch.object(control, "run_reddit_scan", return_value=expected):
             server = start_http_server(host="127.0.0.1", port=0, control=control, bus=self.bus)
             try:
                 req = Request(

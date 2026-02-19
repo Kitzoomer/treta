@@ -772,6 +772,7 @@ class Handler(BaseHTTPRequestHandler):
                         "pain_keywords",
                         "commercial_keywords",
                         "enable_engagement_boost",
+                        "source",
                     }
                     payload = {key: value for key, value in data.items() if key in editable_fields}
                     if "subreddits" in payload:
@@ -793,13 +794,23 @@ class Handler(BaseHTTPRequestHandler):
                         payload["commercial_keywords"] = [str(item).strip().lower() for item in raw_commercial_keywords if str(item).strip()]
                     if "enable_engagement_boost" in payload:
                         payload["enable_engagement_boost"] = bool(payload["enable_engagement_boost"])
+                    if "source" in payload:
+                        source_value = str(payload["source"]).strip().lower()
+                        if source_value not in {"reddit_public", "openclaw"}:
+                            return self._send_error(
+                                400,
+                                ErrorType.CLIENT_ERROR,
+                                "invalid_source",
+                                "source must be one of: reddit_public, openclaw",
+                            )
+                        payload["source"] = source_value
                     updated = update_config(payload)
                     return self._send_success(200, updated)
 
                 if self.path == "/reddit/run_scan":
                     if self.control is None:
                         return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "control_unavailable", "control_unavailable")
-                    ok, result = self._run_with_timeout("reddit_scan", self.control.run_reddit_public_scan)
+                    ok, result = self._run_with_timeout("reddit_scan", self.control.run_reddit_scan)
                     if not ok:
                         return self._send_timeout_error("reddit_scan")
                     return self._send_success(200, result)
