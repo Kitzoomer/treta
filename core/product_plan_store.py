@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from collections import deque
 from copy import deepcopy
-import json
 import logging
 import os
 from pathlib import Path
-import tempfile
 from typing import Any, Dict, List
+
+from core.persistence.json_io import atomic_read_json, atomic_write_json
 
 
 ProductPlan = Dict[str, Any]
@@ -35,15 +35,13 @@ class ProductPlanStore:
                 logger.warning("Failed to initialize product plan store at %s: %s", self._path, exc)
             return []
 
-        try:
+        loaded = atomic_read_json(self._path, [])
+
+        if loaded == [] and self._path.exists():
             content = self._path.read_text(encoding="utf-8").strip()
             if not content:
                 logger.warning("Product plan store file is empty at %s; using empty store", self._path)
                 return []
-            loaded = json.loads(content)
-        except (OSError, json.JSONDecodeError) as exc:
-            logger.warning("Failed to load product plans from %s: %s", self._path, exc)
-            return []
 
         if not isinstance(loaded, list):
             logger.warning("Product plan store at %s did not contain a JSON list; using empty store", self._path)
@@ -54,25 +52,10 @@ class ProductPlanStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         payload = list(self._items)
 
-        tmp_path: Path | None = None
         try:
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8",
-                dir=self._path.parent,
-                delete=False,
-            ) as temp_file:
-                json.dump(payload, temp_file, indent=2)
-                temp_file.write("\n")
-                tmp_path = Path(temp_file.name)
-            os.replace(tmp_path, self._path)
+            atomic_write_json(self._path, payload)
         except OSError as exc:
             logger.error("Failed to persist product plans to %s: %s", self._path, exc)
-            if tmp_path is not None:
-                try:
-                    tmp_path.unlink(missing_ok=True)
-                except OSError:
-                    pass
 
     def add(self, plan: Dict[str, Any]) -> ProductPlan:
         item = dict(plan)

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from typing import Any, Dict, List
+
+from core.persistence.json_io import atomic_read_json, atomic_write_json
 
 
 class ExecutionEngine:
@@ -20,14 +21,14 @@ class ExecutionEngine:
     def _load_history(self) -> List[Dict[str, Any]]:
         if not self._path.exists():
             return []
-        loaded = json.loads(self._path.read_text(encoding="utf-8"))
+        loaded = atomic_read_json(self._path, [])
         if not isinstance(loaded, list):
             return []
         return [dict(item) for item in loaded if isinstance(item, dict)]
 
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(self._history, indent=2), encoding="utf-8")
+        atomic_write_json(self._path, self._history)
 
     def list_history(self) -> List[Dict[str, Any]]:
         return [dict(item) for item in self._history]
