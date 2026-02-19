@@ -186,7 +186,7 @@ class RedditPublicPainGateTest(unittest.TestCase):
 
         self.assertEqual(len(emitted), 1)
         self.assertEqual(emitted[0].payload["id"], "reddit-public-freelance-post")
-        self.assertEqual(emitted[0].payload["revenue_bonus"], 15)
+        self.assertEqual(emitted[0].payload["revenue_bonus"], 10.0)
         self.assertGreater(emitted[0].payload["score"], emitted[0].payload["pain_score"])
 
     def test_scan_emits_only_top_scoring_opportunity(self):

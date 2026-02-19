@@ -201,25 +201,24 @@ class Control:
     def _save_reddit_posts(self, items: list[dict]) -> None:
         self._reddit_posts_path().write_text(json.dumps(items, indent=2), encoding="utf-8")
 
-    def _compute_ranking_bonuses(self, subreddit: str) -> dict[str, int]:
+    def _compute_ranking_bonuses(self, subreddit: str) -> dict[str, float]:
         stats = self.subreddit_performance_store.get_subreddit_stats(subreddit)
         posts_attempted = int(stats.get("posts_attempted", 0) or 0)
         sales = int(stats.get("sales", 0) or 0)
-        roi = self._compute_subreddit_roi(stats)
+        revenue = float(stats.get("revenue", 0.0) or 0.0)
 
-        roi_priority_bonus = 30 if roi > 20 else 15 if roi > 10 else 0
-        zero_roi_penalty = -20 if posts_attempted >= 3 and roi == 0 else 0
-        throttle_penalty = -50 if posts_attempted >= 5 and sales == 0 else 0
-
-        conversion_bonus = 0
-        if posts_attempted > 0 and (sales / posts_attempted) >= 0.1:
-            conversion_bonus = 20
+        revenue_bonus = round(min(50.0, revenue / 2.0), 2)
+        conversion_rate = sales / max(posts_attempted, 1)
+        conversion_bonus = round(min(30.0, conversion_rate * 100.0), 2)
 
         return {
-            "roi_priority_bonus": roi_priority_bonus,
-            "zero_roi_penalty": zero_roi_penalty,
-            "throttle_penalty": throttle_penalty,
+            "revenue_bonus": revenue_bonus,
+            "execution_bonus": 0.0,
             "conversion_bonus": conversion_bonus,
+            # Backward-compatible aliases for existing API response keys.
+            "roi_priority_bonus": revenue_bonus,
+            "zero_roi_penalty": 0.0,
+            "throttle_penalty": 0.0,
         }
 
     def _compute_subreddit_roi(self, subreddit_stats: dict[str, object]) -> float:
@@ -304,16 +303,16 @@ class Control:
             pain_score = int(pain_data["pain_score"])
             subreddit_name = str(post.get("subreddit", "")).strip() or "unknown"
             bonuses = self._compute_ranking_bonuses(subreddit_name)
-            roi_priority_bonus = int(bonuses["roi_priority_bonus"])
-            zero_roi_penalty = int(bonuses["zero_roi_penalty"])
-            throttle_penalty = int(bonuses["throttle_penalty"])
-            conversion_bonus = int(bonuses["conversion_bonus"])
-            final_score = pain_score + roi_priority_bonus + zero_roi_penalty + throttle_penalty + conversion_bonus
-            if throttle_penalty < 0:
-                throttled_subreddits.add(subreddit_name)
+            revenue_bonus = round(float(bonuses["revenue_bonus"]), 2)
+            execution_bonus = round(float(bonuses["execution_bonus"]), 2)
+            conversion_bonus = round(float(bonuses["conversion_bonus"]), 2)
+            roi_priority_bonus = round(float(bonuses["roi_priority_bonus"]), 2)
+            zero_roi_penalty = round(float(bonuses["zero_roi_penalty"]), 2)
+            throttle_penalty = round(float(bonuses["throttle_penalty"]), 2)
+            final_score = round(pain_score + revenue_bonus + execution_bonus + conversion_bonus, 2)
             print(
                 f"[REDDIT_PUBLIC] post={post.get('id', '')} pain_score={pain_score} "
-                f"bonuses=(roi={roi_priority_bonus},zero_roi={zero_roi_penalty},throttle={throttle_penalty},conv={conversion_bonus}) final_score={final_score} "
+                f"bonuses=(revenue={revenue_bonus},exec={execution_bonus},conv={conversion_bonus}) final_score={final_score} "
                 f"intent={pain_data['intent_type']} urgency={pain_data['urgency_level']}"
             )
             if pain_score < pain_threshold:
@@ -323,8 +322,8 @@ class Control:
                 "title": title,
                 "subreddit": subreddit_name,
                 "pain_score": pain_score,
-                "revenue_bonus": roi_priority_bonus,
-                "execution_bonus": 0,
+                "revenue_bonus": revenue_bonus,
+                "execution_bonus": execution_bonus,
                 "conversion_bonus": conversion_bonus,
                 "roi_priority_bonus": roi_priority_bonus,
                 "zero_roi_penalty": zero_roi_penalty,
@@ -339,8 +338,8 @@ class Control:
                     "post": post,
                     "pain_data": pain_data,
                     "pain_score": pain_score,
-                    "revenue_bonus": roi_priority_bonus,
-                    "execution_bonus": 0,
+                    "revenue_bonus": revenue_bonus,
+                    "execution_bonus": execution_bonus,
                     "conversion_bonus": conversion_bonus,
                     "roi_priority_bonus": roi_priority_bonus,
                     "zero_roi_penalty": zero_roi_penalty,
