@@ -28,6 +28,7 @@ DEFAULT_CONFIG = {
         "template",
     ],
     "enable_engagement_boost": True,
+    "source": "reddit_public",
 }
 
 _current_config = DEFAULT_CONFIG.copy()

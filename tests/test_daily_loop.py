@@ -14,12 +14,17 @@ from core.ipc_http import start_http_server
 from core.opportunity_store import OpportunityStore
 from core.product_launch_store import ProductLaunchStore
 from core.product_proposal_store import ProductProposalStore
+from core.reddit_public.config import DEFAULT_CONFIG, update_config
 from core.strategy_action_store import StrategyActionStore
 
 
 class DailyLoopEngineTest(unittest.TestCase):
     def setUp(self):
         self.bus = EventBus()
+        update_config(DEFAULT_CONFIG.copy())
+
+    def tearDown(self):
+        update_config(DEFAULT_CONFIG.copy())
 
     def _stores(self, root: Path):
         opportunities = OpportunityStore(path=root / "opportunities.json")
@@ -81,6 +86,27 @@ class DailyLoopEngineTest(unittest.TestCase):
         recent_events = self.bus.recent(limit=20)
         daily_events = [event for event in recent_events if event.type == "RedditDailyPlanGenerated"]
         self.assertTrue(daily_events)
+
+    def test_infoproduct_scan_uses_openclaw_when_flagged(self):
+        update_config({"source": "openclaw"})
+        control = Control(bus=self.bus)
+
+        with patch.object(control, "run_openclaw_reddit_scan", return_value={}), patch.object(
+            control, "run_reddit_public_scan", return_value={}
+        ) as reddit_public_scan, patch("core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions", return_value=[]):
+            control.consume(Event(type="RunInfoproductScan", payload={}, source="test"))
+
+        reddit_public_scan.assert_not_called()
+
+    def test_infoproduct_scan_defaults_to_reddit_public(self):
+        control = Control(bus=self.bus)
+
+        with patch.object(control, "run_openclaw_reddit_scan", return_value={}) as openclaw_scan, patch.object(
+            control, "run_reddit_public_scan", return_value={}
+        ), patch("core.reddit_intelligence.service.RedditIntelligenceService.get_daily_top_actions", return_value=[]):
+            control.consume(Event(type="RunInfoproductScan", payload={}, source="test"))
+
+        openclaw_scan.assert_not_called()
 
     def test_endpoint_returns_daily_loop_status(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

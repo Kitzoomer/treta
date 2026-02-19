@@ -26,6 +26,7 @@ from core.errors import InvariantViolationError
 from core.domain.lifecycle import EXECUTION_STATUSES
 from core.reddit_public.config import get_config
 from core.reddit_public.pain_scoring import compute_pain_score
+from core.openclaw_agent import OpenClawRedditScanner
 
 
 @dataclass(frozen=True)
@@ -287,7 +288,35 @@ class Control:
         return self._last_reddit_scan
 
     def _scan_reddit_public_opportunities(self) -> None:
+        config = get_config()
+        source = str(config.get("source", "reddit_public")).strip().lower()
+        if source == "openclaw":
+            self.run_openclaw_reddit_scan()
+            return
         self.run_reddit_public_scan()
+
+    def run_openclaw_reddit_scan(self) -> Dict[str, object]:
+        config = get_config()
+        subreddits = [
+            str(item).strip()
+            for item in config.get("subreddits", [])
+            if str(item).strip()
+        ]
+        scan_data = OpenClawRedditScanner().scan(subreddits=subreddits, limit=10)
+        posts = list(scan_data.get("posts", [])) if isinstance(scan_data, dict) else []
+        by_subreddit: Dict[str, int] = {}
+        for post in posts:
+            subreddit_name = str(post.get("subreddit", "")).strip() or "unknown"
+            by_subreddit[subreddit_name] = by_subreddit.get(subreddit_name, 0) + 1
+
+        result = {
+            "analyzed": len(posts),
+            "qualified": 0,
+            "by_subreddit": by_subreddit,
+            "posts": [],
+        }
+        self._last_reddit_scan = result
+        return result
 
     def _generate_reddit_daily_plan(self) -> None:
         from core.reddit_intelligence.daily_plan_store import RedditDailyPlanStore
