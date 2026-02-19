@@ -126,6 +126,9 @@ const state = {
   profile: loadProfileState(),
   autonomyEnabled: localStorage.getItem(STORAGE_KEYS.autonomyEnabled) === "true",
   chatMode: localStorage.getItem(STORAGE_KEYS.chatMode) === "auto" ? "auto" : "manual",
+  voiceEnabled: false,
+  voiceSupported: false,
+  voiceStatusMessage: "",
   currentRoute: CONFIG.defaultRoute,
   workView: {
     messages: {},
@@ -170,6 +173,8 @@ const degradedMode = window.TretaDegradedMode || {
     return { show: false, reasons: [], staleSlices: [], message: "" };
   },
 };
+
+const voiceMode = window.TretaVoiceMode || null;
 
 function loadProfileState() {
   const raw = localStorage.getItem(STORAGE_KEYS.profile);
@@ -2084,7 +2089,25 @@ function renderCommandBar() {
   if (!ui.chatPanel) return;
   const title = ui.chatPanel.querySelector("h2");
   if (!title) return;
-  title.innerHTML = `Conversation <span class="chat-mode-toggle"><button type="button" class="secondary-btn ${state.chatMode === "manual" ? "active" : ""}" data-action="chat-mode" data-mode="manual">Manual</button><button type="button" class="secondary-btn ${state.chatMode === "auto" ? "active" : ""}" data-action="chat-mode" data-mode="auto">Auto</button></span>`;
+  title.innerHTML = `Conversation <span class="chat-mode-toggle"><button type="button" class="secondary-btn ${state.chatMode === "manual" ? "active" : ""}" data-action="chat-mode" data-mode="manual">Manual</button><button type="button" class="secondary-btn ${state.chatMode === "auto" ? "active" : ""}" data-action="chat-mode" data-mode="auto">Auto</button><button type="button" class="secondary-btn voice-toggle ${state.voiceEnabled ? "active" : ""}" data-action="voice-toggle">VOICE: ${state.voiceEnabled ? "ON" : "OFF"}</button><span class="voice-indicator ${state.voiceEnabled ? "on" : "off"}" aria-label="Voice mode status"></span></span>`;
+
+  const existingBanner = ui.chatPanel.querySelector(".voice-support-banner");
+  if (existingBanner) existingBanner.remove();
+  if (!state.voiceSupported) {
+    const banner = document.createElement("p");
+    banner.className = "voice-support-banner";
+    banner.textContent = "Voice mode no soportado en este navegador";
+    ui.chatPanel.insertBefore(banner, ui.chatHistory);
+  }
+
+  const existingStatus = ui.chatPanel.querySelector(".voice-status");
+  if (existingStatus) existingStatus.remove();
+  if (state.voiceSupported && state.voiceStatusMessage) {
+    const status = document.createElement("p");
+    status.className = "voice-status";
+    status.textContent = state.voiceStatusMessage;
+    ui.chatPanel.insertBefore(status, ui.chatHistory);
+  }
   title.querySelectorAll("button[data-action='chat-mode']").forEach((button) => {
     button.addEventListener("click", () => {
       state.chatMode = button.dataset.mode === "auto" ? "auto" : "manual";
@@ -2092,6 +2115,91 @@ function renderCommandBar() {
       renderCommandBar();
     });
   });
+
+  const voiceToggle = title.querySelector("button[data-action='voice-toggle']");
+  if (voiceToggle) {
+    voiceToggle.addEventListener("click", () => {
+      setVoiceEnabled(!state.voiceEnabled);
+    });
+  }
+}
+
+function setVoiceEnabled(enabled) {
+  if (!state.voiceSupported || !voiceMode) {
+    state.voiceEnabled = false;
+    state.voiceStatusMessage = "Voice mode no soportado en este navegador";
+    renderCommandBar();
+    return;
+  }
+
+  state.voiceEnabled = Boolean(enabled);
+  if (state.voiceEnabled) {
+    const started = voiceMode.startListening();
+    state.voiceStatusMessage = started ? "Escuchando wake word: \"Treta\"" : "No se pudo iniciar el micrófono";
+    if (!started) {
+      state.voiceEnabled = false;
+    }
+  } else {
+    voiceMode.stopListening();
+    state.voiceStatusMessage = "Voice desactivado";
+  }
+  renderCommandBar();
+}
+
+async function processChatInput(rawInput, source = "text") {
+  const input = rawInput.trim();
+  if (!input) return;
+
+  const labelPrefix = source === "voice" ? "[USER - VOICE]: " : "";
+  state.chatCards.push({ id: `user-${Date.now()}`, type: "user", text: `${labelPrefix}${input}` });
+
+  const snapshot = getChatStateSnapshot();
+  const decision = computeChatIntentDecision(input, snapshot, { chatMode: state.chatMode });
+
+  if (decision.requires_confirmation) {
+    state.chatCards.push({
+      id: `confirm-${Date.now()}`,
+      type: "confirm",
+      title: decision.ui?.title || "Confirm command",
+      summary: decision.ui?.summary || "Do you want to execute this command?",
+      decision,
+    });
+    renderConversation();
+    return;
+  }
+
+  const responseText = await executeDecision(decision);
+
+  if (source === "voice" && voiceMode) {
+    const tretaReply = responseText || decision?.ui?.summary || "Hecho.";
+    state.chatCards.push({ id: `voice-assistant-${Date.now()}`, type: "assistant", text: `[TRETA]: ${tretaReply}` });
+    voiceMode.speak(tretaReply);
+    renderConversation();
+  }
+}
+
+function initVoiceIntegration() {
+  if (!voiceMode) {
+    state.voiceSupported = false;
+    state.voiceStatusMessage = "Voice mode no soportado en este navegador";
+    return;
+  }
+
+  const voiceInit = voiceMode.initVoiceMode({
+    onCommand: async (commandText) => {
+      await processChatInput(commandText, "voice");
+    },
+    onError: (errorCode) => {
+      state.voiceStatusMessage = `Voice error: ${errorCode}`;
+      renderCommandBar();
+    },
+  });
+
+  state.voiceSupported = Boolean(voiceInit?.supported);
+  if (!state.voiceSupported) {
+    state.voiceEnabled = false;
+    state.voiceStatusMessage = "Voice mode no soportado en este navegador";
+  }
 }
 
 function getChatStateSnapshot() {
@@ -2281,19 +2389,22 @@ function computeChatIntentDecision(rawText, stateSnapshot, settings) {
 }
 
 async function executeDecision(decision) {
+  let spokenResponse = "";
   if (!decision) return;
   if (decision.intent === "navigate") {
     const route = decision.ui?.cta?.route;
     if (route) router.navigate(route.replace("#/", ""));
     state.chatCards.push({ id: `assistant-${Date.now()}`, type: "assistant", decision, card: { ...decision.ui, details: "Navigation applied." } });
+    spokenResponse = decision.ui?.summary || "";
     renderConversation();
-    return;
+    return spokenResponse;
   }
 
   if (decision.action.kind === "no_op") {
     state.chatCards.push({ id: `assistant-${Date.now()}`, type: "assistant", decision, card: decision.ui });
+    spokenResponse = decision.ui?.summary || "";
     renderConversation();
-    return;
+    return spokenResponse;
   }
 
   try {
@@ -2311,6 +2422,7 @@ async function executeDecision(decision) {
       await loadDashboardPendingActions();
     }
 
+    const backendResponse = helpers.t(callResults[0] ? JSON.stringify(callResults[0].result) : "OK", "OK");
     state.chatCards.push({
       id: `assistant-${Date.now()}`,
       type: "assistant",
@@ -2318,10 +2430,11 @@ async function executeDecision(decision) {
       card: {
         title: decision.ui?.title || "Done",
         summary: `${decision.intent === "query" ? "Query completed" : "Command executed"}.`,
-        details: helpers.t(callResults[0] ? JSON.stringify(callResults[0].result) : "OK", "OK"),
+        details: backendResponse,
         cta: decision.ui?.cta,
       },
     });
+    spokenResponse = backendResponse;
   } catch (error) {
     state.chatCards.push({
       id: `assistant-${Date.now()}`,
@@ -2332,8 +2445,10 @@ async function executeDecision(decision) {
         summary: error.message,
       },
     });
+    spokenResponse = `Error: ${error.message}`;
   }
   renderConversation();
+  return spokenResponse;
 }
 
 function renderControlCenter() {
@@ -3116,25 +3231,12 @@ ui.chatForm.addEventListener("submit", async (event) => {
   const input = ui.chatInput.value.trim();
   if (!input) return;
 
-  const snapshot = getChatStateSnapshot();
-  const decision = computeChatIntentDecision(input, snapshot, { chatMode: state.chatMode });
-  state.chatCards.push({ id: `user-${Date.now()}`, type: "user", text: input });
-
-  if (decision.requires_confirmation) {
-    state.chatCards.push({
-      id: `confirm-${Date.now()}`,
-      type: "confirm",
-      title: decision.ui?.title || "Confirm command",
-      summary: decision.ui?.summary || "Do you want to execute this command?",
-      decision,
-    });
-  } else {
-    await executeDecision(decision);
-  }
-
+  await processChatInput(input, "text");
   ui.chatInput.value = "";
   renderConversation();
 });
+
+initVoiceIntegration();
 
 const initialResolution = router.resolveRoute();
 if (!initialResolution.valid) {

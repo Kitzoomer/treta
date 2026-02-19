@@ -923,3 +923,37 @@ pre { white-space: pre-wrap; background: #0b1020; border: 1px solid var(--border
   padding: 4px 8px;
   font-size: .72rem;
 }
+
+.voice-toggle.active {
+  border-color: #4bd37b;
+  box-shadow: 0 0 0 1px rgba(75,211,123,.35) inset;
+}
+
+.voice-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  display: inline-block;
+  align-self: center;
+  margin-left: 4px;
+  background: #7b2f35;
+}
+
+.voice-indicator.on {
+  background: #32d26d;
+  box-shadow: 0 0 10px rgba(50,210,109,.7);
+}
+
+.voice-support-banner,
+.voice-status {
+  margin: 0;
+  font-size: .72rem;
+}
+
+.voice-support-banner {
+  color: #ff9da8;
+}
+
+.voice-status {
+  color: var(--muted);
+}
