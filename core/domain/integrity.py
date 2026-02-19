@@ -16,7 +16,7 @@ class DomainIntegrityPolicy:
     PLAN_BUILDABLE_STATUSES = PLAN_BUILDABLE_STATUSES
     ALLOWED_TRANSITIONS = PROPOSAL_TRANSITIONS
 
-    def validate_global_invariants(self, proposals):
+    def validate_global_invariants(self, proposals, launches=None, plans=None):
         active = [p for p in proposals if p["status"] in self.ACTIVE_STATUSES]
         if len(active) > 1:
             raise DomainIntegrityError("More than one active proposal detected.")

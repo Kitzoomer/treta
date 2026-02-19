@@ -119,6 +119,17 @@ class Control:
         self.product_proposal_store._save()
         self.product_launch_store._save()
 
+
+    def _validate_global(self) -> None:
+        proposals = self.product_proposal_store.list()
+        launches = self.product_launch_store.list()
+        plans = self.product_plan_store.list()
+        self.domain_integrity_policy.validate_global_invariants(
+            proposals=proposals,
+            launches=launches,
+            plans=plans,
+        )
+
     def _reddit_posts_path(self) -> Path:
         proposal_store_path = getattr(self.product_proposal_store, "_path", None)
         if isinstance(proposal_store_path, Path):
@@ -299,7 +310,9 @@ class Control:
         self.bus.push(Event(type="RedditDailyPlanGenerated", payload=plan, source="control"))
 
     def link_launch_gumroad(self, launch_id: str, gumroad_product_id: str) -> Dict[str, object]:
-        return self.product_launch_store.link_gumroad_product(launch_id, gumroad_product_id)
+        updated = self.product_launch_store.link_gumroad_product(launch_id, gumroad_product_id)
+        self._validate_global()
+        return updated
 
     def sync_gumroad_sales(self) -> Dict[str, object]:
         if self.gumroad_sales_sync_service is None:
@@ -459,7 +472,7 @@ class Control:
                 proposal_id=proposal_id,
                 new_status=next_status,
             )
-            self.domain_integrity_policy.validate_global_invariants(self.product_proposal_store.list())
+            self._validate_global()
             if updated["status"] in EXECUTION_STATUSES:
                 self._refresh_execution_focus()
                 updated = self.product_proposal_store.get(updated["id"]) or updated
@@ -472,6 +485,7 @@ class Control:
             if event.type == "MarkProposalLaunched":
                 launch = self.product_launch_store.add_from_proposal(updated["id"])
                 launch = self.product_launch_store.mark_launched(launch["id"])
+                self._validate_global()
                 self._refresh_execution_focus()
                 launch = self.product_launch_store.get(launch["id"]) or launch
                 actions.append(
@@ -506,6 +520,7 @@ class Control:
             launch_id = str(event.payload.get("launch_id", "")).strip()
             status = str(event.payload.get("status", "")).strip()
             updated = self.product_launch_store.transition_status(launch_id, status)
+            self._validate_global()
             return [Action(type="ProductLaunchUpdated", payload={"launch": updated})]
 
         if event.type == "BuildProductPlanRequested":
@@ -521,6 +536,7 @@ class Control:
                     proposal_id=proposal_id,
                     new_status="approved",
                 )
+                self._validate_global()
 
             self.domain_integrity_policy.validate_plan_build_precondition(proposal)
 
@@ -539,6 +555,7 @@ class Control:
 
             plan = self.product_builder.build(proposal)
             stored = self.product_plan_store.add(plan)
+            self._validate_global()
             return [
                 Action(
                     type="ProductPlanBuilt",
@@ -585,7 +602,7 @@ class Control:
                 proposal_id=proposal_id,
                 new_status="ready_for_review",
             )
-            self.domain_integrity_policy.validate_global_invariants(self.product_proposal_store.list())
+            self._validate_global()
             actions.append(
                 Action(
                     type="ProductProposalStatusChanged",
