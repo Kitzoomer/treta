@@ -99,6 +99,16 @@ const state = {
       reddit: "",
       strategy: "",
     },
+    sliceHealth: {
+      system: { stale: false, lastSuccessAt: null, staleSince: null },
+      reddit: { stale: false, lastSuccessAt: null, staleSince: null },
+      strategy: { stale: false, lastSuccessAt: null, staleSince: null },
+    },
+    integrity: {
+      lastStatusCode: 0,
+      lastSuccessAt: null,
+      lastError: "",
+    },
     backendConnected: false,
     showDashboardMore: false,
   },
@@ -144,6 +154,17 @@ const ui = {
   systemStatusPanel: document.getElementById("system-status-panel"),
   activityTimelinePanel: document.getElementById("activity-timeline-panel"),
   telemetry: document.getElementById("telemetry-content"),
+};
+
+const degradedMode = window.TretaDegradedMode || {
+  preserveOnFailure(currentValue, nextValue, failed) {
+    if (failed) return currentValue;
+    if (nextValue === undefined || nextValue === null) return currentValue;
+    return nextValue;
+  },
+  buildDegradedBannerModel() {
+    return { show: false, reasons: [], staleSlices: [], message: "" };
+  },
 };
 
 function loadProfileState() {
@@ -272,6 +293,19 @@ const api = {
   },
   getSystemIntegrity() {
     return this.fetchJson("/system/integrity");
+  },
+  async getSystemIntegrityStatus() {
+    const response = await fetch("/system/integrity", { headers: { "Content-Type": "application/json" } });
+    const text = await response.text();
+    let data = {};
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch (_error) {
+        data = { raw: text };
+      }
+    }
+    return { ok: response.ok, statusCode: response.status, data };
   },
   getRedditLastScan() {
     return this.fetchJson("/reddit/last_scan");
@@ -773,6 +807,29 @@ const views = {
           ? { label: "LOW", tone: "ok" }
           : { label: "NONE", tone: "info" };
 
+    const degradedBanner = degradedMode.buildDegradedBannerModel({
+      diagnostics: state.diagnostics,
+      refreshMs: state.refreshMs,
+    });
+    const renderDegradedModeBanner = () => {
+      if (!degradedBanner.show) return "";
+      const staleDetails = degradedBanner.staleSlices.map((item) => {
+        const lastSuccess = helpers.formatTimestamp(item.lastSuccessAt);
+        return `<li><strong>${helpers.escape(item.slice)}:</strong> stale · last successful ${helpers.escape(lastSuccess)}</li>`;
+      }).join("");
+      return `
+        <article class="card degraded-banner">
+          <h3>Operator Degraded Mode</h3>
+          <p>${helpers.escape(degradedBanner.message)}</p>
+          ${staleDetails ? `<ul class="mission-actionable-list">${staleDetails}</ul>` : ""}
+          <div class="card-actions wrap">
+            <button data-action="dashboard-force-refresh">Force refresh now</button>
+            <button class="secondary-btn" data-action="dashboard-run-integrity">Run integrity now</button>
+          </div>
+        </article>
+      `;
+    };
+
     const renderGlobalStatus = () => `
       <article class="card mission-global-status">
         <h3>Global Status</h3>
@@ -970,11 +1027,16 @@ const views = {
 
     this.shell("Dashboard", "Operational summary and next best action", `
       <section class="os-dashboard">
+        ${renderDegradedModeBanner()}
         ${renderGlobalStatus()}
         ${renderAutonomyControls()}
         <article class="card">
           <h3>System Coherence</h3>
           <p><strong>Integrity:</strong> <span class="badge ${integrityTone}">${helpers.escape(integrityStatusLabel.toUpperCase())}</span></p>
+          <div class="card-actions wrap dashboard-operator-actions">
+            <button data-action="dashboard-force-refresh">Force refresh now</button>
+            <button class="secondary-btn" data-action="dashboard-run-integrity">Run integrity now</button>
+          </div>
           ${lastScanHasData
     ? `<p><strong>Last scan:</strong> analyzed ${helpers.escape(lastScanAnalyzed)} · qualified ${helpers.escape(lastScanQualified)}</p>
              <p><strong>Last scan date:</strong> ${helpers.escape(lastScanDate)}</p>`
@@ -2265,9 +2327,30 @@ function renderTelemetry() {
 }
 
 async function refreshLoop() {
+  const markSliceSuccess = (slice) => {
+    const now = Date.now();
+    state.diagnostics.lastRefreshAt[slice] = now;
+    state.diagnostics.lastApiErrors[slice] = "";
+    state.diagnostics.sliceHealth[slice] = {
+      stale: false,
+      lastSuccessAt: now,
+      staleSince: null,
+    };
+  };
+
+  const markSliceFailure = (slice, errorMessage) => {
+    const previous = state.diagnostics.sliceHealth[slice] || {};
+    state.diagnostics.lastApiErrors[slice] = errorMessage;
+    state.diagnostics.sliceHealth[slice] = {
+      stale: true,
+      lastSuccessAt: previous.lastSuccessAt || null,
+      staleSince: previous.staleSince || Date.now(),
+    };
+  };
+
   const sliceCalls = {
     system: async () => {
-      const [systemData, eventData, memoryData, oppData, proposalData, launchData, planData, perfData, dailyLoopData, systemIntegrityData] = await Promise.all([
+      const [systemData, eventData, memoryData, oppData, proposalData, launchData, planData, perfData, dailyLoopData, systemIntegrityResult] = await Promise.all([
         api.getState(),
         api.getRecentEvents(),
         api.getMemory(),
@@ -2277,20 +2360,30 @@ async function refreshLoop() {
         api.getProductPlans(),
         api.getPerformanceSummary(),
         api.getDailyLoopStatus(),
-        api.getSystemIntegrity(),
+        api.getSystemIntegrityStatus(),
       ]);
-      state.system = systemData || { state: "IDLE" };
-      state.events = eventData?.events || [];
-      state.chatHistory = memoryData?.chat_history || [];
-      state.opportunities = oppData?.items || [];
-      state.proposals = proposalData?.items || [];
-      state.launches = launchData?.items || [];
-      state.plans = planData?.items || [];
-      state.performance = perfData || {};
-      state.dailyLoop = dailyLoopData || state.dailyLoop;
-      state.systemIntegrity = systemIntegrityData || state.systemIntegrity;
-      state.diagnostics.lastRefreshAt.system = Date.now();
-      state.diagnostics.lastApiErrors.system = "";
+      state.system = degradedMode.preserveOnFailure(state.system, systemData || { state: "IDLE" }, false);
+      state.events = degradedMode.preserveOnFailure(state.events, eventData?.events || [], false);
+      state.chatHistory = degradedMode.preserveOnFailure(state.chatHistory, memoryData?.chat_history || [], false);
+      state.opportunities = degradedMode.preserveOnFailure(state.opportunities, oppData?.items || [], false);
+      state.proposals = degradedMode.preserveOnFailure(state.proposals, proposalData?.items || [], false);
+      state.launches = degradedMode.preserveOnFailure(state.launches, launchData?.items || [], false);
+      state.plans = degradedMode.preserveOnFailure(state.plans, planData?.items || [], false);
+      state.performance = degradedMode.preserveOnFailure(state.performance, perfData || {}, false);
+      state.dailyLoop = degradedMode.preserveOnFailure(state.dailyLoop, dailyLoopData || state.dailyLoop, false);
+
+      state.diagnostics.integrity.lastStatusCode = Number(systemIntegrityResult.statusCode || 0);
+      if (systemIntegrityResult.ok) {
+        state.systemIntegrity = degradedMode.preserveOnFailure(state.systemIntegrity, systemIntegrityResult.data || state.systemIntegrity, false);
+        state.diagnostics.integrity.lastSuccessAt = Date.now();
+        state.diagnostics.integrity.lastError = "";
+      } else {
+        const integrityMessage = systemIntegrityResult.data?.error || `HTTP ${systemIntegrityResult.statusCode}`;
+        state.diagnostics.integrity.lastError = integrityMessage;
+        state.diagnostics.lastApiErrors.system = `integrity degraded: ${integrityMessage}`;
+      }
+
+      markSliceSuccess("system");
       state.diagnostics.backendConnected = true;
     },
     strategy: async () => {
@@ -2299,16 +2392,15 @@ async function refreshLoop() {
         api.getPendingStrategyActions(),
         api.getStrategyDecision(),
       ]);
-      state.strategy = strategyData || {};
+      state.strategy = degradedMode.preserveOnFailure(state.strategy, strategyData || {}, false);
       const pendingActions = pendingData?.items || pendingData?.actions || pendingData?.pending_actions || [];
-      state.strategyPendingActions = pendingActions;
-      state.dashboardView.pendingActions = pendingActions;
+      state.strategyPendingActions = degradedMode.preserveOnFailure(state.strategyPendingActions, pendingActions, false);
+      state.dashboardView.pendingActions = degradedMode.preserveOnFailure(state.dashboardView.pendingActions, pendingActions, false);
       state.dashboardView.loaded = true;
       state.dashboardView.loading = false;
       state.dashboardView.error = "";
-      state.strategyDecision = strategyDecisionData || state.strategyDecision;
-      state.diagnostics.lastRefreshAt.strategy = Date.now();
-      state.diagnostics.lastApiErrors.strategy = "";
+      state.strategyDecision = degradedMode.preserveOnFailure(state.strategyDecision, strategyDecisionData || state.strategyDecision, false);
+      markSliceSuccess("strategy");
     },
     reddit: async () => {
       const [redditConfigData, redditLastScanData, redditSignalsData, redditTodayPlanData, redditDailyActionsData, redditPostsData] = await Promise.all([
@@ -2319,14 +2411,13 @@ async function refreshLoop() {
         api.getRedditDailyActions(5),
         api.getRedditPosts(),
       ]);
-      state.redditConfig = redditConfigData || state.redditConfig;
-      state.redditLastScan = redditLastScanData || state.redditLastScan;
-      state.redditSignals = redditSignalsData?.items || [];
-      state.redditTodayPlan = redditTodayPlanData || state.redditTodayPlan;
-      state.redditDailyActions = Array.isArray(redditDailyActionsData) ? redditDailyActionsData : [];
-      state.redditOpsView.posts = redditPostsData?.items || [];
-      state.diagnostics.lastRefreshAt.reddit = Date.now();
-      state.diagnostics.lastApiErrors.reddit = "";
+      state.redditConfig = degradedMode.preserveOnFailure(state.redditConfig, redditConfigData || state.redditConfig, false);
+      state.redditLastScan = degradedMode.preserveOnFailure(state.redditLastScan, redditLastScanData || state.redditLastScan, false);
+      state.redditSignals = degradedMode.preserveOnFailure(state.redditSignals, redditSignalsData?.items || [], false);
+      state.redditTodayPlan = degradedMode.preserveOnFailure(state.redditTodayPlan, redditTodayPlanData || state.redditTodayPlan, false);
+      state.redditDailyActions = degradedMode.preserveOnFailure(state.redditDailyActions, Array.isArray(redditDailyActionsData) ? redditDailyActionsData : [], false);
+      state.redditOpsView.posts = degradedMode.preserveOnFailure(state.redditOpsView.posts, redditPostsData?.items || [], false);
+      markSliceSuccess("reddit");
     },
   };
 
@@ -2334,7 +2425,7 @@ async function refreshLoop() {
     try {
       await task();
     } catch (error) {
-      state.diagnostics.lastApiErrors[slice] = error.message;
+      markSliceFailure(slice, error.message);
       if (slice === "system") {
         state.diagnostics.backendConnected = false;
       }
@@ -2910,6 +3001,43 @@ function bindDashboardActions() {
       router.render();
     });
   });
+
+  ui.pageContent.querySelectorAll("button[data-action='dashboard-force-refresh']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      state.dashboardView.feedback = "Force refresh requested…";
+      if (state.currentRoute === "dashboard") router.render();
+      await refreshLoop();
+      state.dashboardView.feedback = "Force refresh completed.";
+      if (state.currentRoute === "dashboard") router.render();
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='dashboard-run-integrity']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await runIntegrityNow();
+    });
+  });
+}
+
+async function runIntegrityNow() {
+  try {
+    const integrityResult = await api.getSystemIntegrityStatus();
+    state.diagnostics.integrity.lastStatusCode = integrityResult.statusCode;
+    state.systemIntegrity = integrityResult.data || state.systemIntegrity;
+    if (integrityResult.ok) {
+      state.diagnostics.integrity.lastSuccessAt = Date.now();
+      state.diagnostics.integrity.lastError = "";
+      state.dashboardView.feedback = "Integrity check completed.";
+    } else {
+      const message = integrityResult.data?.error || `HTTP ${integrityResult.statusCode}`;
+      state.diagnostics.integrity.lastError = message;
+      state.dashboardView.feedback = `Integrity check degraded: ${message}`;
+    }
+  } catch (error) {
+    state.diagnostics.integrity.lastError = error.message;
+    state.dashboardView.feedback = `Integrity check failed: ${error.message}`;
+  }
+  if (state.currentRoute === "dashboard") router.render();
 }
 
 async function runDashboardStrategyAction(actionFn, successMessage) {

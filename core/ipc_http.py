@@ -297,6 +297,9 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/style.css":
             return self._send_static("style.css")
 
+        if parsed.path == "/degraded_mode.js":
+            return self._send_static("degraded_mode.js")
+
         if parsed.path == "/state":
             sm = self.state_machine
             if sm is None:
