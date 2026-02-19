@@ -1,4 +1,5 @@
 import json
+import os
 import threading
 import time
 import uuid
@@ -26,6 +27,11 @@ from core.reddit_public.config import get_config, update_config
 from core.http.response import error as error_response
 from core.http.response import success
 from core.version import VERSION
+
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
 
 
 class TretaHTTPServer(ThreadingHTTPServer):
@@ -189,6 +195,20 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send_success(self, code: int, data: dict):
         return self._send(code, success(data))
+
+    def _send_bytes(self, code: int, body: bytes, content_type: str):
+        self.send_response(code)
+        self.send_header("Content-Type", content_type)
+        self.send_header("X-Request-Id", self._ensure_request_id())
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_raw_json(self, code: int, body: dict):
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("X-Request-Id", self._ensure_request_id())
+        self.end_headers()
+        self.wfile.write(json.dumps(body).encode("utf-8"))
 
     def _send_error(self, status_code: int, error_type: str, code: str, message: str, details: dict | None = None, data: dict | None = None):
         body = error_response(error_type, code, message, details=details)
@@ -703,6 +723,7 @@ class Handler(BaseHTTPRequestHandler):
             "/reddit/run_scan",
             "/reddit/mark_posted",
             "/conversation/message",
+            "/voice/tts",
         }
         if self.path not in allowed_paths and transition_event_type is None and launch_sale_id is None and launch_status_id is None and launch_link_gumroad_id is None and strategy_execute_id is None and strategy_reject_id is None:
             return self._send(404, error_response(ErrorType.NOT_FOUND, ErrorType.NOT_FOUND, ErrorType.NOT_FOUND))
@@ -805,6 +826,23 @@ class Handler(BaseHTTPRequestHandler):
                         return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_text", "missing_text")
                     reply_text = self.conversation_core.reply(text, source=source)
                     return self._send_success(200, {"reply_text": reply_text})
+
+                if self.path == "/voice/tts":
+                    text = str(data.get("text", "")).strip()
+                    if not text:
+                        return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_text", "missing_text")
+
+                    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+                    if not api_key or OpenAI is None:
+                        return self._send_raw_json(503, {"error": "gpt_not_configured"})
+
+                    client = OpenAI()
+                    response = client.audio.speech.create(
+                        model="gpt-4o-mini-tts",
+                        voice="sol",
+                        input=text,
+                    )
+                    return self._send_bytes(200, response.read(), "audio/mpeg")
 
                 if launch_sale_id is not None:
                     if self.product_launch_store is None:
