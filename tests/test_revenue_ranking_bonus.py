@@ -30,7 +30,7 @@ class RevenueRankingBonusTest(unittest.TestCase):
             self.assertEqual(control._compute_subreddit_roi(stats), 20.0)
             self.assertEqual(control._compute_subreddit_roi({"posts_attempted": 0, "revenue": 100.0}), 0.0)
 
-    def test_high_roi_bonus_applied(self):
+    def test_dynamic_revenue_bonus_growth(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             proposal_store = ProductProposalStore(path=root / "product_proposals.json")
@@ -41,13 +41,15 @@ class RevenueRankingBonusTest(unittest.TestCase):
                 product_launch_store=ProductLaunchStore(proposal_store=proposal_store, path=root / "product_launches.json"),
                 subreddit_performance_store=SubredditPerformanceStore(path=root / "subreddit_performance.json"),
             )
-            for _ in range(2):
-                control.subreddit_performance_store.record_post_attempt("freelance")
-            control.subreddit_performance_store.record_sale("freelance", 50.0)
-            bonuses = control._compute_ranking_bonuses("freelance")
-            self.assertEqual(bonuses["roi_priority_bonus"], 30)
+            control.subreddit_performance_store.record_sale("freelance", 20.0)
+            low_bonus = control._compute_ranking_bonuses("freelance")["revenue_bonus"]
+            control.subreddit_performance_store.record_sale("freelance", 100.0)
+            high_bonus = control._compute_ranking_bonuses("freelance")["revenue_bonus"]
 
-    def test_zero_sales_penalty_after_threshold(self):
+            self.assertGreater(high_bonus, low_bonus)
+            self.assertEqual(high_bonus, 50.0)
+
+    def test_conversion_bonus_cap(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             proposal_store = ProductProposalStore(path=root / "product_proposals.json")
@@ -58,12 +60,13 @@ class RevenueRankingBonusTest(unittest.TestCase):
                 product_launch_store=ProductLaunchStore(proposal_store=proposal_store, path=root / "product_launches.json"),
                 subreddit_performance_store=SubredditPerformanceStore(path=root / "subreddit_performance.json"),
             )
-            for _ in range(3):
-                control.subreddit_performance_store.record_post_attempt("saas")
+            control.subreddit_performance_store.record_post_attempt("saas")
+            control.subreddit_performance_store.record_sale("saas", 10.0)
+            control.subreddit_performance_store.record_sale("saas", 15.0)
             bonuses = control._compute_ranking_bonuses("saas")
-            self.assertEqual(bonuses["zero_roi_penalty"], -20)
+            self.assertEqual(bonuses["conversion_bonus"], 30.0)
 
-    def test_throttle_applied_after_5_failed_attempts(self):
+    def test_ranking_prefers_higher_real_revenue(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             proposal_store = ProductProposalStore(path=root / "product_proposals.json")
@@ -75,20 +78,29 @@ class RevenueRankingBonusTest(unittest.TestCase):
                 subreddit_performance_store=SubredditPerformanceStore(path=root / "subreddit_performance.json"),
             )
             control._reddit_posts_path = lambda: root / "reddit_posts.json"
-            for _ in range(5):
-                control.subreddit_performance_store.record_post_attempt("deadsub")
+            control.subreddit_performance_store.record_sale("highrev", 80.0)
+            control.subreddit_performance_store.record_sale("lowrev", 20.0)
 
-            update_config({"subreddits": ["deadsub"], "pain_threshold": 60, "source": "reddit_public"})
+            update_config({"subreddits": ["highrev", "lowrev"], "pain_threshold": 60, "source": "reddit_public"})
             posts = [
                 {
-                    "id": "post-1",
+                    "id": "post-high",
                     "title": "Help with pricing",
                     "selftext": "Need help now",
                     "score": 50,
                     "num_comments": 10,
-                    "subreddit": "deadsub",
-                    "url": "https://reddit.test/post-1",
-                }
+                    "subreddit": "highrev",
+                    "url": "https://reddit.test/post-high",
+                },
+                {
+                    "id": "post-low",
+                    "title": "Help with pricing",
+                    "selftext": "Need help now",
+                    "score": 50,
+                    "num_comments": 10,
+                    "subreddit": "lowrev",
+                    "url": "https://reddit.test/post-low",
+                },
             ]
             with patch("core.reddit_public.service.RedditPublicService.scan_subreddits", return_value=posts), patch(
                 "core.control.compute_pain_score",
@@ -96,9 +108,8 @@ class RevenueRankingBonusTest(unittest.TestCase):
             ):
                 result = control.run_reddit_public_scan()
 
-            self.assertIn("diagnostics", result)
-            self.assertEqual(result["diagnostics"]["throttled_subreddits"], ["deadsub"])
-            self.assertEqual(result["posts"][0]["throttle_penalty"], -50)
+            self.assertEqual(result["posts"][0]["subreddit"], "highrev")
+            self.assertGreater(result["posts"][0]["revenue_bonus"], result["posts"][1]["revenue_bonus"])
 
     def test_scan_score_includes_revenue_execution_and_conversion_bonuses(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -142,13 +153,13 @@ class RevenueRankingBonusTest(unittest.TestCase):
                 result = control.run_reddit_public_scan()
 
             scored = result["posts"][0]
-            self.assertEqual(scored["revenue_bonus"], 15)
-            self.assertEqual(scored["execution_bonus"], 0)
-            self.assertEqual(scored["conversion_bonus"], 20)
-            self.assertEqual(scored["roi_priority_bonus"], 15)
-            self.assertEqual(scored["zero_roi_penalty"], 0)
-            self.assertEqual(scored["throttle_penalty"], 0)
-            self.assertEqual(scored["score"], 115)
+            self.assertEqual(scored["revenue_bonus"], 50.0)
+            self.assertEqual(scored["execution_bonus"], 0.0)
+            self.assertEqual(scored["conversion_bonus"], 10.0)
+            self.assertEqual(scored["roi_priority_bonus"], 50.0)
+            self.assertEqual(scored["zero_roi_penalty"], 0.0)
+            self.assertEqual(scored["throttle_penalty"], 0.0)
+            self.assertEqual(scored["score"], 140.0)
 
     def test_proposal_generation_records_subreddit_metric(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
