@@ -42,6 +42,9 @@ class TretaHTTPServer(ThreadingHTTPServer):
         self.daily_loop_engine = dependencies.get("daily_loop_engine")
         self.memory_store = dependencies.get("memory_store")
         self.reddit_router = dependencies.get("reddit_router") or RedditIntelligenceRouter()
+        self.mutation_lock = threading.Lock()
+        self.integrity_cache_ttl_seconds = 15
+        self.integrity_cache = None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -130,16 +133,17 @@ class Handler(BaseHTTPRequestHandler):
         path.write_text(json.dumps(items, indent=2), encoding="utf-8")
 
     def _send(self, code: int, body: dict):
+        normalized_body = self._normalize_body(code, body)
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
-        self.wfile.write(json.dumps(body).encode("utf-8"))
+        self.wfile.write(json.dumps(normalized_body).encode("utf-8"))
 
     def _send_success(self, code: int, data: dict):
         return self._send(code, success(data))
 
-    def _send_error(self, status_code: int, error_type: str, code: str, message: str, data: dict | None = None):
-        body = error_response(error_type, code, message)
+    def _send_error(self, status_code: int, error_type: str, code: str, message: str, details: dict | None = None, data: dict | None = None):
+        body = error_response(error_type, code, message, details=details)
         if data is not None:
             body["data"] = data
         return self._send(status_code, body)
@@ -150,12 +154,46 @@ class Handler(BaseHTTPRequestHandler):
         if isinstance(exc, NotFoundError):
             return 404, ErrorType.NOT_FOUND, "not_found"
         if isinstance(exc, GumroadAPIError):
-            return 502, ErrorType.DEPENDENCY_ERROR, "gumroad_api_error"
+            return 503, ErrorType.DEPENDENCY_ERROR, "gumroad_api_error"
         if isinstance(exc, DependencyError):
             return 503, ErrorType.DEPENDENCY_ERROR, "dependency_error"
         if isinstance(exc, ValueError):
             return 400, ErrorType.CLIENT_ERROR, "validation_error"
         return 500, ErrorType.SERVER_ERROR, "unexpected_error"
+
+    def _error_type_for_status(self, status_code: int) -> str:
+        if status_code == 400:
+            return ErrorType.CLIENT_ERROR
+        if status_code == 404:
+            return ErrorType.NOT_FOUND
+        if status_code == 503:
+            return ErrorType.DEPENDENCY_ERROR
+        return ErrorType.SERVER_ERROR
+
+    def _normalize_body(self, status_code: int, body: dict):
+        if isinstance(body, dict) and body.get("ok") in {True, False} and isinstance(body.get("error"), dict) == (body.get("ok") is False):
+            if body.get("ok") is True and isinstance(body.get("data"), dict):
+                return {**body, **body["data"]}
+            return body
+        if status_code < 400:
+            wrapped = success(body)
+            if isinstance(body, dict):
+                wrapped.update(body)
+            return wrapped
+
+        details = {}
+        message = "request_failed"
+        if isinstance(body, dict):
+            raw_error = body.get("error")
+            if isinstance(raw_error, str) and raw_error:
+                message = raw_error
+            details = {key: value for key, value in body.items() if key != "error"}
+        return error_response(
+            self._error_type_for_status(status_code),
+            message,
+            message,
+            details=details,
+        )
 
     def _send_mapped_exception(self, exc: Exception):
         status_code, error_type, code = self._classify_exception(exc)
@@ -285,6 +323,29 @@ class Handler(BaseHTTPRequestHandler):
             loop_state["timestamp"] = time.time()
             return self._send(200, loop_state)
 
+        if parsed.path == "/health/live":
+            return self._send_success(200, {"status": "live"})
+
+        if parsed.path == "/health/ready":
+            checks = {
+                "stores_loadable": all([
+                    self.product_proposal_store is not None,
+                    self.product_plan_store is not None,
+                    self.product_launch_store is not None,
+                ]),
+                "control_wired": self.control is not None,
+                "bus_present": self.bus is not None,
+            }
+            if all(checks.values()):
+                return self._send_success(200, {"status": "ready", "checks": checks})
+            return self._send_error(
+                503,
+                ErrorType.DEPENDENCY_ERROR,
+                "not_ready",
+                "not_ready",
+                details={"checks": checks},
+            )
+
         if parsed.path == "/system/integrity":
             if self.product_proposal_store is None:
                 return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "product_proposal_store_unavailable", "product_proposal_store_unavailable")
@@ -325,16 +386,36 @@ class Handler(BaseHTTPRequestHandler):
                     ErrorType.DEPENDENCY_ERROR,
                     "integrity_data_unavailable",
                     "integrity_data_unavailable",
+                    details={"data_errors": data_errors},
                     data={"error": "integrity_data_unavailable", "details": data_errors},
                 )
 
-            report = compute_system_integrity(
-                proposals=proposals,
-                plans=plans,
-                launches=launches,
-            )
-            report["version"] = VERSION
-            return self._send_success(200, report)
+            cache_entry = self.server.integrity_cache
+            now = time.time()
+            if cache_entry is not None and now - cache_entry["computed_at"] < self.server.integrity_cache_ttl_seconds:
+                return self._send_success(200, cache_entry["snapshot"])
+
+            try:
+                report = compute_system_integrity(
+                    proposals=proposals,
+                    plans=plans,
+                    launches=launches,
+                )
+                report["version"] = VERSION
+                report["stale"] = False
+                report["recompute_failed"] = False
+                self.server.integrity_cache = {
+                    "snapshot": report,
+                    "computed_at": now,
+                }
+                return self._send_success(200, report)
+            except Exception:
+                if cache_entry is None:
+                    raise
+                stale_report = dict(cache_entry["snapshot"])
+                stale_report["stale"] = True
+                stale_report["recompute_failed"] = True
+                return self._send_success(200, stale_report)
 
         if parsed.path.startswith("/product_launches/"):
             if self.product_launch_store is None:
@@ -391,7 +472,7 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as e:
                 return self._send(400, {"ok": False, "error": str(e)})
             except Exception as e:
-                return self._send(502, {"ok": False, "error": f"oauth_exchange_failed: {e}"})
+                return self._send(503, {"ok": False, "error": f"oauth_exchange_failed: {e}"})
             return self._send(200, {"status": "connected"})
 
         if parsed.path == "/reddit/config":
@@ -472,260 +553,261 @@ class Handler(BaseHTTPRequestHandler):
         try:
             data = json.loads(raw)
 
-            reddit_post_response = self.reddit_router.handle_post(self.path, data)
-            if reddit_post_response is not None:
-                code, body = reddit_post_response
-                return self._send(code, body)
+            with self.server.mutation_lock:
+                reddit_post_response = self.reddit_router.handle_post(self.path, data)
+                if reddit_post_response is not None:
+                    code, body = reddit_post_response
+                    return self._send(code, body)
 
-            if transition_event_type is not None:
-                if self.control is None:
-                    return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "control_unavailable", "control_unavailable")
-                proposal_id = str(transition_proposal_id or "").strip()
-                if not proposal_id:
-                    return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_id", "missing_id")
+                if transition_event_type is not None:
+                    if self.control is None:
+                        return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "control_unavailable", "control_unavailable")
+                    proposal_id = str(transition_proposal_id or "").strip()
+                    if not proposal_id:
+                        return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_id", "missing_id")
 
-                transition_event = Event(
-                    type=transition_event_type,
-                    payload={"proposal_id": proposal_id},
-                    source="http",
-                )
-                self.bus.push(transition_event)
-                actions = self.control.consume(transition_event)
-                for action in actions:
-                    self.bus.push(Event(type=action.type, payload=action.payload, source="control"))
-                    if action.type == "ProductProposalStatusChanged":
-                        return self._send_success(200, action.payload["proposal"])
-
-                return self._send_error(404, ErrorType.NOT_FOUND, "proposal_not_found", "proposal_not_found")
-
-            if self.path == "/event":
-                ev_type = data.get("type")
-                payload = data.get("payload", {})
-                source = data.get("source", "openclaw")
-
-                if not ev_type:
-                    return self._send(400, {"ok": False, "error": "missing_type"})
-
-                self.bus.push(Event(type=ev_type, payload=payload, source=source))
-                return self._send(200, {"ok": True})
-
-            if self.path == "/scan/infoproduct":
-                self.bus.push(
-                    Event(
-                        type="RunInfoproductScan",
-                        payload={},
-                        source="http",
-                    )
-                )
-                return self._send(200, {"ok": True})
-
-            if self.path == "/product_plans/build":
-                proposal_id = str(data.get("proposal_id", "")).strip()
-                if not proposal_id:
-                    return self._send(400, {"ok": False, "error": "missing_proposal_id"})
-                self.bus.push(
-                    Event(
-                        type="BuildProductPlanRequested",
+                    transition_event = Event(
+                        type=transition_event_type,
                         payload={"proposal_id": proposal_id},
                         source="http",
                     )
-                )
-                return self._send(200, {"ok": True})
+                    self.bus.push(transition_event)
+                    actions = self.control.consume(transition_event)
+                    for action in actions:
+                        self.bus.push(Event(type=action.type, payload=action.payload, source="control"))
+                        if action.type == "ProductProposalStatusChanged":
+                            return self._send_success(200, action.payload["proposal"])
 
-            if self.path == "/product_proposals/execute":
-                proposal_id = str(data.get("id", "")).strip()
-                if not proposal_id:
-                    return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_id", "missing_id")
-                if self.control is None:
-                    return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "control_unavailable", "control_unavailable")
+                    return self._send_error(404, ErrorType.NOT_FOUND, "proposal_not_found", "proposal_not_found")
 
-                execute_event = Event(
-                    type="ExecuteProductPlanRequested",
-                    payload={"proposal_id": proposal_id},
-                    source="http",
-                )
-                self.bus.push(execute_event)
-                actions = self.control.consume(execute_event)
-                for action in actions:
-                    self.bus.push(Event(type=action.type, payload=action.payload, source="control"))
-                    if action.type == "ProductPlanExecuted":
-                        return self._send_success(200, action.payload["execution_package"])
+                if self.path == "/event":
+                    ev_type = data.get("type")
+                    payload = data.get("payload", {})
+                    source = data.get("source", "openclaw")
 
-                return self._send_error(404, ErrorType.NOT_FOUND, "proposal_not_found", "proposal_not_found")
+                    if not ev_type:
+                        return self._send(400, {"ok": False, "error": "missing_type"})
 
-            if launch_sale_id is not None:
-                if self.product_launch_store is None:
-                    return self._send(503, {"ok": False, "error": "product_launch_store_unavailable"})
-                launch_id = str(launch_sale_id).strip()
-                if not launch_id:
-                    return self._send(400, {"ok": False, "error": "missing_id"})
-                amount = float(data.get("amount", 0))
-                updated = self.product_launch_store.add_sale(launch_id, amount)
-                return self._send(200, updated)
+                    self.bus.push(Event(type=ev_type, payload=payload, source=source))
+                    return self._send(200, {"ok": True})
 
-            if launch_status_id is not None:
-                if self.product_launch_store is None:
-                    return self._send(503, {"ok": False, "error": "product_launch_store_unavailable"})
-                launch_id = str(launch_status_id).strip()
-                if not launch_id:
-                    return self._send(400, {"ok": False, "error": "missing_id"})
-                status = str(data.get("status", "")).strip()
-                updated = self.product_launch_store.transition_status(launch_id, status)
-                return self._send(200, updated)
+                if self.path == "/scan/infoproduct":
+                    self.bus.push(
+                        Event(
+                            type="RunInfoproductScan",
+                            payload={},
+                            source="http",
+                        )
+                    )
+                    return self._send(200, {"ok": True})
 
-            if launch_link_gumroad_id is not None:
-                if self.control is None:
-                    return self._send(503, {"ok": False, "error": "control_unavailable"})
-                launch_id = str(launch_link_gumroad_id).strip()
-                if not launch_id:
-                    return self._send(400, {"ok": False, "error": "missing_id"})
-                gumroad_product_id = str(data.get("gumroad_product_id", "")).strip()
-                if not gumroad_product_id:
-                    return self._send(400, {"ok": False, "error": "missing_gumroad_product_id"})
-                updated = self.control.link_launch_gumroad(launch_id, gumroad_product_id)
-                return self._send(200, updated)
+                if self.path == "/product_plans/build":
+                    proposal_id = str(data.get("proposal_id", "")).strip()
+                    if not proposal_id:
+                        return self._send(400, {"ok": False, "error": "missing_proposal_id"})
+                    self.bus.push(
+                        Event(
+                            type="BuildProductPlanRequested",
+                            payload={"proposal_id": proposal_id},
+                            source="http",
+                        )
+                    )
+                    return self._send(200, {"ok": True})
 
-            if self.path == "/gumroad/sync_sales":
-                if self.product_launch_store is None:
-                    return self._send(503, {"ok": False, "error": "product_launch_store_unavailable"})
-                access_token = load_token()
-                if not access_token:
-                    return self._send(400, {"ok": False, "error": "Gumroad not connected. Visit /gumroad/auth first."})
-                gumroad_client = GumroadClient(access_token)
-                service = GumroadSyncService(self.product_launch_store, gumroad_client)
-                summary = service.sync_sales()
-                return self._send(200, summary)
+                if self.path == "/product_proposals/execute":
+                    proposal_id = str(data.get("id", "")).strip()
+                    if not proposal_id:
+                        return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_id", "missing_id")
+                    if self.control is None:
+                        return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "control_unavailable", "control_unavailable")
 
-            if self.path == "/reddit/config":
-                editable_fields = {
-                    "subreddits",
-                    "pain_threshold",
-                    "pain_keywords",
-                    "commercial_keywords",
-                    "enable_engagement_boost",
-                }
-                payload = {key: value for key, value in data.items() if key in editable_fields}
-                if "subreddits" in payload:
-                    raw_subreddits = payload["subreddits"]
-                    if isinstance(raw_subreddits, str):
-                        raw_subreddits = raw_subreddits.split(",")
-                    payload["subreddits"] = [str(item).strip() for item in raw_subreddits if str(item).strip()]
-                if "pain_threshold" in payload:
-                    payload["pain_threshold"] = int(payload["pain_threshold"])
-                if "pain_keywords" in payload:
-                    raw_pain_keywords = payload["pain_keywords"]
-                    if isinstance(raw_pain_keywords, str):
-                        raw_pain_keywords = raw_pain_keywords.split(",")
-                    payload["pain_keywords"] = [str(item).strip().lower() for item in raw_pain_keywords if str(item).strip()]
-                if "commercial_keywords" in payload:
-                    raw_commercial_keywords = payload["commercial_keywords"]
-                    if isinstance(raw_commercial_keywords, str):
-                        raw_commercial_keywords = raw_commercial_keywords.split(",")
-                    payload["commercial_keywords"] = [str(item).strip().lower() for item in raw_commercial_keywords if str(item).strip()]
-                if "enable_engagement_boost" in payload:
-                    payload["enable_engagement_boost"] = bool(payload["enable_engagement_boost"])
-                updated = update_config(payload)
-                return self._send_success(200, updated)
-
-            if self.path == "/reddit/run_scan":
-                if self.control is None:
-                    return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "control_unavailable", "control_unavailable")
-                return self._send_success(200, self.control.run_reddit_public_scan())
-
-            if self.path == "/reddit/mark_posted":
-                proposal_id = str(data.get("proposal_id", "")).strip()
-                subreddit = str(data.get("subreddit", "")).strip()
-                post_url = str(data.get("post_url", "")).strip()
-                post_id = str(data.get("post_id", "")).strip()
-                if not post_id and post_url:
-                    path_parts = [part for part in urlparse(post_url).path.split("/") if part]
-                    if "comments" in path_parts:
-                        comments_index = path_parts.index("comments")
-                        if comments_index + 1 < len(path_parts):
-                            post_id = str(path_parts[comments_index + 1]).strip()
-                if not proposal_id:
-                    return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_proposal_id", "missing_proposal_id")
-                if not subreddit:
-                    return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_subreddit", "missing_subreddit")
-                if not post_url:
-                    return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_post_url", "missing_post_url")
-
-                product_name = ""
-                if self.product_proposal_store is not None:
-                    proposal = self.product_proposal_store.get(proposal_id)
-                    if proposal:
-                        product_name = str(proposal.get("product_name", "")).strip()
-
-                upvotes = data.get("upvotes", 0)
-                comments = data.get("comments", 0)
-                try:
-                    upvotes = int(upvotes)
-                except (TypeError, ValueError):
-                    upvotes = 0
-                try:
-                    comments = int(comments)
-                except (TypeError, ValueError):
-                    comments = 0
-
-                entry = {
-                    "id": f"reddit_post_{int(time.time() * 1000)}",
-                    "post_id": post_id,
-                    "proposal_id": proposal_id,
-                    "product_name": product_name,
-                    "subreddit": subreddit,
-                    "post_url": post_url,
-                    "upvotes": upvotes,
-                    "comments": comments,
-                    "status": "open",
-                    "date": time.strftime("%Y-%m-%d"),
-                    "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                }
-                posts = self._load_reddit_posts()
-                posts.append(entry)
-                self._save_reddit_posts(posts)
-                return self._send_success(200, {"item": entry})
-
-            if strategy_execute_id is not None:
-                if self.strategy_action_execution_layer is None:
-                    return self._send(503, {"ok": False, "error": "strategy_action_execution_layer_unavailable"})
-                action_id = str(strategy_execute_id).strip()
-                if not action_id:
-                    return self._send(400, {"ok": False, "error": "missing_id"})
-                updated = self.strategy_action_execution_layer.execute_action(action_id)
-                return self._send(200, updated)
-
-            if strategy_reject_id is not None:
-                if self.strategy_action_execution_layer is None:
-                    return self._send(503, {"ok": False, "error": "strategy_action_execution_layer_unavailable"})
-                action_id = str(strategy_reject_id).strip()
-                if not action_id:
-                    return self._send(400, {"ok": False, "error": "missing_id"})
-                updated = self.strategy_action_execution_layer.reject_action(action_id)
-                return self._send(200, updated)
-
-            event_id = str(data.get("id", "")).strip()
-            if not event_id:
-                return self._send(400, {"ok": False, "error": "missing_id"})
-
-            if self.path == "/opportunities/evaluate":
-                self.bus.push(
-                    Event(
-                        type="EvaluateOpportunityById",
-                        payload={"id": event_id},
+                    execute_event = Event(
+                        type="ExecuteProductPlanRequested",
+                        payload={"proposal_id": proposal_id},
                         source="http",
                     )
-                )
-                return self._send(200, {"ok": True})
+                    self.bus.push(execute_event)
+                    actions = self.control.consume(execute_event)
+                    for action in actions:
+                        self.bus.push(Event(type=action.type, payload=action.payload, source="control"))
+                        if action.type == "ProductPlanExecuted":
+                            return self._send_success(200, action.payload["execution_package"])
 
-            if self.path == "/opportunities/dismiss":
-                self.bus.push(
-                    Event(
-                        type="OpportunityDismissed",
-                        payload={"id": event_id},
-                        source="http",
+                    return self._send_error(404, ErrorType.NOT_FOUND, "proposal_not_found", "proposal_not_found")
+
+                if launch_sale_id is not None:
+                    if self.product_launch_store is None:
+                        return self._send(503, {"ok": False, "error": "product_launch_store_unavailable"})
+                    launch_id = str(launch_sale_id).strip()
+                    if not launch_id:
+                        return self._send(400, {"ok": False, "error": "missing_id"})
+                    amount = float(data.get("amount", 0))
+                    updated = self.product_launch_store.add_sale(launch_id, amount)
+                    return self._send(200, updated)
+
+                if launch_status_id is not None:
+                    if self.product_launch_store is None:
+                        return self._send(503, {"ok": False, "error": "product_launch_store_unavailable"})
+                    launch_id = str(launch_status_id).strip()
+                    if not launch_id:
+                        return self._send(400, {"ok": False, "error": "missing_id"})
+                    status = str(data.get("status", "")).strip()
+                    updated = self.product_launch_store.transition_status(launch_id, status)
+                    return self._send(200, updated)
+
+                if launch_link_gumroad_id is not None:
+                    if self.control is None:
+                        return self._send(503, {"ok": False, "error": "control_unavailable"})
+                    launch_id = str(launch_link_gumroad_id).strip()
+                    if not launch_id:
+                        return self._send(400, {"ok": False, "error": "missing_id"})
+                    gumroad_product_id = str(data.get("gumroad_product_id", "")).strip()
+                    if not gumroad_product_id:
+                        return self._send(400, {"ok": False, "error": "missing_gumroad_product_id"})
+                    updated = self.control.link_launch_gumroad(launch_id, gumroad_product_id)
+                    return self._send(200, updated)
+
+                if self.path == "/gumroad/sync_sales":
+                    if self.product_launch_store is None:
+                        return self._send(503, {"ok": False, "error": "product_launch_store_unavailable"})
+                    access_token = load_token()
+                    if not access_token:
+                        return self._send(400, {"ok": False, "error": "Gumroad not connected. Visit /gumroad/auth first."})
+                    gumroad_client = GumroadClient(access_token)
+                    service = GumroadSyncService(self.product_launch_store, gumroad_client)
+                    summary = service.sync_sales()
+                    return self._send(200, summary)
+
+                if self.path == "/reddit/config":
+                    editable_fields = {
+                        "subreddits",
+                        "pain_threshold",
+                        "pain_keywords",
+                        "commercial_keywords",
+                        "enable_engagement_boost",
+                    }
+                    payload = {key: value for key, value in data.items() if key in editable_fields}
+                    if "subreddits" in payload:
+                        raw_subreddits = payload["subreddits"]
+                        if isinstance(raw_subreddits, str):
+                            raw_subreddits = raw_subreddits.split(",")
+                        payload["subreddits"] = [str(item).strip() for item in raw_subreddits if str(item).strip()]
+                    if "pain_threshold" in payload:
+                        payload["pain_threshold"] = int(payload["pain_threshold"])
+                    if "pain_keywords" in payload:
+                        raw_pain_keywords = payload["pain_keywords"]
+                        if isinstance(raw_pain_keywords, str):
+                            raw_pain_keywords = raw_pain_keywords.split(",")
+                        payload["pain_keywords"] = [str(item).strip().lower() for item in raw_pain_keywords if str(item).strip()]
+                    if "commercial_keywords" in payload:
+                        raw_commercial_keywords = payload["commercial_keywords"]
+                        if isinstance(raw_commercial_keywords, str):
+                            raw_commercial_keywords = raw_commercial_keywords.split(",")
+                        payload["commercial_keywords"] = [str(item).strip().lower() for item in raw_commercial_keywords if str(item).strip()]
+                    if "enable_engagement_boost" in payload:
+                        payload["enable_engagement_boost"] = bool(payload["enable_engagement_boost"])
+                    updated = update_config(payload)
+                    return self._send_success(200, updated)
+
+                if self.path == "/reddit/run_scan":
+                    if self.control is None:
+                        return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "control_unavailable", "control_unavailable")
+                    return self._send_success(200, self.control.run_reddit_public_scan())
+
+                if self.path == "/reddit/mark_posted":
+                    proposal_id = str(data.get("proposal_id", "")).strip()
+                    subreddit = str(data.get("subreddit", "")).strip()
+                    post_url = str(data.get("post_url", "")).strip()
+                    post_id = str(data.get("post_id", "")).strip()
+                    if not post_id and post_url:
+                        path_parts = [part for part in urlparse(post_url).path.split("/") if part]
+                        if "comments" in path_parts:
+                            comments_index = path_parts.index("comments")
+                            if comments_index + 1 < len(path_parts):
+                                post_id = str(path_parts[comments_index + 1]).strip()
+                    if not proposal_id:
+                        return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_proposal_id", "missing_proposal_id")
+                    if not subreddit:
+                        return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_subreddit", "missing_subreddit")
+                    if not post_url:
+                        return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_post_url", "missing_post_url")
+
+                    product_name = ""
+                    if self.product_proposal_store is not None:
+                        proposal = self.product_proposal_store.get(proposal_id)
+                        if proposal:
+                            product_name = str(proposal.get("product_name", "")).strip()
+
+                    upvotes = data.get("upvotes", 0)
+                    comments = data.get("comments", 0)
+                    try:
+                        upvotes = int(upvotes)
+                    except (TypeError, ValueError):
+                        upvotes = 0
+                    try:
+                        comments = int(comments)
+                    except (TypeError, ValueError):
+                        comments = 0
+
+                    entry = {
+                        "id": f"reddit_post_{int(time.time() * 1000)}",
+                        "post_id": post_id,
+                        "proposal_id": proposal_id,
+                        "product_name": product_name,
+                        "subreddit": subreddit,
+                        "post_url": post_url,
+                        "upvotes": upvotes,
+                        "comments": comments,
+                        "status": "open",
+                        "date": time.strftime("%Y-%m-%d"),
+                        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    }
+                    posts = self._load_reddit_posts()
+                    posts.append(entry)
+                    self._save_reddit_posts(posts)
+                    return self._send_success(200, {"item": entry})
+
+                if strategy_execute_id is not None:
+                    if self.strategy_action_execution_layer is None:
+                        return self._send(503, {"ok": False, "error": "strategy_action_execution_layer_unavailable"})
+                    action_id = str(strategy_execute_id).strip()
+                    if not action_id:
+                        return self._send(400, {"ok": False, "error": "missing_id"})
+                    updated = self.strategy_action_execution_layer.execute_action(action_id)
+                    return self._send(200, updated)
+
+                if strategy_reject_id is not None:
+                    if self.strategy_action_execution_layer is None:
+                        return self._send(503, {"ok": False, "error": "strategy_action_execution_layer_unavailable"})
+                    action_id = str(strategy_reject_id).strip()
+                    if not action_id:
+                        return self._send(400, {"ok": False, "error": "missing_id"})
+                    updated = self.strategy_action_execution_layer.reject_action(action_id)
+                    return self._send(200, updated)
+
+                event_id = str(data.get("id", "")).strip()
+                if not event_id:
+                    return self._send(400, {"ok": False, "error": "missing_id"})
+
+                if self.path == "/opportunities/evaluate":
+                    self.bus.push(
+                        Event(
+                            type="EvaluateOpportunityById",
+                            payload={"id": event_id},
+                            source="http",
+                        )
                     )
-                )
-                return self._send(200, {"ok": True})
+                    return self._send(200, {"ok": True})
+
+                if self.path == "/opportunities/dismiss":
+                    self.bus.push(
+                        Event(
+                            type="OpportunityDismissed",
+                            payload={"id": event_id},
+                            source="http",
+                        )
+                    )
+                    return self._send(200, {"ok": True})
 
             return self._send(404, error_response(ErrorType.NOT_FOUND, ErrorType.NOT_FOUND, ErrorType.NOT_FOUND))
         except Exception as e:
@@ -740,12 +822,13 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             return self._send_mapped_exception(ValueError(str(e)))
 
-        patch_response = self.reddit_router.handle_patch(self.path, data)
-        if patch_response is None:
-            return self._send(404, error_response(ErrorType.NOT_FOUND, ErrorType.NOT_FOUND, ErrorType.NOT_FOUND))
+        with self.server.mutation_lock:
+            patch_response = self.reddit_router.handle_patch(self.path, data)
+            if patch_response is None:
+                return self._send(404, error_response(ErrorType.NOT_FOUND, ErrorType.NOT_FOUND, ErrorType.NOT_FOUND))
 
-        code, body = patch_response
-        return self._send(code, body)
+            code, body = patch_response
+            return self._send(code, body)
 
 
 def start_http_server(

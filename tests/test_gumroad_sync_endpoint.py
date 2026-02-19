@@ -75,7 +75,9 @@ class GumroadSyncEndpointTest(unittest.TestCase):
                     urlopen(req, timeout=2)
                 self.assertEqual(ctx.exception.code, 400)
                 payload = json.loads(ctx.exception.read().decode("utf-8"))
-                self.assertEqual(payload["error"], "Gumroad not connected. Visit /gumroad/auth first.")
+                self.assertFalse(payload["ok"])
+                self.assertEqual(payload["error"]["type"], "client_error")
+                self.assertEqual(payload["error"]["message"], "Gumroad not connected. Visit /gumroad/auth first.")
             finally:
                 if prev_data_dir is None:
                     os.environ.pop("TRETA_DATA_DIR", None)
@@ -100,7 +102,8 @@ class GumroadSyncEndpointTest(unittest.TestCase):
                 ) as response:
                     payload = json.loads(response.read().decode("utf-8"))
 
-                self.assertEqual(payload, {"status": "connected"})
+                self.assertTrue(payload["ok"])
+                self.assertEqual(payload["data"]["status"], "connected")
                 mock_exchange.assert_called_once_with("oauth-code")
                 token_file = root / "gumroad_oauth_token.json"
                 stored = json.loads(token_file.read_text(encoding="utf-8"))
