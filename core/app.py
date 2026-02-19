@@ -116,6 +116,7 @@ class TretaApp:
             autonomy_policy_engine=self.autonomy_policy_engine,
             daily_loop_engine=self.daily_loop_engine,
             memory_store=self.memory_store,
+            conversation_core=self.conversation_core,
             revenue_attribution_store=self.revenue_attribution_store,
             subreddit_performance_store=self.subreddit_performance_store,
         )

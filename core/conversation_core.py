@@ -42,20 +42,16 @@ class ConversationCore:
         except Exception:
             return "Treta GPT connection error. Check configuration."
 
-    def consume(self, event: Event) -> None:
-        if event.type != "UserMessageSubmitted":
-            return
+    def reply(self, text: str, source: str = "ui") -> str:
+        normalized_text = str(text or "").strip()
+        if not normalized_text:
+            return ""
 
-        text = str(event.payload.get("text", "")).strip()
-        if not text:
-            return
-
-        source = str(event.payload.get("source", event.source or "ui"))
-        print(f"[CONVERSATION] user_message_received source={source} text={text}")
-        self.memory_store.append_message("user", text, ts=datetime.now(timezone.utc).isoformat())
+        print(f"[CONVERSATION] user_message_received source={source} text={normalized_text}")
+        self.memory_store.append_message("user", normalized_text, ts=datetime.now(timezone.utc).isoformat())
 
         self.state_machine.transition(State.THINKING)
-        response_text = self._generate_response(text)
+        response_text = self._generate_response(normalized_text)
         assistant_event = Event(
             type="AssistantMessageGenerated",
             payload={"text": response_text},
@@ -66,3 +62,15 @@ class ConversationCore:
         self.memory_store.append_message("assistant", response_text, ts=assistant_event.timestamp)
         self.state_machine.transition(State.SPEAKING)
         self.state_machine.transition(State.IDLE)
+        return response_text
+
+    def consume(self, event: Event) -> None:
+        if event.type != "UserMessageSubmitted":
+            return
+
+        text = str(event.payload.get("text", "")).strip()
+        if not text:
+            return
+
+        source = str(event.payload.get("source", event.source or "ui"))
+        self.reply(text, source=source)
