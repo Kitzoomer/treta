@@ -7,16 +7,14 @@ from urllib.parse import parse_qs, urlparse
 
 from core.events import Event
 from core.errors import (
-    CLIENT_ERROR,
-    DEPENDENCY_ERROR,
-    INVARIANT_VIOLATION,
-    NOT_FOUND,
-    SERVER_ERROR,
+    DependencyError,
+    ErrorType,
+    InvariantViolationError,
+    NotFoundError,
 )
 from core.bus import EventBus
 from core.integrations.gumroad_client import GumroadAPIError, GumroadClient
 from core.gumroad_oauth import exchange_code_for_token, get_auth_url, load_token, save_token
-from core.domain.integrity import InvariantViolationError
 from core.services.gumroad_sync_service import GumroadSyncService
 from core.system_integrity import compute_system_integrity
 from core.reddit_intelligence.router import RedditIntelligenceRouter
@@ -146,10 +144,27 @@ class Handler(BaseHTTPRequestHandler):
             body["data"] = data
         return self._send(status_code, body)
 
+    def _classify_exception(self, exc: Exception) -> tuple[int, str, str]:
+        if isinstance(exc, InvariantViolationError):
+            return 500, ErrorType.INVARIANT_VIOLATION, "invariant_violation"
+        if isinstance(exc, NotFoundError):
+            return 404, ErrorType.NOT_FOUND, "not_found"
+        if isinstance(exc, GumroadAPIError):
+            return 502, ErrorType.DEPENDENCY_ERROR, "gumroad_api_error"
+        if isinstance(exc, DependencyError):
+            return 503, ErrorType.DEPENDENCY_ERROR, "dependency_error"
+        if isinstance(exc, ValueError):
+            return 400, ErrorType.CLIENT_ERROR, "validation_error"
+        return 500, ErrorType.SERVER_ERROR, "unexpected_error"
+
+    def _send_mapped_exception(self, exc: Exception):
+        status_code, error_type, code = self._classify_exception(exc)
+        return self._send_error(status_code, error_type, code, str(exc))
+
     def _send_static(self, file_name: str):
         file_path = self.ui_dir / file_name
         if not file_path.exists() or not file_path.is_file():
-            return self._send(404, error_response(NOT_FOUND, NOT_FOUND, NOT_FOUND))
+            return self._send(404, error_response(ErrorType.NOT_FOUND, ErrorType.NOT_FOUND, ErrorType.NOT_FOUND))
 
         content_type = "text/plain; charset=utf-8"
         if file_name.endswith(".html"):
@@ -173,7 +188,7 @@ class Handler(BaseHTTPRequestHandler):
                 code, body = reddit_response
                 return self._send(code, body)
         except ValueError:
-            return self._send_error(400, CLIENT_ERROR, "invalid_limit", "invalid_limit")
+            return self._send_error(400, ErrorType.CLIENT_ERROR, "invalid_limit", "invalid_limit")
 
         if parsed.path == "/":
             return self._send_static("index.html")
@@ -223,7 +238,7 @@ class Handler(BaseHTTPRequestHandler):
             proposal_id = parsed.path.rsplit("/", 1)[-1]
             item = self.product_proposal_store.get(proposal_id)
             if item is None:
-                return self._send(404, error_response(NOT_FOUND, NOT_FOUND, NOT_FOUND))
+                return self._send(404, error_response(ErrorType.NOT_FOUND, ErrorType.NOT_FOUND, ErrorType.NOT_FOUND))
             return self._send(200, item)
 
         if parsed.path == "/product_launches":
@@ -272,11 +287,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/system/integrity":
             if self.product_proposal_store is None:
-                return self._send_error(503, DEPENDENCY_ERROR, "product_proposal_store_unavailable", "product_proposal_store_unavailable")
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "product_proposal_store_unavailable", "product_proposal_store_unavailable")
             if self.product_plan_store is None:
-                return self._send_error(503, DEPENDENCY_ERROR, "product_plan_store_unavailable", "product_plan_store_unavailable")
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "product_plan_store_unavailable", "product_plan_store_unavailable")
             if self.product_launch_store is None:
-                return self._send_error(503, DEPENDENCY_ERROR, "product_launch_store_unavailable", "product_launch_store_unavailable")
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "product_launch_store_unavailable", "product_launch_store_unavailable")
 
             data_errors: list[str] = []
 
@@ -307,7 +322,7 @@ class Handler(BaseHTTPRequestHandler):
             if data_errors:
                 return self._send_error(
                     503,
-                    DEPENDENCY_ERROR,
+                    ErrorType.DEPENDENCY_ERROR,
                     "integrity_data_unavailable",
                     "integrity_data_unavailable",
                     data={"error": "integrity_data_unavailable", "details": data_errors},
@@ -327,7 +342,7 @@ class Handler(BaseHTTPRequestHandler):
             launch_id = parsed.path.rsplit("/", 1)[-1]
             item = self.product_launch_store.get(launch_id)
             if item is None:
-                return self._send(404, error_response(NOT_FOUND, NOT_FOUND, NOT_FOUND))
+                return self._send(404, error_response(ErrorType.NOT_FOUND, ErrorType.NOT_FOUND, ErrorType.NOT_FOUND))
             return self._send(200, item)
 
         if parsed.path == "/product_plans":
@@ -342,7 +357,7 @@ class Handler(BaseHTTPRequestHandler):
             plan_id = parsed.path.rsplit("/", 1)[-1]
             item = self.product_plan_store.get(plan_id)
             if item is None:
-                return self._send(404, error_response(NOT_FOUND, NOT_FOUND, NOT_FOUND))
+                return self._send(404, error_response(ErrorType.NOT_FOUND, ErrorType.NOT_FOUND, ErrorType.NOT_FOUND))
             return self._send(200, item)
 
         if parsed.path == "/opportunities":
@@ -384,7 +399,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/reddit/last_scan":
             if self.control is None:
-                return self._send_error(503, DEPENDENCY_ERROR, "control_unavailable", "control_unavailable")
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "control_unavailable", "control_unavailable")
             return self._send_success(
                 200,
                 self.control.get_last_reddit_scan() or {"message": "No scan executed yet."},
@@ -394,7 +409,7 @@ class Handler(BaseHTTPRequestHandler):
             posts = self._load_reddit_posts()
             return self._send_success(200, {"items": list(reversed(posts))})
 
-        return self._send(404, error_response(NOT_FOUND, NOT_FOUND, NOT_FOUND))
+        return self._send(404, error_response(ErrorType.NOT_FOUND, ErrorType.NOT_FOUND, ErrorType.NOT_FOUND))
 
     def do_POST(self):
         proposal_transition_paths = {
@@ -449,7 +464,7 @@ class Handler(BaseHTTPRequestHandler):
             "/reddit/mark_posted",
         }
         if self.path not in allowed_paths and transition_event_type is None and launch_sale_id is None and launch_status_id is None and launch_link_gumroad_id is None and strategy_execute_id is None and strategy_reject_id is None:
-            return self._send(404, error_response(NOT_FOUND, NOT_FOUND, NOT_FOUND))
+            return self._send(404, error_response(ErrorType.NOT_FOUND, ErrorType.NOT_FOUND, ErrorType.NOT_FOUND))
 
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
@@ -464,10 +479,10 @@ class Handler(BaseHTTPRequestHandler):
 
             if transition_event_type is not None:
                 if self.control is None:
-                    return self._send_error(503, DEPENDENCY_ERROR, "control_unavailable", "control_unavailable")
+                    return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "control_unavailable", "control_unavailable")
                 proposal_id = str(transition_proposal_id or "").strip()
                 if not proposal_id:
-                    return self._send_error(400, CLIENT_ERROR, "missing_id", "missing_id")
+                    return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_id", "missing_id")
 
                 transition_event = Event(
                     type=transition_event_type,
@@ -481,7 +496,7 @@ class Handler(BaseHTTPRequestHandler):
                     if action.type == "ProductProposalStatusChanged":
                         return self._send_success(200, action.payload["proposal"])
 
-                return self._send_error(404, NOT_FOUND, "proposal_not_found", "proposal_not_found")
+                return self._send_error(404, ErrorType.NOT_FOUND, "proposal_not_found", "proposal_not_found")
 
             if self.path == "/event":
                 ev_type = data.get("type")
@@ -520,9 +535,9 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/product_proposals/execute":
                 proposal_id = str(data.get("id", "")).strip()
                 if not proposal_id:
-                    return self._send_error(400, CLIENT_ERROR, "missing_id", "missing_id")
+                    return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_id", "missing_id")
                 if self.control is None:
-                    return self._send_error(503, DEPENDENCY_ERROR, "control_unavailable", "control_unavailable")
+                    return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "control_unavailable", "control_unavailable")
 
                 execute_event = Event(
                     type="ExecuteProductPlanRequested",
@@ -536,7 +551,7 @@ class Handler(BaseHTTPRequestHandler):
                     if action.type == "ProductPlanExecuted":
                         return self._send_success(200, action.payload["execution_package"])
 
-                return self._send_error(404, NOT_FOUND, "proposal_not_found", "proposal_not_found")
+                return self._send_error(404, ErrorType.NOT_FOUND, "proposal_not_found", "proposal_not_found")
 
             if launch_sale_id is not None:
                 if self.product_launch_store is None:
@@ -614,7 +629,7 @@ class Handler(BaseHTTPRequestHandler):
 
             if self.path == "/reddit/run_scan":
                 if self.control is None:
-                    return self._send_error(503, DEPENDENCY_ERROR, "control_unavailable", "control_unavailable")
+                    return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "control_unavailable", "control_unavailable")
                 return self._send_success(200, self.control.run_reddit_public_scan())
 
             if self.path == "/reddit/mark_posted":
@@ -629,11 +644,11 @@ class Handler(BaseHTTPRequestHandler):
                         if comments_index + 1 < len(path_parts):
                             post_id = str(path_parts[comments_index + 1]).strip()
                 if not proposal_id:
-                    return self._send_error(400, CLIENT_ERROR, "missing_proposal_id", "missing_proposal_id")
+                    return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_proposal_id", "missing_proposal_id")
                 if not subreddit:
-                    return self._send_error(400, CLIENT_ERROR, "missing_subreddit", "missing_subreddit")
+                    return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_subreddit", "missing_subreddit")
                 if not post_url:
-                    return self._send_error(400, CLIENT_ERROR, "missing_post_url", "missing_post_url")
+                    return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_post_url", "missing_post_url")
 
                 product_name = ""
                 if self.product_proposal_store is not None:
@@ -712,15 +727,9 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 return self._send(200, {"ok": True})
 
-            return self._send(404, error_response(NOT_FOUND, NOT_FOUND, NOT_FOUND))
-        except GumroadAPIError as e:
-            return self._send_error(502, DEPENDENCY_ERROR, "gumroad_api_error", str(e))
-        except InvariantViolationError as e:
-            return self._send_error(500, INVARIANT_VIOLATION, "invariant_violation", str(e))
-        except ValueError as e:
-            return self._send_error(400, CLIENT_ERROR, "validation_error", str(e))
+            return self._send(404, error_response(ErrorType.NOT_FOUND, ErrorType.NOT_FOUND, ErrorType.NOT_FOUND))
         except Exception as e:
-            return self._send_error(500, SERVER_ERROR, "unexpected_error", str(e))
+            return self._send_mapped_exception(e)
 
     def do_PATCH(self):
         length = int(self.headers.get("Content-Length", "0"))
@@ -729,11 +738,11 @@ class Handler(BaseHTTPRequestHandler):
         try:
             data = json.loads(raw)
         except Exception as e:
-            return self._send_error(400, CLIENT_ERROR, "validation_error", str(e))
+            return self._send_mapped_exception(ValueError(str(e)))
 
         patch_response = self.reddit_router.handle_patch(self.path, data)
         if patch_response is None:
-            return self._send(404, error_response(NOT_FOUND, NOT_FOUND, NOT_FOUND))
+            return self._send(404, error_response(ErrorType.NOT_FOUND, ErrorType.NOT_FOUND, ErrorType.NOT_FOUND))
 
         code, body = patch_response
         return self._send(code, body)

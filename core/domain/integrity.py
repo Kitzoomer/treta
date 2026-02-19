@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from core.errors import InvariantViolationError as CoreInvariantViolationError
 from core.domain.lifecycle import (
     ACTIVE_PROPOSAL_STATUSES,
     PLAN_BUILDABLE_STATUSES,
@@ -11,7 +12,7 @@ class DomainIntegrityError(Exception):
     pass
 
 
-class InvariantViolationError(DomainIntegrityError):
+class InvariantViolationError(DomainIntegrityError, CoreInvariantViolationError):
     pass
 
 

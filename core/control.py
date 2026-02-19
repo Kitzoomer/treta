@@ -21,7 +21,8 @@ from core.execution_engine import ExecutionEngine
 from core.execution_focus_engine import ExecutionFocusEngine
 from core.services.gumroad_sync_service import GumroadSyncService
 from core.product_launch_store import ProductLaunchStore
-from core.domain.integrity import DomainIntegrityError, DomainIntegrityPolicy, InvariantViolationError
+from core.domain.integrity import DomainIntegrityError, DomainIntegrityPolicy
+from core.errors import InvariantViolationError
 from core.domain.lifecycle import EXECUTION_STATUSES
 from core.reddit_public.config import get_config
 from core.reddit_public.pain_scoring import compute_pain_score
@@ -131,8 +132,6 @@ class Control:
                 plans=plans,
             )
         except DomainIntegrityError as exc:
-            if isinstance(exc, InvariantViolationError):
-                raise
             raise InvariantViolationError(str(exc)) from exc
 
     def _reddit_posts_path(self) -> Path:
