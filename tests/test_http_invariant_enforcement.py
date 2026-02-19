@@ -13,7 +13,7 @@ from core.ipc_http import start_http_server
 
 
 class HttpInvariantEnforcementTest(unittest.TestCase):
-    def test_execute_endpoint_returns_server_error_when_global_invariants_fail(self):
+    def test_execute_endpoint_returns_invariant_violation_when_global_invariants_fail(self):
         with tempfile.TemporaryDirectory() as tmp:
             data_dir = Path(tmp)
             proposal_store = ProductProposalStore(path=data_dir / "product_proposals.json")
@@ -50,7 +50,7 @@ class HttpInvariantEnforcementTest(unittest.TestCase):
                 self.assertEqual(ctx.exception.code, 500)
                 payload = json.loads(ctx.exception.read().decode("utf-8"))
                 self.assertFalse(payload["ok"])
-                self.assertEqual(payload["error"]["type"], "server_error")
+                self.assertEqual(payload["error"]["type"], "invariant_violation")
 
                 proposals_after = {item["id"]: item for item in proposal_store.list()}
                 self.assertEqual(proposals_after["proposal-1"]["status"], "approved")

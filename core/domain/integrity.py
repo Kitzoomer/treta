@@ -11,6 +11,10 @@ class DomainIntegrityError(Exception):
     pass
 
 
+class InvariantViolationError(DomainIntegrityError):
+    pass
+
+
 class DomainIntegrityPolicy:
     ACTIVE_STATUSES = ACTIVE_PROPOSAL_STATUSES
     PLAN_BUILDABLE_STATUSES = PLAN_BUILDABLE_STATUSES
@@ -19,7 +23,7 @@ class DomainIntegrityPolicy:
     def validate_global_invariants(self, proposals, launches=None, plans=None):
         active = [p for p in proposals if p["status"] in self.ACTIVE_STATUSES]
         if len(active) > 1:
-            raise DomainIntegrityError("More than one active proposal detected.")
+            raise InvariantViolationError("More than one active proposal detected.")
 
     def validate_transition(self, proposal, new_status, proposals):
         current_status = proposal["status"]
