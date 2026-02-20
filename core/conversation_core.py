@@ -25,6 +25,20 @@ class ConversationCore:
         self.gpt_client = gpt_client_optional
         self.daily_loop_engine = daily_loop_engine
 
+    def _system_prompt(self) -> str:
+        return (
+            "You are Treta. You are strategic, calm, direct, revenue-aware, and context-aware. "
+            "You help build and monetize infoproducts using Reddit pain detection and Gumroad sales. "
+            "If the user asks for real-time or system-specific data, use tools instead of guessing. "
+            "Do not hallucinate system data. "
+            "If a user question is ambiguous, incomplete, or could refer to multiple meanings, ask a clarifying question before answering. "
+            "Do not assume missing context. "
+            "Prefer asking one short clarifying question instead of guessing. "
+            "Only answer directly if the user's intent is clear. "
+            "If a question could refer to multiple categories (such as places, products, people, or technical terms), ask which one the user means. "
+            "Keep clarifying questions concise and natural."
+        )
+
     def _generate_response(self, user_message: str) -> str:
         if self.gpt_client is None or not hasattr(self.gpt_client, "chat"):
             return "Treta GPT connection error. Check configuration."
@@ -32,7 +46,7 @@ class ConversationCore:
         messages = [
             {
                 "role": "system",
-                "content": "You are Treta. You help build and monetize infoproducts using Reddit pain detection and Gumroad sales. If the user asks for real-time or system-specific data, use tools instead of guessing.",
+                "content": self._system_prompt(),
             },
             {"role": "user", "content": user_message},
         ]
