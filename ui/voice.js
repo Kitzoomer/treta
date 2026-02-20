@@ -24,6 +24,20 @@
     onTranscript({ text, isFinal: true });
   }
 
+  function normalizeTranscript(rawTranscript) {
+    if (!rawTranscript) return "";
+
+    const cleaned = rawTranscript
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^\p{L}\p{N}\s]/gu, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    return cleaned.replace(/t\s*r\s*e\s*t\s*a/gu, "treta");
+  }
+
   if (recognition) {
     recognition.continuous = true;
     recognition.interimResults = false;
@@ -33,10 +47,10 @@
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
         if (!event.results[i].isFinal) continue;
 
-        const transcript = event.results[i][0].transcript.trim();
+        const transcript = normalizeTranscript(event.results[i][0].transcript);
         if (!transcript) continue;
 
-        console.log("[VOICE]", transcript);
+        console.log("[VOICE] transcript:", transcript);
         sendToBackend(transcript);
       }
     };
