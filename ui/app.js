@@ -131,6 +131,7 @@ const state = {
   voiceSupported: false,
   voiceStatusMessage: "",
   voiceAwaitingCommand: false,
+  chatLoading: false,
   pendingVoiceConfirmation: null,
   currentRoute: CONFIG.defaultRoute,
   workView: {
@@ -2176,68 +2177,46 @@ function setVoiceEnabled(enabled) {
   renderCommandBar();
 }
 
-function parseCommand(text) {
-  const lower = text.toLowerCase();
-  const approveMatch = lower.match(/(?:approve proposal|aprueba propuesta)\s+([\w-]+)/i);
-  if (approveMatch) return { kind: "approve_proposal", requiresConfirmation: true, id: approveMatch[1] };
-  const executeMatch = lower.match(/(?:execute plan|ejecuta plan)\s+([\w-]+)/i);
-  if (executeMatch) return { kind: "execute_plan", requiresConfirmation: true, id: executeMatch[1] };
-  if (/scan reddit|escanea reddit/i.test(lower)) return { kind: "scan_reddit", requiresConfirmation: true };
-  if (/show opportunities|oportunidades/i.test(lower)) return { kind: "show_opportunities", requiresConfirmation: false };
-  if (/today plan|plan de hoy/i.test(lower)) return { kind: "today_plan", requiresConfirmation: false };
-  if (/integrity|integridad/i.test(lower)) return { kind: "integrity", requiresConfirmation: false };
-  if (/help|ayuda/i.test(lower)) return { kind: "help", requiresConfirmation: false };
-  if (/cancel|para/i.test(lower)) return { kind: "cancel", requiresConfirmation: false };
-  return null;
+function setChatLoading(isLoading) {
+  state.chatLoading = Boolean(isLoading);
+  if (ui.chatInput) ui.chatInput.disabled = state.chatLoading;
+  const submitButton = ui.chatForm?.querySelector("button[type='submit']");
+  if (submitButton) {
+    submitButton.disabled = state.chatLoading;
+    submitButton.textContent = state.chatLoading ? "Sending..." : "Send";
+  }
 }
 
-async function runVoiceCommand(command) {
-  if (command.kind === "show_opportunities") return JSON.stringify(await api.getOpportunities());
-  if (command.kind === "today_plan") return JSON.stringify(await api.getRedditTodayPlan());
-  if (command.kind === "integrity") return JSON.stringify(await api.getSystemIntegrity());
-  if (command.kind === "scan_reddit") return JSON.stringify(await api.runRedditScan());
-  if (command.kind === "approve_proposal") return JSON.stringify(await api.fetchJson(`/product_proposals/${command.id}/approve`, { method: "POST", body: JSON.stringify({}) }));
-  if (command.kind === "execute_plan") return JSON.stringify(await api.executeProposal(command.id));
-  if (command.kind === "help") {
-    return "Comandos: scan reddit, show opportunities, today plan, integrity, approve proposal <id>, execute plan <id>, cancel.";
-  }
-  if (command.kind === "cancel") {
-    state.pendingVoiceConfirmation = null;
-    if (voiceMode) voiceMode.stopTts();
-    return "Cancelado.";
-  }
-  return "No entendí. Di 'Treta, ayuda'.";
+function handleAssistantResponse(text) {
+  const reply = helpers.t(text, "I couldn't process that.");
+  state.chatCards.push({ id: `assistant-${Date.now()}`, type: "assistant", text: `Treta: ${reply}` });
+  if (state.voiceEnabled && voiceMode) voiceMode.speak(reply);
+  renderConversation();
 }
 
-async function confirmFlow(heardText) {
-  const lower = heardText.toLowerCase();
-  if (!state.pendingVoiceConfirmation) return false;
-  if (/^s[ií]$|^si$/.test(lower.trim())) {
-    const pending = state.pendingVoiceConfirmation;
-    state.pendingVoiceConfirmation = null;
-    const reply = await runVoiceCommand(pending.command);
-    state.chatCards.push({ id: `assistant-${Date.now()}`, type: "assistant", text: `Treta: ${reply}` });
-    if (state.speakEnabled && voiceMode) voiceMode.speak(reply);
-    renderConversation();
-    return true;
+async function submitUserMessage(rawText, { source = "text" } = {}) {
+  const input = helpers.t(rawText, "").trim();
+  if (!input || state.chatLoading) return;
+
+  const labelPrefix = source === "voice" ? "(heard) " : "";
+  state.chatCards.push({ id: `user-${Date.now()}`, type: "user", text: `${labelPrefix}${input}` });
+  renderConversation();
+
+  setChatLoading(true);
+  try {
+    const response = await api.sendConversationMessage(input, source);
+    handleAssistantResponse(helpers.t(response.reply_text, "No response from assistant."));
+  } catch (error) {
+    handleAssistantResponse(`Error: ${error.message}`);
+  } finally {
+    setChatLoading(false);
   }
-  if (/^no$/.test(lower.trim())) {
-    state.pendingVoiceConfirmation = null;
-    const reply = "Acción cancelada.";
-    state.chatCards.push({ id: `assistant-${Date.now()}`, type: "assistant", text: `Treta: ${reply}` });
-    if (state.speakEnabled && voiceMode) voiceMode.speak(reply);
-    renderConversation();
-    return true;
-  }
-  return false;
 }
 
 async function onTranscript(payload) {
   const transcript = helpers.t(payload?.text, "").trim();
   if (!transcript) return;
   const lower = transcript.toLowerCase();
-
-  if (await confirmFlow(transcript)) return;
 
   let commandText = "";
   const wakeIndex = lower.indexOf("treta");
@@ -2259,71 +2238,7 @@ async function onTranscript(payload) {
 
   if (!commandText || !payload?.isFinal) return;
 
-  state.chatCards.push({ id: `heard-${Date.now()}`, type: "user", text: `(heard) ${commandText}` });
-  const parsed = parseCommand(commandText);
-
-  if (parsed?.kind === "cancel") {
-    const cancelText = await runVoiceCommand(parsed);
-    state.chatCards.push({ id: `assistant-${Date.now()}`, type: "assistant", text: `Treta: ${cancelText}` });
-    if (state.speakEnabled && voiceMode) voiceMode.speak(cancelText);
-    renderConversation();
-    return;
-  }
-
-  if (parsed && parsed.requiresConfirmation) {
-    state.pendingVoiceConfirmation = { command: parsed };
-    const summary = parsed.kind === "approve_proposal"
-      ? `aprobar propuesta ${parsed.id}`
-      : parsed.kind === "execute_plan"
-        ? `ejecutar plan ${parsed.id}`
-        : "ejecutar scan reddit";
-    const ask = `Voy a ejecutar ${summary}. ¿Confirmas? (sí/no)`;
-    state.chatCards.push({ id: `assistant-${Date.now()}`, type: "assistant", text: `Treta: ${ask}` });
-    if (state.speakEnabled && voiceMode) voiceMode.speak(ask);
-    renderConversation();
-    return;
-  }
-
-  let reply = "";
-  try {
-    if (parsed) {
-      reply = await runVoiceCommand(parsed);
-    } else {
-      const response = await api.sendConversationMessage(commandText, "voice");
-      reply = helpers.t(response.reply_text, "No entendí. Di 'Treta, ayuda'.");
-    }
-  } catch (error) {
-    reply = `Error: ${error.message}`;
-  }
-
-  state.chatCards.push({ id: `assistant-${Date.now()}`, type: "assistant", text: `Treta: ${reply}` });
-  if (state.speakEnabled && voiceMode) voiceMode.speak(reply);
-  renderConversation();
-}
-
-async function processChatInput(rawInput, source = "text") {
-  const input = rawInput.trim();
-  if (!input) return;
-
-  const labelPrefix = source === "voice" ? "(heard) " : "";
-  state.chatCards.push({ id: `user-${Date.now()}`, type: "user", text: `${labelPrefix}${input}` });
-
-  const snapshot = getChatStateSnapshot();
-  const decision = computeChatIntentDecision(input, snapshot, { chatMode: state.chatMode });
-
-  if (decision.requires_confirmation) {
-    state.chatCards.push({
-      id: `confirm-${Date.now()}`,
-      type: "confirm",
-      title: decision.ui?.title || "Confirm command",
-      summary: decision.ui?.summary || "Do you want to execute this command?",
-      decision,
-    });
-    renderConversation();
-    return;
-  }
-
-  await executeDecision(decision);
+  await submitUserMessage(commandText, { source: "voice" });
 }
 
 function initVoiceIntegration() {
@@ -3380,7 +3295,7 @@ ui.chatForm.addEventListener("submit", async (event) => {
   const input = ui.chatInput.value.trim();
   if (!input) return;
 
-  await processChatInput(input, "text");
+  await submitUserMessage(input, { source: "text" });
   ui.chatInput.value = "";
   renderConversation();
 });
