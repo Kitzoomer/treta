@@ -1,5 +1,7 @@
 (function initTretaVoiceModule(globalScope) {
   const RecognitionCtor = globalScope.SpeechRecognition || globalScope.webkitSpeechRecognition;
+  const WAKE_WORD = "treta";
+  const COMMAND_WAIT_MS = 5000;
 
   const state = {
     recognition: null,
@@ -8,6 +10,8 @@
     shouldRestart: false,
     onTranscript: null,
     onError: null,
+    waitingForCommand: false,
+    waitingTimer: null,
   };
 
   function speak(text) {
@@ -23,34 +27,94 @@
     if (globalScope.speechSynthesis) globalScope.speechSynthesis.cancel();
   }
 
+  function clearWaitingState() {
+    state.waitingForCommand = false;
+    if (state.waitingTimer) {
+      globalScope.clearTimeout(state.waitingTimer);
+      state.waitingTimer = null;
+    }
+  }
+
+  function startWaitingForCommand() {
+    clearWaitingState();
+    state.waitingForCommand = true;
+    state.waitingTimer = globalScope.setTimeout(() => {
+      clearWaitingState();
+    }, COMMAND_WAIT_MS);
+  }
+
+  function emitCommand(command) {
+    if (!state.onTranscript || !command) return;
+    console.log("[VOICE] command:", command);
+    state.onTranscript({ text: `${WAKE_WORD} ${command}`, isFinal: true });
+    clearWaitingState();
+  }
+
+  function processFinalTranscript(transcript) {
+    if (!transcript) return;
+
+    const wakeIndex = transcript.indexOf(WAKE_WORD);
+    if (wakeIndex >= 0) {
+      const wakeSegments = transcript.split(WAKE_WORD);
+      const command = wakeSegments
+        .slice(1)
+        .join(WAKE_WORD)
+        .replace(/^\s*[,.:-]?\s*/, "")
+        .trim();
+
+      if (command) {
+        emitCommand(command);
+      } else {
+        startWaitingForCommand();
+      }
+      return;
+    }
+
+    if (state.waitingForCommand) {
+      emitCommand(transcript);
+    }
+  }
+
   function buildRecognition() {
     if (!state.supported) return null;
     const recognition = new RecognitionCtor();
     recognition.continuous = true;
-    recognition.interimResults = true;
+    recognition.interimResults = false;
     recognition.lang = "es-ES";
 
     recognition.onresult = (event) => {
-      if (!state.onTranscript) return;
       for (let index = event.resultIndex; index < event.results.length; index += 1) {
         const result = event.results[index];
-        const text = String(result[0]?.transcript || "").trim();
-        if (!text) continue;
-        state.onTranscript({ text, isFinal: Boolean(result.isFinal) });
+        if (!result?.isFinal) continue;
+        if (!result?.[0]?.transcript) continue;
+        const transcript = result[0].transcript.trim().toLowerCase();
+        if (!transcript) continue;
+        console.log("[VOICE] heard:", transcript);
+        processFinalTranscript(transcript);
       }
     };
 
     recognition.onerror = (event) => {
       if (state.onError) state.onError(event.error || "unknown");
+      if (!state.enabled || !state.shouldRestart) return;
+      globalScope.setTimeout(() => {
+        try {
+          recognition.start();
+        } catch (_error) {
+          if (state.onError) state.onError("restart_failed");
+        }
+      }, 250);
     };
 
     recognition.onend = () => {
       if (!state.enabled || !state.shouldRestart) return;
-      try {
-        recognition.start();
-      } catch (_error) {
-        if (state.onError) state.onError("restart_failed");
-      }
+      globalScope.setTimeout(() => {
+        try {
+          recognition.start();
+        } catch (_error) {
+          if (state.onError) state.onError("restart_failed");
+        }
+      }, 250);
     };
 
     return recognition;
@@ -82,6 +146,7 @@
     if (!state.supported || !state.recognition) return;
     state.enabled = false;
     state.shouldRestart = false;
+    clearWaitingState();
     state.recognition.stop();
     stopTts();
   }
