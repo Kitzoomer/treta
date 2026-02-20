@@ -3,6 +3,7 @@
 
   let onTranscript = null;
   let voiceEnabled = false;
+  let isRestarting = false;
 
   const recognition = RecognitionCtor ? new RecognitionCtor() : null;
 
@@ -56,12 +57,24 @@
     };
 
     recognition.onend = () => {
-      if (voiceEnabled) {
-        globalScope.setTimeout(() => recognition.start(), 300);
+      if (voiceEnabled && !isRestarting) {
+        isRestarting = true;
+        globalScope.setTimeout(() => {
+          try {
+            recognition.start();
+          } finally {
+            isRestarting = false;
+          }
+        }, 300);
       }
     };
 
     recognition.onerror = (event) => {
+      if (event.error === "no-speech") {
+        console.log("[VOICE] ignoring no-speech");
+        return;
+      }
+
       console.warn("VOICE ERROR:", event.error);
     };
   }
@@ -73,7 +86,7 @@
 
   function startListening() {
     if (!recognition) return false;
-    if (!voiceEnabled) {
+    if (!voiceEnabled && !isRestarting) {
       voiceEnabled = true;
       recognition.start();
     }
