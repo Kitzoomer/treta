@@ -62,6 +62,26 @@ class ConversationCoreTest(unittest.TestCase):
             self.assertEqual(dispatcher.sm.state, State.IDLE)
 
 
+    def test_system_prompt_includes_clarification_rules(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            memory_store = MemoryStore(path=Path(tmp_dir) / "memory_store.json")
+            mock_gpt = _MockGPTClient(response="from gpt")
+            conversation_core = ConversationCore(
+                bus=self.bus,
+                state_machine=StateMachine(),
+                memory_store=memory_store,
+                gpt_client_optional=mock_gpt,
+            )
+
+            conversation_core.reply("What is Java?")
+
+            self.assertIsNotNone(mock_gpt.messages)
+            system_prompt = mock_gpt.messages[0]["content"]
+            self.assertIn("You are Treta. You are strategic, calm, direct, revenue-aware, and context-aware.", system_prompt)
+            self.assertIn("If a user question is ambiguous, incomplete, or could refer to multiple meanings, ask a clarifying question before answering.", system_prompt)
+            self.assertIn("Prefer asking one short clarifying question instead of guessing.", system_prompt)
+            self.assertIn("Only answer directly if the user's intent is clear.", system_prompt)
+
     def test_user_message_calls_gpt_client_chat(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             memory_store = MemoryStore(path=Path(tmp_dir) / "memory_store.json")
