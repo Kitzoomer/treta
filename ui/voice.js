@@ -10,6 +10,7 @@
   let waitingForCommand = false;
   let waitingTimer = null;
   let isRecognitionStarted = false;
+  let restartTimer = null;
 
   const recognition = RecognitionCtor ? new RecognitionCtor() : null;
 
@@ -39,13 +40,24 @@
     onTranscript({ text: `${WAKE_WORD} ${text}`.trim(), isFinal: true });
   }
 
-  function restartRecognition() {
-    if (!recognition || !voiceEnabled || isRecognitionStarted) return;
-    try {
-      recognition.start();
-    } catch (_error) {
-      if (onError) onError("restart_failed");
+  function clearRestartTimer() {
+    if (restartTimer) {
+      globalScope.clearTimeout(restartTimer);
+      restartTimer = null;
     }
+  }
+
+  function scheduleRestart(reasonLabel) {
+    if (!recognition || !voiceEnabled || isRecognitionStarted || restartTimer) return;
+    restartTimer = globalScope.setTimeout(() => {
+      restartTimer = null;
+      if (!voiceEnabled || isRecognitionStarted) return;
+      try {
+        recognition.start();
+      } catch (error) {
+        console.warn(reasonLabel, error);
+      }
+    }, 300);
   }
 
   if (recognition) {
@@ -89,13 +101,16 @@
 
     recognition.onend = () => {
       isRecognitionStarted = false;
-      if (voiceEnabled) restartRecognition();
+      if (!voiceEnabled) return;
+      scheduleRestart("[VOICE] restart blocked:");
     };
 
     recognition.onerror = (event) => {
       isRecognitionStarted = false;
+      console.warn("[VOICE] error:", event?.error);
       if (onError) onError(event?.error || "unknown");
-      if (voiceEnabled) restartRecognition();
+      if (!voiceEnabled) return;
+      scheduleRestart("[VOICE] restart after error blocked:");
     };
   }
 
@@ -108,7 +123,12 @@
   function startListening() {
     if (!recognition || voiceEnabled) return false;
     voiceEnabled = true;
-    restartRecognition();
+    clearRestartTimer();
+    try {
+      recognition.start();
+    } catch (error) {
+      console.warn("[VOICE] initial start failed:", error);
+    }
     return true;
   }
 
@@ -116,8 +136,12 @@
     if (!recognition) return;
     voiceEnabled = false;
     clearWaitingState();
-    if (!isRecognitionStarted) return;
-    recognition.stop();
+    clearRestartTimer();
+    try {
+      recognition.stop();
+    } catch (error) {
+      console.warn("[VOICE] stop failed:", error);
+    }
   }
 
   globalScope.TretaVoiceMode = {
