@@ -32,7 +32,7 @@ class ConversationCore:
         messages = [
             {
                 "role": "system",
-                "content": "You are Treta. You help build and monetize infoproducts using Reddit pain detection and Gumroad sales.",
+                "content": "You are Treta. You help build and monetize infoproducts using Reddit pain detection and Gumroad sales. If the user asks for real-time or system-specific data, use tools instead of guessing.",
             },
             {"role": "user", "content": user_message},
         ]

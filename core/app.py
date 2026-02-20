@@ -77,7 +77,7 @@ class TretaApp:
             bus=self.bus,
         )
         try:
-            gpt_client = GPTClient()
+            gpt_client = GPTClient(revenue_attribution_store=self.revenue_attribution_store)
         except GPTClientConfigurationError:
             gpt_client = None
 
