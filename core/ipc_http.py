@@ -25,8 +25,7 @@ from core.subreddit_performance_store import SubredditPerformanceStore
 from core.system_integrity import compute_system_integrity
 from core.reddit_intelligence.router import RedditIntelligenceRouter
 from core.reddit_public.config import get_config, update_config
-from core.http.response import error as error_response
-from core.http.response import success
+from core.http_response import error, ok
 from core.logging_config import set_request_id
 from core.version import VERSION
 
@@ -202,7 +201,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(normalized_body).encode("utf-8"))
 
     def _send_success(self, code: int, data: dict):
-        return self._send(code, success(data))
+        return self._send(code, ok(data, self._ensure_request_id()))
 
     def _send_bytes(self, code: int, body: bytes, content_type: str):
         self.send_response(code)
@@ -211,18 +210,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_raw_json(self, code: int, body: dict):
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("X-Request-Id", self._ensure_request_id())
-        self.end_headers()
-        self.wfile.write(json.dumps(body).encode("utf-8"))
-
     def _send_error(self, status_code: int, error_type: str, code: str, message: str, details: dict | None = None, data: dict | None = None):
-        body = error_response(error_type, code, message, details=details)
+        merged_details = dict(details or {})
+        if error_type:
+            merged_details.setdefault("type", error_type)
         if data is not None:
-            body["data"] = data
-        return self._send(status_code, body)
+            merged_details.setdefault("data", data)
+        return self._send(status_code, error(code, message, merged_details, self._ensure_request_id()))
+
 
     def _classify_exception(self, exc: Exception) -> tuple[int, str, str]:
         if isinstance(exc, InvariantViolationError):
@@ -237,46 +232,47 @@ class Handler(BaseHTTPRequestHandler):
             return 400, ErrorType.CLIENT_ERROR, "validation_error"
         return 500, ErrorType.SERVER_ERROR, "unexpected_error"
 
-    def _error_type_for_status(self, status_code: int) -> str:
-        if status_code == 400:
-            return ErrorType.CLIENT_ERROR
-        if status_code == 404:
-            return ErrorType.NOT_FOUND
-        if status_code == 503:
-            return ErrorType.DEPENDENCY_ERROR
-        return ErrorType.SERVER_ERROR
+    def _handle_exception(self, exc: Exception):
+        status_code, error_type, code = self._classify_exception(exc)
+        if code == "unexpected_error":
+            return self._send_internal_error(exc)
+        return self._send_error(status_code, error_type, code, str(exc))
 
     def _normalize_body(self, status_code: int, body: dict):
-        if isinstance(body, dict) and body.get("ok") in {True, False} and isinstance(body.get("error"), dict) == (body.get("ok") is False):
-            if body.get("ok") is True and isinstance(body.get("data"), dict):
-                return {**body, **body["data"]}
-            return body
+        request_id = self._ensure_request_id()
+        if isinstance(body, dict) and body.get("ok") in {True, False} and "data" in body and "error" in body:
+            if body.get("ok") is True:
+                return ok(body.get("data"), request_id)
+            raw_error = body.get("error") if isinstance(body.get("error"), dict) else {}
+            return error(
+                str(raw_error.get("code", "request_failed")),
+                str(raw_error.get("message", "request_failed")),
+                raw_error.get("details") if isinstance(raw_error.get("details"), dict) else {},
+                request_id,
+            )
+
         if status_code < 400:
-            wrapped = success(body)
+            wrapped = ok(body, request_id)
             if isinstance(body, dict):
                 wrapped.update(body)
             return wrapped
 
-        details = {}
         message = "request_failed"
+        details = {}
         if isinstance(body, dict):
             raw_error = body.get("error")
             if isinstance(raw_error, str) and raw_error:
                 message = raw_error
-            details = {key: value for key, value in body.items() if key != "error"}
-        return error_response(
-            self._error_type_for_status(status_code),
-            message,
-            message,
-            details=details,
-        )
+            elif isinstance(raw_error, dict):
+                message = str(raw_error.get("message") or raw_error.get("code") or message)
+                details = raw_error.get("details") if isinstance(raw_error.get("details"), dict) else {}
+            details = details or {key: value for key, value in body.items() if key != "error"}
+        return error(message, message, details, request_id)
 
-    def _send_mapped_exception(self, exc: Exception):
+    def _send_internal_error(self, exc: Exception):
         request_id = self._ensure_request_id()
-        self.log_error("request_id=%s exception=%r", request_id, exc)
-        status_code, error_type, code = self._classify_exception(exc)
-        details = {"request_id": request_id} if status_code >= 500 else None
-        return self._send_error(status_code, error_type, code, str(exc), details=details)
+        logger.exception("request_id=%s Unexpected server error", request_id, exc_info=exc)
+        return self._send(500, error("internal_error", "Unexpected server error", None, request_id))
 
     def _send_timeout_error(self, operation_name: str):
         request_id = self._ensure_request_id()
@@ -319,7 +315,7 @@ class Handler(BaseHTTPRequestHandler):
     def _send_static(self, request_path: str):
         file_path = self._resolve_static_path(request_path)
         if file_path is None or not file_path.exists() or not file_path.is_file():
-            return self._send(404, error_response(ErrorType.NOT_FOUND, ErrorType.NOT_FOUND, ErrorType.NOT_FOUND))
+            return self._send_error(404, ErrorType.NOT_FOUND, "not_found", "not_found")
 
         content_type = "application/octet-stream"
         suffix = file_path.suffix.lower()
@@ -337,6 +333,12 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(file_path.read_bytes())
 
     def do_GET(self):
+        try:
+            return self._do_get()
+        except Exception as e:
+            return self._handle_exception(e)
+
+    def _do_get(self):
         self._ensure_request_id()
         parsed = urlparse(self.path)
 
@@ -355,7 +357,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/state":
             sm = self.state_machine
             if sm is None:
-                return self._send(503, {"error": "state_machine_unavailable"})
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "state_machine_unavailable", "state_machine_unavailable")
 
             return self._send(200, {"state": str(sm.state)})
 
@@ -375,35 +377,35 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/memory":
             if self.memory_store is None:
-                return self._send(503, {"error": "memory_store_unavailable"})
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "memory_store_unavailable", "memory_store_unavailable")
             return self._send(200, self.memory_store.snapshot())
 
         if parsed.path == "/product_proposals":
             if self.product_proposal_store is None:
-                return self._send(503, {"error": "product_proposal_store_unavailable"})
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "product_proposal_store_unavailable", "product_proposal_store_unavailable")
 
             items = self.product_proposal_store.list()[:10]
             return self._send(200, {"items": items})
 
         if parsed.path.startswith("/product_proposals/"):
             if self.product_proposal_store is None:
-                return self._send(503, {"error": "product_proposal_store_unavailable"})
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "product_proposal_store_unavailable", "product_proposal_store_unavailable")
 
             proposal_id = parsed.path.rsplit("/", 1)[-1]
             item = self.product_proposal_store.get(proposal_id)
             if item is None:
-                return self._send(404, error_response(ErrorType.NOT_FOUND, ErrorType.NOT_FOUND, ErrorType.NOT_FOUND))
+                return self._send_error(404, ErrorType.NOT_FOUND, "not_found", "not_found")
             return self._send(200, item)
 
         if parsed.path == "/product_launches":
             if self.product_launch_store is None:
-                return self._send(503, {"error": "product_launch_store_unavailable"})
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "product_launch_store_unavailable", "product_launch_store_unavailable")
             items = self.product_launch_store.list()[:10]
             return self._send(200, {"items": items})
 
         if parsed.path == "/performance/summary":
             if self.performance_engine is None:
-                return self._send(503, {"error": "performance_engine_unavailable"})
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "performance_engine_unavailable", "performance_engine_unavailable")
             return self._send(200, self.performance_engine.generate_insights())
 
         if parsed.path == "/revenue/summary":
@@ -467,12 +469,12 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/strategy/recommendations":
             if self.strategy_engine is None:
-                return self._send(503, {"error": "strategy_engine_unavailable"})
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "strategy_engine_unavailable", "strategy_engine_unavailable")
             return self._send(200, self.strategy_engine.generate_recommendations())
 
         if parsed.path == "/strategy/decide":
             if self.strategy_decision_engine is None:
-                return self._send(503, {"error": "strategy_decision_engine_unavailable"})
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "strategy_decision_engine_unavailable", "strategy_decision_engine_unavailable")
             return self._send(200, self.strategy_decision_engine.decide(request_id=self._ensure_request_id()))
 
         if parsed.path == "/system/decision_logs":
@@ -485,27 +487,27 @@ class Handler(BaseHTTPRequestHandler):
             except (TypeError, ValueError):
                 return self._send_error(400, ErrorType.CLIENT_ERROR, "invalid_limit", "invalid_limit")
             items = self.server.storage.list_decision_logs(limit=limit)
-            return self._send(200, {"ok": True, "data": items, "error": None})
+            return self._send_success(200, items)
 
         if parsed.path == "/strategy/pending_actions":
             if self.strategy_action_execution_layer is None:
-                return self._send(503, {"error": "strategy_action_execution_layer_unavailable"})
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "strategy_action_execution_layer_unavailable", "strategy_action_execution_layer_unavailable")
             items = self.strategy_action_execution_layer.list_pending_actions()
             return self._send(200, {"items": items})
 
         if parsed.path == "/autonomy/status":
             if self.autonomy_policy_engine is None:
-                return self._send(503, {"error": "autonomy_policy_engine_unavailable"})
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "autonomy_policy_engine_unavailable", "autonomy_policy_engine_unavailable")
             return self._send(200, self.autonomy_policy_engine.status())
 
         if parsed.path == "/autonomy/adaptive_status":
             if self.autonomy_policy_engine is None:
-                return self._send(503, {"error": "autonomy_policy_engine_unavailable"})
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "autonomy_policy_engine_unavailable", "autonomy_policy_engine_unavailable")
             return self._send(200, self.autonomy_policy_engine.adaptive_status())
 
         if parsed.path == "/daily_loop/status":
             if self.daily_loop_engine is None:
-                return self._send(503, {"error": "daily_loop_engine_unavailable"})
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "daily_loop_engine_unavailable", "daily_loop_engine_unavailable")
             loop_state = self.daily_loop_engine.get_loop_state()
             loop_state["timestamp"] = time.time()
             return self._send(200, loop_state)
@@ -625,31 +627,31 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path.startswith("/product_launches/"):
             if self.product_launch_store is None:
-                return self._send(503, {"error": "product_launch_store_unavailable"})
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "product_launch_store_unavailable", "product_launch_store_unavailable")
             launch_id = parsed.path.rsplit("/", 1)[-1]
             item = self.product_launch_store.get(launch_id)
             if item is None:
-                return self._send(404, error_response(ErrorType.NOT_FOUND, ErrorType.NOT_FOUND, ErrorType.NOT_FOUND))
+                return self._send_error(404, ErrorType.NOT_FOUND, "not_found", "not_found")
             return self._send(200, item)
 
         if parsed.path == "/product_plans":
             if self.product_plan_store is None:
-                return self._send(503, {"error": "product_plan_store_unavailable"})
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "product_plan_store_unavailable", "product_plan_store_unavailable")
             items = self.product_plan_store.list(limit=10)
             return self._send(200, {"items": items})
 
         if parsed.path.startswith("/product_plans/"):
             if self.product_plan_store is None:
-                return self._send(503, {"error": "product_plan_store_unavailable"})
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "product_plan_store_unavailable", "product_plan_store_unavailable")
             plan_id = parsed.path.rsplit("/", 1)[-1]
             item = self.product_plan_store.get(plan_id)
             if item is None:
-                return self._send(404, error_response(ErrorType.NOT_FOUND, ErrorType.NOT_FOUND, ErrorType.NOT_FOUND))
+                return self._send_error(404, ErrorType.NOT_FOUND, "not_found", "not_found")
             return self._send(200, item)
 
         if parsed.path == "/opportunities":
             if self.opportunity_store is None:
-                return self._send(503, {"error": "opportunity_store_unavailable"})
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "opportunity_store_unavailable", "opportunity_store_unavailable")
 
             query = parse_qs(parsed.query)
             status = query.get("status", [None])[0]
@@ -660,7 +662,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 auth_url = get_auth_url()
             except ValueError as e:
-                return self._send(400, {"ok": False, "error": str(e)})
+                return self._send_error(400, ErrorType.CLIENT_ERROR, "validation_error", str(e))
 
             self.send_response(302)
             self.send_header("Location", auth_url)
@@ -672,14 +674,14 @@ class Handler(BaseHTTPRequestHandler):
             query = parse_qs(parsed.query)
             code = str(query.get("code", [""])[0]).strip()
             if not code:
-                return self._send(400, {"ok": False, "error": "missing_code"})
+                return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_code", "missing_code")
             try:
                 token = exchange_code_for_token(code)
                 save_token(token)
             except ValueError as e:
-                return self._send(400, {"ok": False, "error": str(e)})
+                return self._send_error(400, ErrorType.CLIENT_ERROR, "validation_error", str(e))
             except Exception as e:
-                return self._send(503, {"ok": False, "error": f"oauth_exchange_failed: {e}"})
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "oauth_exchange_failed", f"oauth_exchange_failed: {e}")
             return self._send(200, {"status": "connected"})
 
         if parsed.path == "/reddit/config":
@@ -697,8 +699,7 @@ class Handler(BaseHTTPRequestHandler):
             posts = self._load_reddit_posts()
             return self._send_success(200, {"items": list(reversed(posts))})
 
-        return self._send(404, error_response(ErrorType.NOT_FOUND, ErrorType.NOT_FOUND, ErrorType.NOT_FOUND))
-
+        return self._send_error(404, ErrorType.NOT_FOUND, "not_found", "not_found")
     def do_POST(self):
         self._ensure_request_id()
         proposal_transition_paths = {
@@ -755,7 +756,7 @@ class Handler(BaseHTTPRequestHandler):
             "/voice/tts",
         }
         if self.path not in allowed_paths and transition_event_type is None and launch_sale_id is None and launch_status_id is None and launch_link_gumroad_id is None and strategy_execute_id is None and strategy_reject_id is None:
-            return self._send(404, error_response(ErrorType.NOT_FOUND, ErrorType.NOT_FOUND, ErrorType.NOT_FOUND))
+            return self._send_error(404, ErrorType.NOT_FOUND, "not_found", "not_found")
 
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
@@ -798,10 +799,10 @@ class Handler(BaseHTTPRequestHandler):
                     source = data.get("source", "openclaw")
 
                     if not ev_type:
-                        return self._send(400, {"ok": False, "error": "missing_type"})
+                        return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_type", "missing_type")
 
                     self.bus.push(Event(type=ev_type, payload={**payload, "request_id": self._ensure_request_id()}, source=source, request_id=self._ensure_request_id()))
-                    return self._send(200, {"ok": True})
+                    return self._send_success(200, {"status": "ok"})
 
                 if self.path == "/scan/infoproduct":
                     self.bus.push(
@@ -812,12 +813,12 @@ class Handler(BaseHTTPRequestHandler):
                             request_id=self._ensure_request_id(),
                         )
                     )
-                    return self._send(200, {"ok": True})
+                    return self._send_success(200, {"status": "ok"})
 
                 if self.path == "/product_plans/build":
                     proposal_id = str(data.get("proposal_id", "")).strip()
                     if not proposal_id:
-                        return self._send(400, {"ok": False, "error": "missing_proposal_id"})
+                        return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_proposal_id", "missing_proposal_id")
                     self.bus.push(
                         Event(
                             type="BuildProductPlanRequested",
@@ -826,7 +827,7 @@ class Handler(BaseHTTPRequestHandler):
                             request_id=self._ensure_request_id(),
                         )
                     )
-                    return self._send(200, {"ok": True})
+                    return self._send_success(200, {"status": "ok"})
 
                 if self.path == "/product_proposals/execute":
                     proposal_id = str(data.get("id", "")).strip()
@@ -867,7 +868,7 @@ class Handler(BaseHTTPRequestHandler):
 
                     api_key = os.getenv("OPENAI_API_KEY", "").strip()
                     if not api_key or OpenAI is None:
-                        return self._send_raw_json(503, {"error": "gpt_not_configured"})
+                        return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "gpt_not_configured", "gpt_not_configured")
 
                     client = OpenAI()
                     response = client.audio.speech.create(
@@ -879,42 +880,42 @@ class Handler(BaseHTTPRequestHandler):
 
                 if launch_sale_id is not None:
                     if self.product_launch_store is None:
-                        return self._send(503, {"ok": False, "error": "product_launch_store_unavailable"})
+                        return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "product_launch_store_unavailable", "product_launch_store_unavailable")
                     launch_id = str(launch_sale_id).strip()
                     if not launch_id:
-                        return self._send(400, {"ok": False, "error": "missing_id"})
+                        return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_id", "missing_id")
                     amount = float(data.get("amount", 0))
                     updated = self.product_launch_store.add_sale(launch_id, amount)
                     return self._send(200, updated)
 
                 if launch_status_id is not None:
                     if self.product_launch_store is None:
-                        return self._send(503, {"ok": False, "error": "product_launch_store_unavailable"})
+                        return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "product_launch_store_unavailable", "product_launch_store_unavailable")
                     launch_id = str(launch_status_id).strip()
                     if not launch_id:
-                        return self._send(400, {"ok": False, "error": "missing_id"})
+                        return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_id", "missing_id")
                     status = str(data.get("status", "")).strip()
                     updated = self.product_launch_store.transition_status(launch_id, status)
                     return self._send(200, updated)
 
                 if launch_link_gumroad_id is not None:
                     if self.control is None:
-                        return self._send(503, {"ok": False, "error": "control_unavailable"})
+                        return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "control_unavailable", "control_unavailable")
                     launch_id = str(launch_link_gumroad_id).strip()
                     if not launch_id:
-                        return self._send(400, {"ok": False, "error": "missing_id"})
+                        return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_id", "missing_id")
                     gumroad_product_id = str(data.get("gumroad_product_id", "")).strip()
                     if not gumroad_product_id:
-                        return self._send(400, {"ok": False, "error": "missing_gumroad_product_id"})
+                        return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_gumroad_product_id", "missing_gumroad_product_id")
                     updated = self.control.link_launch_gumroad(launch_id, gumroad_product_id)
                     return self._send(200, updated)
 
                 if self.path == "/gumroad/sync_sales":
                     if self.product_launch_store is None:
-                        return self._send(503, {"ok": False, "error": "product_launch_store_unavailable"})
+                        return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "product_launch_store_unavailable", "product_launch_store_unavailable")
                     access_token = load_token()
                     if not access_token:
-                        return self._send(400, {"ok": False, "error": "Gumroad not connected. Visit /gumroad/auth first."})
+                        return self._send_error(400, ErrorType.CLIENT_ERROR, "gumroad_not_connected", "Gumroad not connected. Visit /gumroad/auth first.")
                     gumroad_client = GumroadClient(access_token)
                     service = GumroadSyncService(
                         self.product_launch_store,
@@ -1031,25 +1032,25 @@ class Handler(BaseHTTPRequestHandler):
 
                 if strategy_execute_id is not None:
                     if self.strategy_action_execution_layer is None:
-                        return self._send(503, {"ok": False, "error": "strategy_action_execution_layer_unavailable"})
+                        return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "strategy_action_execution_layer_unavailable", "strategy_action_execution_layer_unavailable")
                     action_id = str(strategy_execute_id).strip()
                     if not action_id:
-                        return self._send(400, {"ok": False, "error": "missing_id"})
+                        return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_id", "missing_id")
                     updated = self.strategy_action_execution_layer.execute_action(action_id)
                     return self._send(200, updated)
 
                 if strategy_reject_id is not None:
                     if self.strategy_action_execution_layer is None:
-                        return self._send(503, {"ok": False, "error": "strategy_action_execution_layer_unavailable"})
+                        return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "strategy_action_execution_layer_unavailable", "strategy_action_execution_layer_unavailable")
                     action_id = str(strategy_reject_id).strip()
                     if not action_id:
-                        return self._send(400, {"ok": False, "error": "missing_id"})
+                        return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_id", "missing_id")
                     updated = self.strategy_action_execution_layer.reject_action(action_id)
                     return self._send(200, updated)
 
                 event_id = str(data.get("id", "")).strip()
                 if not event_id:
-                    return self._send(400, {"ok": False, "error": "missing_id"})
+                    return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_id", "missing_id")
 
                 if self.path == "/opportunities/evaluate":
                     self.bus.push(
@@ -1060,7 +1061,7 @@ class Handler(BaseHTTPRequestHandler):
                             request_id=self._ensure_request_id(),
                         )
                     )
-                    return self._send(200, {"ok": True})
+                    return self._send_success(200, {"status": "ok"})
 
                 if self.path == "/opportunities/dismiss":
                     self.bus.push(
@@ -1071,30 +1072,33 @@ class Handler(BaseHTTPRequestHandler):
                             request_id=self._ensure_request_id(),
                         )
                     )
-                    return self._send(200, {"ok": True})
+                    return self._send_success(200, {"status": "ok"})
 
-            return self._send(404, error_response(ErrorType.NOT_FOUND, ErrorType.NOT_FOUND, ErrorType.NOT_FOUND))
+            return self._send_error(404, ErrorType.NOT_FOUND, "not_found", "not_found")
         except Exception as e:
-            return self._send_mapped_exception(e)
+            return self._handle_exception(e)
 
     def do_PATCH(self):
-        self._ensure_request_id()
-        length = int(self.headers.get("Content-Length", "0"))
-        raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
-
         try:
-            data = json.loads(raw)
+            self._ensure_request_id()
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
+
+            try:
+                data = json.loads(raw)
+            except Exception as e:
+                return self._send_error(400, ErrorType.CLIENT_ERROR, "invalid_json", str(e))
+
+            with self.server.mutation_lock:
+                self.server.update_metrics(last_mutation_at=time.time())
+                patch_response = self.reddit_router.handle_patch(self.path, data)
+                if patch_response is None:
+                    return self._send_error(404, ErrorType.NOT_FOUND, "not_found", "not_found")
+
+                code, body = patch_response
+                return self._send(code, body)
         except Exception as e:
-            return self._send_mapped_exception(ValueError(str(e)))
-
-        with self.server.mutation_lock:
-            self.server.update_metrics(last_mutation_at=time.time())
-            patch_response = self.reddit_router.handle_patch(self.path, data)
-            if patch_response is None:
-                return self._send(404, error_response(ErrorType.NOT_FOUND, ErrorType.NOT_FOUND, ErrorType.NOT_FOUND))
-
-            code, body = patch_response
-            return self._send(code, body)
+            return self._handle_exception(e)
 
 
 def start_http_server(
