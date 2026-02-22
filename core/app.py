@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import logging
 
 from core.autonomy_policy_engine import AutonomyPolicyEngine
 from core.bus import EventBus
@@ -60,11 +61,13 @@ class TretaApp:
             strategy_action_execution_layer=self.strategy_action_execution_layer,
             mode=get_autonomy_mode(),
             bus=self.bus,
+            storage=self.storage,
         )
         self.strategy_decision_engine = StrategyDecisionEngine(
             product_launch_store=self.product_launch_store,
             strategy_action_execution_layer=self.strategy_action_execution_layer,
             autonomy_policy_engine=self.autonomy_policy_engine,
+            storage=self.storage,
         )
         self.memory_store = MemoryStore()
         self.control = Control(
@@ -119,6 +122,7 @@ class TretaApp:
             conversation_core=self.conversation_core,
             revenue_attribution_store=self.revenue_attribution_store,
             subreddit_performance_store=self.subreddit_performance_store,
+            storage=self.storage,
         )
         return self.http_server
 
@@ -138,7 +142,10 @@ class TretaApp:
                     payload={"state": self.state_machine.state},
                     source="core",
                 )
-                print(f"[EVENT] {heartbeat.type} | state={self.state_machine.state}")
+                logging.getLogger("treta.event").info(
+                    "Heartbeat",
+                    extra={"event_type": heartbeat.type, "state": self.state_machine.state},
+                )
                 self.storage.set_state("last_state", self.state_machine.state)
         finally:
             self.scheduler.stop()

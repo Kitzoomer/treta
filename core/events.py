@@ -8,6 +8,7 @@ class Event:
     type: str
     payload: Dict[str, Any]
     source: str = "core"
+    request_id: str = ""
     trace_id: str = ""
     timestamp: str = ""
 

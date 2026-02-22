@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import threading
 import time
@@ -26,9 +27,11 @@ from core.reddit_intelligence.router import RedditIntelligenceRouter
 from core.reddit_public.config import get_config, update_config
 from core.http.response import error as error_response
 from core.http.response import success
+from core.logging_config import set_request_id
 from core.version import VERSION
 
 UI_DIR = Path(__file__).parent.parent / "ui"
+logger = logging.getLogger("treta.http")
 
 try:
     from openai import OpenAI
@@ -58,6 +61,7 @@ class TretaHTTPServer(ThreadingHTTPServer):
         self.mutation_lock = threading.Lock()
         self.revenue_attribution_store = dependencies.get("revenue_attribution_store")
         self.subreddit_performance_store = dependencies.get("subreddit_performance_store")
+        self.storage = dependencies.get("storage")
         self.integrity_cache_ttl_seconds = 15
         self.integrity_cache = None
         self.operation_timeout_seconds = 8
@@ -91,7 +95,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def _ensure_request_id(self) -> str:
         if not hasattr(self, "request_id"):
-            self.request_id = str(uuid.uuid4())
+            incoming_request_id = str(self.headers.get("X-Request-Id", "")).strip()
+            self.request_id = incoming_request_id or str(uuid.uuid4())
+            set_request_id(self.request_id)
         return self.request_id
 
     @property
@@ -359,6 +365,7 @@ class Handler(BaseHTTPRequestHandler):
                     "type": event.type,
                     "payload": event.payload,
                     "source": event.source,
+                    "request_id": event.request_id,
                     "trace_id": event.trace_id,
                     "timestamp": event.timestamp,
                 }
@@ -466,7 +473,19 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/strategy/decide":
             if self.strategy_decision_engine is None:
                 return self._send(503, {"error": "strategy_decision_engine_unavailable"})
-            return self._send(200, self.strategy_decision_engine.decide())
+            return self._send(200, self.strategy_decision_engine.decide(request_id=self._ensure_request_id()))
+
+        if parsed.path == "/system/decision_logs":
+            if self.server.storage is None:
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "storage_unavailable", "storage_unavailable")
+            query = parse_qs(parsed.query)
+            limit_raw = query.get("limit", ["50"])[0]
+            try:
+                limit = int(limit_raw)
+            except (TypeError, ValueError):
+                return self._send_error(400, ErrorType.CLIENT_ERROR, "invalid_limit", "invalid_limit")
+            items = self.server.storage.list_decision_logs(limit=limit)
+            return self._send(200, {"ok": True, "data": items, "error": None})
 
         if parsed.path == "/strategy/pending_actions":
             if self.strategy_action_execution_layer is None:
@@ -760,13 +779,14 @@ class Handler(BaseHTTPRequestHandler):
 
                     transition_event = Event(
                         type=transition_event_type,
-                        payload={"proposal_id": proposal_id},
+                        payload={"proposal_id": proposal_id, "request_id": self._ensure_request_id()},
                         source="http",
+                        request_id=self._ensure_request_id(),
                     )
                     self.bus.push(transition_event)
                     actions = self.control.consume(transition_event)
                     for action in actions:
-                        self.bus.push(Event(type=action.type, payload=action.payload, source="control"))
+                        self.bus.push(Event(type=action.type, payload=action.payload, source="control", request_id=self._ensure_request_id()))
                         if action.type == "ProductProposalStatusChanged":
                             return self._send_success(200, action.payload["proposal"])
 
@@ -780,15 +800,16 @@ class Handler(BaseHTTPRequestHandler):
                     if not ev_type:
                         return self._send(400, {"ok": False, "error": "missing_type"})
 
-                    self.bus.push(Event(type=ev_type, payload=payload, source=source))
+                    self.bus.push(Event(type=ev_type, payload={**payload, "request_id": self._ensure_request_id()}, source=source, request_id=self._ensure_request_id()))
                     return self._send(200, {"ok": True})
 
                 if self.path == "/scan/infoproduct":
                     self.bus.push(
                         Event(
                             type="RunInfoproductScan",
-                            payload={},
+                            payload={"request_id": self._ensure_request_id()},
                             source="http",
+                            request_id=self._ensure_request_id(),
                         )
                     )
                     return self._send(200, {"ok": True})
@@ -800,8 +821,9 @@ class Handler(BaseHTTPRequestHandler):
                     self.bus.push(
                         Event(
                             type="BuildProductPlanRequested",
-                            payload={"proposal_id": proposal_id},
+                            payload={"proposal_id": proposal_id, "request_id": self._ensure_request_id()},
                             source="http",
+                            request_id=self._ensure_request_id(),
                         )
                     )
                     return self._send(200, {"ok": True})
@@ -815,13 +837,14 @@ class Handler(BaseHTTPRequestHandler):
 
                     execute_event = Event(
                         type="ExecuteProductPlanRequested",
-                        payload={"proposal_id": proposal_id},
+                        payload={"proposal_id": proposal_id, "request_id": self._ensure_request_id()},
                         source="http",
+                        request_id=self._ensure_request_id(),
                     )
                     self.bus.push(execute_event)
                     actions = self.control.consume(execute_event)
                     for action in actions:
-                        self.bus.push(Event(type=action.type, payload=action.payload, source="control"))
+                        self.bus.push(Event(type=action.type, payload=action.payload, source="control", request_id=self._ensure_request_id()))
                         if action.type == "ProductPlanExecuted":
                             return self._send_success(200, action.payload["execution_package"])
 
@@ -1032,8 +1055,9 @@ class Handler(BaseHTTPRequestHandler):
                     self.bus.push(
                         Event(
                             type="EvaluateOpportunityById",
-                            payload={"id": event_id},
+                            payload={"id": event_id, "request_id": self._ensure_request_id()},
                             source="http",
+                            request_id=self._ensure_request_id(),
                         )
                     )
                     return self._send(200, {"ok": True})
@@ -1042,8 +1066,9 @@ class Handler(BaseHTTPRequestHandler):
                     self.bus.push(
                         Event(
                             type="OpportunityDismissed",
-                            payload={"id": event_id},
+                            payload={"id": event_id, "request_id": self._ensure_request_id()},
                             source="http",
+                            request_id=self._ensure_request_id(),
                         )
                     )
                     return self._send(200, {"ok": True})
@@ -1092,6 +1117,7 @@ def start_http_server(
     conversation_core=None,
     revenue_attribution_store: RevenueAttributionStore | None = None,
     subreddit_performance_store: SubredditPerformanceStore | None = None,
+    storage=None,
 ):
     # Thread daemon: se muere si se muere el proceso principal (bien para dev)
     resolved_bus = bus or EventBus()
@@ -1115,6 +1141,7 @@ def start_http_server(
         conversation_core=conversation_core,
         revenue_attribution_store=revenue_attribution_store,
         subreddit_performance_store=subreddit_performance_store,
+        storage=storage,
         reddit_router=RedditIntelligenceRouter(),
     )
     t = threading.Thread(target=server.serve_forever, daemon=True)

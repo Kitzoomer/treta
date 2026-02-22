@@ -1,3 +1,4 @@
+import logging
 import os
 import threading
 import time
@@ -7,6 +8,9 @@ from zoneinfo import ZoneInfo
 from core.bus import EventBus
 from core.events import Event
 from core.scheduler_state import load_scheduler_state, save_scheduler_state
+
+
+logger = logging.getLogger("treta.scheduler")
 
 
 class DailyScheduler:
@@ -70,7 +74,7 @@ class DailyScheduler:
             return False
 
         if now >= self._scheduled_for_day(now):
-            print("[SCHEDULER] Running daily scan")
+            logger.info("Running daily scan", extra={"event_type": "scheduler_scan"})
             self._bus.push(Event(type="RunInfoproductScan", payload={}, source="scheduler"))
             self._last_run_date = now.date()
             self._last_run_timestamp = now.isoformat()
@@ -83,7 +87,7 @@ class DailyScheduler:
         now = self._now()
         self._run_due_scan_if_needed(now)
         self._next_scan_at = self._next_scheduled_at(now)
-        print(f"[SCHEDULER] Next scan at {self._next_scan_at.isoformat()}")
+        logger.info("Next scan scheduled", extra={"next_scan_at": self._next_scan_at.isoformat()})
 
     def _run_loop(self):
         while not self._stop_event.is_set():
@@ -91,7 +95,7 @@ class DailyScheduler:
             self._run_due_scan_if_needed(now)
 
             self._next_scan_at = self._next_scheduled_at(now)
-            print(f"[SCHEDULER] Next scan at {self._next_scan_at.isoformat()}")
+            logger.info("Next scan scheduled", extra={"next_scan_at": self._next_scan_at.isoformat()})
 
             sleep_seconds = max((self._next_scan_at - now).total_seconds(), 0)
             # Wake periodically so stop() is responsive.

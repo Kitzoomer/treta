@@ -1,9 +1,13 @@
+import logging
 from core.state_machine import StateMachine, State
 from core.events import Event
 from core.control import Control
 from core.bus import EventBus
 from core.memory_store import MemoryStore
 from core.conversation_core import ConversationCore
+
+
+logger = logging.getLogger("treta.dispatcher")
 
 
 class Dispatcher:
@@ -26,7 +30,7 @@ class Dispatcher:
         )
 
     def handle(self, event: Event):
-        print(f"[DISPATCH] {event.type} from {event.source}")
+        logger.info("Dispatching event", extra={"event_type": event.type, "source": event.source, "request_id": event.request_id})
 
         if event.type == "WakeWordDetected":
             self.sm.transition(State.LISTENING)
@@ -87,5 +91,5 @@ class Dispatcher:
 
             actions = self.control.consume(event)
             for action in actions:
-                print(f"[ACTION] {action.type} payload={action.payload}")
+                logger.info("Action emitted", extra={"event_type": action.type, "payload": action.payload, "request_id": event.request_id})
                 self.bus.push(Event(type=action.type, payload=action.payload, source="control"))
