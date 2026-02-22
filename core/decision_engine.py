@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict
+
+from core.storage import Storage
 
 
 class DecisionEngine:
     """Evaluate opportunities with weighted scoring and hard decision rules."""
 
-    def __init__(self, risk_tolerance: int = 5, max_daily_hours: int = 5):
+    def __init__(self, risk_tolerance: int = 5, max_daily_hours: int = 5, storage: Storage | None = None):
         self.risk_tolerance = risk_tolerance
         self.max_daily_hours = max_daily_hours
+        self._storage = storage
+        self._logger = logging.getLogger("treta.decision")
 
-    def evaluate(self, opportunity: Dict[str, Any]) -> Dict[str, Any]:
+    def evaluate(self, opportunity: Dict[str, Any], request_id: str | None = None) -> Dict[str, Any]:
         money = float(opportunity.get("money", 0))
         growth = float(opportunity.get("growth", 0))
         energy = float(opportunity.get("energy", 0))
@@ -42,8 +47,23 @@ class DecisionEngine:
             decision = "execute"
             reasoning = f"Composite score is favorable ({score:.2f}) within current limits."
 
-        return {
+        result = {
             "score": float(score),
             "decision": decision,
             "reasoning": reasoning,
         }
+        try:
+            if self._storage is not None:
+                self._storage.insert_decision_log(
+                    engine="DecisionEngine",
+                    input_snapshot=opportunity,
+                    computed_score=float(score),
+                    rules_applied=["risk_tolerance", "energy_guardrail", "score_threshold"],
+                    decision=decision,
+                    risk_level="high" if risk > self.risk_tolerance else "medium",
+                    request_id=request_id,
+                    metadata={"reasoning": reasoning},
+                )
+        except Exception as exc:
+            self._logger.exception("Failed to persist decision log", extra={"request_id": request_id, "engine": "DecisionEngine", "error": str(exc)})
+        return result

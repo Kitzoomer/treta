@@ -1,16 +1,23 @@
+import logging
+
 from core.app import TretaApp
+from core.logging_config import configure_logging
+
+
+logger = logging.getLogger("treta.main")
 
 
 def main():
-    print("🧠 Treta Core starting...")
+    configure_logging()
+    logger.info("Treta Core starting")
     app = TretaApp()
-    print(f"🧠 Restored state: {app.state_machine.state}")
-    print("[BOOT] Starting HTTP server")
+    logger.info("Restored state", extra={"state": app.state_machine.state})
+    logger.info("Starting HTTP server")
 
     try:
         app.run()
     except KeyboardInterrupt:
-        print("🛑 Treta Core stopped by user")
+        logger.info("Treta Core stopped by user")
 
 
 if __name__ == "__main__":

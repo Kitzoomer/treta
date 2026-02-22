@@ -1,3 +1,4 @@
+import logging
 class State:
     IDLE = "IDLE"
     LISTENING = "LISTENING"
@@ -15,6 +16,9 @@ VALID_TRANSITIONS = {
 }
 
 
+logger = logging.getLogger("treta.state")
+
+
 class StateMachine:
     def __init__(self, initial_state=State.IDLE):
         self.state = initial_state
@@ -26,6 +30,6 @@ class StateMachine:
         if self.can_transition(new_state):
             old = self.state
             self.state = new_state
-            print(f"[STATE] {old} -> {new_state}")
+            logger.info("State transition", extra={"from_state": old, "to_state": new_state, "event_type": "state_transition"})
         else:
-            print(f"[STATE] Invalid transition: {self.state} -> {new_state}")
+            logger.warning("Invalid state transition", extra={"from_state": self.state, "to_state": new_state, "event_type": "state_transition_invalid"})

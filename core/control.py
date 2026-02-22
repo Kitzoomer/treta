@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import logging
 import tempfile
 from datetime import datetime
 import json
@@ -38,6 +39,9 @@ from core.openclaw_agent import (
 class Action:
     type: str
     payload: Dict[str, object]
+
+
+logger = logging.getLogger("treta.control")
 
 
 class Control:
@@ -265,7 +269,7 @@ class Control:
             subreddits = [name for name in subreddits if name in allowed]
 
         posts = RedditPublicService().scan_subreddits(subreddits)
-        print(
+        logger.info(
             f"[REDDIT_PUBLIC] analyzed {len(posts)} posts after score/comment filters; "
             f"pain_threshold={pain_threshold}"
         )
@@ -300,7 +304,7 @@ class Control:
             zero_roi_penalty = round(float(bonuses["zero_roi_penalty"]), 2)
             throttle_penalty = round(float(bonuses["throttle_penalty"]), 2)
             final_score = round(pain_score + revenue_bonus + execution_bonus + conversion_bonus, 2)
-            print(
+            logger.info(
                 f"[REDDIT_PUBLIC] post={post.get('id', '')} pain_score={pain_score} "
                 f"bonuses=(revenue={revenue_bonus},exec={execution_bonus},conv={conversion_bonus}) final_score={final_score} "
                 f"intent={pain_data['intent_type']} urgency={pain_data['urgency_level']}"
@@ -442,13 +446,13 @@ class Control:
 
         try:
             result = self.run_openclaw_reddit_scan()
-            print(
+            logger.info(
                 f"[OPENCLAW] scan ok: analyzed={int(result.get('analyzed', 0))} "
                 f"qualified={int(result.get('qualified', 0))}"
             )
             return result
         except Exception as exc:
-            print(f"[OPENCLAW] failed -> falling back to reddit_public: {exc}")
+            logger.info(f"[OPENCLAW] failed -> falling back to reddit_public: {exc}")
             fallback = self.run_reddit_public_scan()
             diagnostics = {
                 "source": "openclaw",
@@ -509,16 +513,16 @@ class Control:
             raise ValueError("Missing Gumroad access token. Set GUMROAD_ACCESS_TOKEN.")
         return self.gumroad_sales_sync_service.sync_sales()
 
-    def evaluate_opportunity(self, opportunity: Dict[str, object]) -> Dict[str, object]:
-        return self.decision_engine.evaluate(opportunity)
+    def evaluate_opportunity(self, opportunity: Dict[str, object], request_id: str | None = None) -> Dict[str, object]:
+        return self.decision_engine.evaluate(opportunity, request_id=request_id)
 
     def consume(self, event: Event) -> List[Action]:
         if event.type == "DailyBriefRequested":
-            print("[CONTROL] DailyBriefRequested -> would build daily brief summary (stub)")
+            logger.info("[CONTROL] DailyBriefRequested -> would build daily brief summary (stub)")
             return [Action(type="BuildDailyBrief", payload={"dry_run": True})]
 
         if event.type == "OpportunityScanRequested":
-            print("[CONTROL] OpportunityScanRequested -> would run opportunity scan (stub)")
+            logger.info("[CONTROL] OpportunityScanRequested -> would run opportunity scan (stub)")
             return [Action(type="RunOpportunityScan", payload={"dry_run": True})]
 
         if event.type == "RunInfoproductScan":
@@ -527,7 +531,7 @@ class Control:
             return []
 
         if event.type == "EmailTriageRequested":
-            print("[CONTROL] EmailTriageRequested -> would triage inbox in dry-run mode (stub)")
+            logger.info("[CONTROL] EmailTriageRequested -> would triage inbox in dry-run mode (stub)")
             return [Action(type="RunEmailTriage", payload={"dry_run": True})]
 
         if event.type == "GumroadStatsRequested":
@@ -806,7 +810,7 @@ class Control:
             )
             if subreddit:
                 self.subreddit_performance_store.record_plan_executed(str(subreddit).strip())
-            print(f"[EXECUTION] proposal_id={proposal_id}")
+            logger.info(f"[EXECUTION] proposal_id={proposal_id}")
             actions = [
                 Action(
                     type="ProductPlanExecuted",
@@ -844,7 +848,7 @@ class Control:
             if target is None:
                 return []
 
-            result = self.evaluate_opportunity(target["opportunity"])
+            result = self.evaluate_opportunity(target["opportunity"], request_id=event.request_id or str(event.payload.get("request_id", "") or ""))
             updated = self.opportunity_store.set_decision(item_id, result)
             if updated is None:
                 return []
@@ -864,8 +868,8 @@ class Control:
             return []
 
         if event.type == "EvaluateOpportunity":
-            result = self.evaluate_opportunity(event.payload)
-            print(f"[DECISION] score={result['score']:.2f} decision={result['decision']}")
+            result = self.evaluate_opportunity(event.payload, request_id=event.request_id or str(event.payload.get("request_id", "") or ""))
+            logger.info(f"[DECISION] score={result['score']:.2f} decision={result['decision']}")
             return [Action(type="OpportunityEvaluated", payload=result)]
 
         return []

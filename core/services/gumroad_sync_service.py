@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from datetime import datetime, timezone
 import re
 from typing import Any
@@ -33,6 +35,9 @@ def extract_tracking_id(value: Any) -> str | None:
         return None
 
     return None
+
+
+logger = logging.getLogger("treta.gumroad.sync")
 
 
 class GumroadSyncService:
@@ -111,7 +116,7 @@ class GumroadSyncService:
             total_new_sales += len(new_sales)
             total_revenue_added = round(total_revenue_added + revenue_added, 2)
 
-        print(f"[GUMROAD] synced={synced_launches} sales={total_new_sales} revenue={total_revenue_added}")
+        logger.info("Gumroad sync complete", extra={"synced": synced_launches, "sales": total_new_sales, "revenue": total_revenue_added})
         return {
             "synced_launches": synced_launches,
             "new_sales": total_new_sales,

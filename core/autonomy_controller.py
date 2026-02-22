@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import logging
+
 from typing import Any, Dict, List
 
 from core.bus import EventBus
 from core.events import Event
+
+
+logger = logging.getLogger("treta.autonomy.controller")
 
 
 class AutonomyController:
@@ -62,4 +67,4 @@ if __name__ == "__main__":
     controller = AutonomyController()
     example_opportunity = {"money": 8, "risk": 2}
     example_decision = {"decision": "execute"}
-    print(controller.decide(example_opportunity, example_decision))
+    logger.info("Autonomy decision", extra={"result": controller.decide(example_opportunity, example_decision)})

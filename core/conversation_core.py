@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from datetime import datetime, timezone
 from typing import Any
 
@@ -8,6 +10,9 @@ from core.daily_loop import DailyLoopEngine
 from core.events import Event
 from core.memory_store import MemoryStore
 from core.state_machine import State, StateMachine
+
+
+logger = logging.getLogger("treta.conversation")
 
 
 class ConversationCore:
@@ -93,7 +98,7 @@ class ConversationCore:
         if not normalized_text:
             return ""
 
-        print(f"[CONVERSATION] user_message_received source={source} text={normalized_text}")
+        logger.info("User message received", extra={"source": source, "text": normalized_text, "event_type": "conversation_user"})
         self.memory_store.append_message("user", normalized_text, ts=datetime.now(timezone.utc).isoformat())
 
         self.state_machine.transition(State.THINKING)
@@ -104,7 +109,7 @@ class ConversationCore:
             source="conversation_core",
         )
         self.bus.push(assistant_event)
-        print(f"[CONVERSATION] assistant_message_emitted text={response_text}")
+        logger.info("Assistant message emitted", extra={"text": response_text, "event_type": "conversation_assistant"})
         self.memory_store.append_message("assistant", response_text, ts=assistant_event.timestamp)
         self.state_machine.transition(State.SPEAKING)
         self.state_machine.transition(State.IDLE)

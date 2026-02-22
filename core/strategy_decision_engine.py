@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 from typing import Any, Dict, List
 
 from core.performance_engine import PerformanceEngine
 from core.product_launch_store import ProductLaunchStore
 from core.autonomy_policy_engine import AutonomyPolicyEngine
 from core.strategy_action_execution_layer import StrategyActionExecutionLayer
+from core.storage import Storage
 
 
 class StrategyDecisionEngine:
@@ -17,11 +19,14 @@ class StrategyDecisionEngine:
         product_launch_store: ProductLaunchStore,
         strategy_action_execution_layer: StrategyActionExecutionLayer | None = None,
         autonomy_policy_engine: AutonomyPolicyEngine | None = None,
+        storage: Storage | None = None,
     ):
         self._product_launch_store = product_launch_store
         self._performance_engine = PerformanceEngine(product_launch_store=product_launch_store)
         self._strategy_action_execution_layer = strategy_action_execution_layer
         self._autonomy_policy_engine = autonomy_policy_engine
+        self._storage = storage
+        self._logger = logging.getLogger("treta.strategy.decision")
 
     def _utcnow(self) -> datetime:
         return datetime.now(timezone.utc)
@@ -43,7 +48,7 @@ class StrategyDecisionEngine:
         delta = self._utcnow() - created_at_dt.astimezone(timezone.utc)
         return max(int(delta.total_seconds() // 86400), 0)
 
-    def decide(self) -> Dict[str, Any]:
+    def decide(self, request_id: str | None = None) -> Dict[str, Any]:
         launches = self._product_launch_store.list()
 
         actions: List[Dict[str, str]] = []
@@ -123,11 +128,11 @@ class StrategyDecisionEngine:
             self._strategy_action_execution_layer.register_pending_actions(actions)
 
         if self._autonomy_policy_engine is not None:
-            self._autonomy_policy_engine.apply()
+            self._autonomy_policy_engine.apply(request_id=request_id)
 
         confidence = 10 if actions else 8
 
-        return {
+        result = {
             "priority_level": priority_level,
             "primary_focus": primary_focus,
             "actions": actions,
@@ -138,3 +143,20 @@ class StrategyDecisionEngine:
                 "total_revenue": self._performance_engine.total_revenue(),
             },
         }
+        try:
+            if self._storage is not None:
+                self._storage.insert_decision_log(
+                    engine="StrategyDecisionEngine",
+                    input_snapshot={"launches": launches},
+                    computed_score=float(confidence),
+                    rules_applied=["sales_scale_threshold", "stalled_launch_rule", "portfolio_activity_rule"],
+                    decision=primary_focus,
+                    risk_level=priority_level,
+                    expected_impact_score=float(confidence),
+                    auto_executed=False,
+                    request_id=request_id,
+                    metadata={"actions_count": len(actions), "risk_flags": risk_flags},
+                )
+        except Exception as exc:
+            self._logger.exception("Failed to persist strategy decision log", extra={"request_id": request_id, "error": str(exc)})
+        return result

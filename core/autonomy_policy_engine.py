@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import logging
 from typing import Any, Dict, List
 
 from core.adaptive_policy_engine import AdaptivePolicyEngine
@@ -8,6 +9,7 @@ from core.bus import EventBus
 from core.events import Event
 from core.strategy_action_execution_layer import StrategyActionExecutionLayer
 from core.strategy_action_store import StrategyActionStore
+from core.storage import Storage
 
 
 class AutonomyPolicyEngine:
@@ -21,6 +23,7 @@ class AutonomyPolicyEngine:
         max_auto_executions_per_24h: int = 3,
         adaptive_policy_engine: AdaptivePolicyEngine | None = None,
         bus: EventBus | None = None,
+        storage: Storage | None = None,
     ):
         self._strategy_action_store = strategy_action_store
         self._strategy_action_execution_layer = strategy_action_execution_layer
@@ -30,6 +33,8 @@ class AutonomyPolicyEngine:
             max_auto_executions_per_24h=max_auto_executions_per_24h,
         )
         self._bus = bus or EventBus()
+        self._storage = storage
+        self._logger = logging.getLogger("treta.autonomy")
 
 
     def _utcnow(self) -> datetime:
@@ -67,7 +72,7 @@ class AutonomyPolicyEngine:
         ]
         return sorted(eligible, key=lambda item: (str(item.get("created_at", "")), str(item.get("id", ""))))
 
-    def apply(self) -> List[Dict[str, Any]]:
+    def apply(self, request_id: str | None = None) -> List[Dict[str, Any]]:
         if self._mode != "partial":
             return []
 
@@ -89,10 +94,27 @@ class AutonomyPolicyEngine:
             self._bus.push(
                 Event(
                     type="AutonomyActionAutoExecuted",
-                    payload={"action": updated, "mode": self._mode},
+                    payload={"action": updated, "mode": self._mode, "request_id": request_id},
                     source="autonomy_policy_engine",
+                    request_id=request_id or "",
                 )
             )
+            try:
+                if self._storage is not None:
+                    self._storage.insert_decision_log(
+                        engine="AutonomyPolicyEngine",
+                        input_snapshot=action,
+                        computed_score=float(action.get("expected_impact_score", 0) or 0),
+                        rules_applied=["low_risk_only", "impact_threshold", "daily_budget"],
+                        decision="auto_execute",
+                        risk_level=str(action.get("risk_level", "")),
+                        expected_impact_score=float(action.get("expected_impact_score", 0) or 0),
+                        auto_executed=True,
+                        request_id=request_id,
+                        metadata={"mode": self._mode, "action_id": action_id},
+                    )
+            except Exception as exc:
+                self._logger.exception("Failed to persist autonomy decision log", extra={"request_id": request_id, "error": str(exc)})
             executed.append(updated)
 
         return executed
