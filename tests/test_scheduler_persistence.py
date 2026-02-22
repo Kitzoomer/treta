@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from datetime import datetime
@@ -33,9 +34,14 @@ class SchedulerPersistenceTest(unittest.TestCase):
 
                 self.assertEqual(len(first_bus.events), 1)
 
-                state_path = Path(tmp_dir) / "scheduler_state.json"
-                self.assertTrue(state_path.exists())
-                payload = json.loads(state_path.read_text(encoding="utf-8"))
+                db_path = Path(tmp_dir) / "memory" / "treta.sqlite"
+                self.assertTrue(db_path.exists())
+                with sqlite3.connect(db_path) as conn:
+                    rows = conn.execute(
+                        "SELECT key, value FROM scheduler_state WHERE key IN (?, ?)",
+                        ("last_run_date", "last_run_timestamp"),
+                    ).fetchall()
+                payload = {key: value for key, value in rows}
                 self.assertEqual(payload["last_run_date"], "2024-01-01")
                 self.assertEqual(payload["last_run_timestamp"], run_time.isoformat())
 
@@ -79,6 +85,36 @@ class SchedulerPersistenceTest(unittest.TestCase):
                 self.assertFalse(state_path.exists())
                 quarantined = list(Path(tmp_dir).glob("scheduler_state.json*.corrupt"))
                 self.assertEqual(len(quarantined), 1)
+
+    def test_scheduler_state_json_is_migrated_to_sqlite(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch.dict(os.environ, {"TRETA_DATA_DIR": tmp_dir}, clear=False):
+                state_path = Path(tmp_dir) / "scheduler_state.json"
+                state_path.parent.mkdir(parents=True, exist_ok=True)
+                state_path.write_text(
+                    json.dumps(
+                        {
+                            "last_run_date": "2024-01-01",
+                            "last_run_timestamp": "2024-01-01T10:30:00+00:00",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+                state = load_scheduler_state()
+                self.assertEqual(state["last_run_date"], "2024-01-01")
+                self.assertFalse(state_path.exists())
+
+                db_path = Path(tmp_dir) / "memory" / "treta.sqlite"
+                with sqlite3.connect(db_path) as conn:
+                    payload = {
+                        key: value
+                        for key, value in conn.execute(
+                            "SELECT key, value FROM scheduler_state WHERE key IN (?, ?)",
+                            ("last_run_date", "last_run_timestamp"),
+                        ).fetchall()
+                    }
+                self.assertEqual(payload["last_run_timestamp"], "2024-01-01T10:30:00+00:00")
 
 
 if __name__ == "__main__":
