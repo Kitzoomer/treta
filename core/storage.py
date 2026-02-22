@@ -8,14 +8,16 @@ from pathlib import Path
 from typing import Optional
 
 
-DATA_ROOT = Path(os.getenv("TRETA_DATA_DIR", "./.treta_data"))
-DB_PATH = DATA_ROOT / "memory" / "treta.sqlite"
+def get_db_path() -> Path:
+    data_root = Path(os.getenv("TRETA_DATA_DIR", "./.treta_data"))
+    return data_root / "memory" / "treta.sqlite"
 
 
 class Storage:
     def __init__(self):
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        self.db_path = get_db_path()
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.execute("PRAGMA foreign_keys = ON;")
         self._lock = threading.Lock()
 

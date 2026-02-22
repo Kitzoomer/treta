@@ -2,9 +2,11 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
-from core.reddit_intelligence.models import get_db_path, initialize_sqlite
+from core.migrations.runner import run_migrations
+
 from core.reddit_intelligence.service import RedditIntelligenceService
 
 
@@ -13,13 +15,15 @@ class RedditIntelligenceTestCase(unittest.TestCase):
         self._tmp_dir = tempfile.TemporaryDirectory()
         self._previous_data_dir = os.environ.get("TRETA_DATA_DIR")
         os.environ["TRETA_DATA_DIR"] = self._tmp_dir.name
-        initialize_sqlite()
+        self._main_db_path = Path(self._tmp_dir.name) / "memory" / "treta.sqlite"
+        self._main_db_path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(self._main_db_path) as conn:
+            run_migrations(conn)
         self.service = RedditIntelligenceService()
 
     def tearDown(self):
-        db_path = get_db_path()
-        if db_path.exists():
-            db_path.unlink()
+        if self._main_db_path.exists():
+            self._main_db_path.unlink()
 
         if self._previous_data_dir is None:
             os.environ.pop("TRETA_DATA_DIR", None)
@@ -69,7 +73,7 @@ class RedditIntelligenceTestCase(unittest.TestCase):
             post_url="https://reddit.com/r/startups/persist-1",
         )
 
-        conn = sqlite3.connect(get_db_path())
+        conn = sqlite3.connect(self._main_db_path)
         try:
             row = conn.execute(
                 "SELECT id, subreddit, status FROM reddit_signals WHERE id = ?",
