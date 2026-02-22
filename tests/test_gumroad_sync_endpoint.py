@@ -153,7 +153,8 @@ class GumroadSyncEndpointTest(unittest.TestCase):
                 with urlopen(req, timeout=2) as http_response:
                     payload = json.loads(http_response.read().decode("utf-8"))
 
-                self.assertEqual(payload["new_sales"], 1)
+                self.assertTrue(payload["ok"])
+                self.assertEqual(payload["data"]["new_sales"], 1)
                 mock_get.assert_called_once_with(
                     "https://api.gumroad.com/v2/sales",
                     params={"product_id": "gumroad-product"},

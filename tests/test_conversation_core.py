@@ -117,8 +117,9 @@ class ConversationCoreTest(unittest.TestCase):
             try:
                 with urlopen(f"http://127.0.0.1:{server.server_port}/memory", timeout=2) as response:
                     payload = json.loads(response.read().decode("utf-8"))
-                self.assertIn("chat_history", payload)
-                self.assertEqual(payload["chat_history"][0]["text"], "saved message")
+                self.assertTrue(payload["ok"])
+                self.assertIn("chat_history", payload["data"])
+                self.assertEqual(payload["data"]["chat_history"][0]["text"], "saved message")
             finally:
                 server.shutdown()
                 server.server_close()

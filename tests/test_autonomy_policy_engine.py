@@ -232,13 +232,15 @@ class AutonomyPolicyEngineTest(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
 
-            self.assertEqual(payload["mode"], "manual")
-            self.assertEqual(payload["auto_executed_last_24h"], 0)
-            self.assertEqual(payload["pending_low_risk_actions"], 1)
-            self.assertEqual(adaptive_payload["success_rate"], 0.0)
-            self.assertEqual(adaptive_payload["avg_revenue_delta"], 0.0)
-            self.assertEqual(adaptive_payload["impact_threshold"], 6)
-            self.assertEqual(adaptive_payload["max_auto_executions_per_24h"], 3)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["data"]["mode"], "manual")
+            self.assertEqual(payload["data"]["auto_executed_last_24h"], 0)
+            self.assertEqual(payload["data"]["pending_low_risk_actions"], 1)
+            self.assertTrue(adaptive_payload["ok"])
+            self.assertEqual(adaptive_payload["data"]["success_rate"], 0.0)
+            self.assertEqual(adaptive_payload["data"]["avg_revenue_delta"], 0.0)
+            self.assertEqual(adaptive_payload["data"]["impact_threshold"], 6)
+            self.assertEqual(adaptive_payload["data"]["max_auto_executions_per_24h"], 3)
 
 
 if __name__ == "__main__":

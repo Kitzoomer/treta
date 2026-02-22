@@ -120,8 +120,9 @@ class DailyLoopEngineTest(unittest.TestCase):
                 with urlopen(f"http://127.0.0.1:{server.server_port}/daily_loop/status", timeout=2) as response:
                     payload = json.loads(response.read().decode("utf-8"))
 
-                self.assertEqual(payload["phase"], "EXECUTE")
-                self.assertEqual(payload["route"], "#/strategy")
+                self.assertTrue(payload["ok"])
+                self.assertEqual(payload["data"]["phase"], "EXECUTE")
+                self.assertEqual(payload["data"]["route"], "#/strategy")
                 self.assertIn("next_action_label", payload)
                 self.assertIn("summary", payload)
                 self.assertIn("timestamp", payload)
@@ -143,9 +144,10 @@ class DailyLoopEngineTest(unittest.TestCase):
             with urlopen(f"http://127.0.0.1:{server.server_port}/reddit/today_plan", timeout=2) as response:
                 payload = json.loads(response.read().decode("utf-8"))
 
-            self.assertEqual(payload["generated_at"], "2026-01-01T00:00:00")
-            self.assertEqual(payload["signals"], ["signal-1", "signal-2"])
-            self.assertTrue(payload["summary"])
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["data"]["generated_at"], "2026-01-01T00:00:00")
+            self.assertEqual(payload["data"]["signals"], ["signal-1", "signal-2"])
+            self.assertTrue(payload["data"]["summary"])
         finally:
             server.shutdown()
             server.server_close()

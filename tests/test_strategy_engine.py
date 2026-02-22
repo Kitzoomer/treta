@@ -118,9 +118,10 @@ class StrategyEngineTest(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
 
-            self.assertIn("global_summary", payload)
-            self.assertIn("product_actions", payload)
-            self.assertIn("category_actions", payload)
+            self.assertTrue(payload["ok"])
+            self.assertIn("global_summary", payload["data"])
+            self.assertIn("product_actions", payload["data"])
+            self.assertIn("category_actions", payload["data"])
 
 
 if __name__ == "__main__":

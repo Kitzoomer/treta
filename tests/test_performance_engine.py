@@ -71,10 +71,11 @@ class PerformanceEngineTest(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
 
-            self.assertEqual(payload["best_product"], "Media Kit + Pitch Kit")
-            self.assertEqual(payload["top_category"], "kit")
-            self.assertEqual(payload["total_sales"], 3)
-            self.assertEqual(payload["total_revenue"], 60.0)
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["data"]["best_product"], "Media Kit + Pitch Kit")
+            self.assertEqual(payload["data"]["top_category"], "kit")
+            self.assertEqual(payload["data"]["total_sales"], 3)
+            self.assertEqual(payload["data"]["total_revenue"], 60.0)
 
 
 if __name__ == "__main__":
