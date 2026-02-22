@@ -11,6 +11,7 @@ from core.conversation_core import ConversationCore
 from core.daily_loop import DailyLoopEngine
 from core.gpt_client import GPTClient, GPTClientConfigurationError
 from core.dispatcher import Dispatcher
+from core.decision_engine import DecisionEngine
 from core.events import Event
 from core.ipc_http import start_http_server
 from core.memory_store import MemoryStore
@@ -69,6 +70,7 @@ class TretaApp:
             autonomy_policy_engine=self.autonomy_policy_engine,
             storage=self.storage,
         )
+        self.decision_engine = DecisionEngine(storage=self.storage)
         self.memory_store = MemoryStore()
         self.control = Control(
             opportunity_store=self.opportunity_store,
@@ -78,6 +80,7 @@ class TretaApp:
             revenue_attribution_store=self.revenue_attribution_store,
             subreddit_performance_store=self.subreddit_performance_store,
             bus=self.bus,
+            decision_engine=self.decision_engine,
         )
         try:
             gpt_client = GPTClient(revenue_attribution_store=self.revenue_attribution_store)

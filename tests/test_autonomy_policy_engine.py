@@ -8,6 +8,7 @@ from urllib.request import urlopen
 from core.bus import EventBus
 from core.adaptive_policy_engine import AdaptivePolicyEngine
 from core.autonomy_policy_engine import AutonomyPolicyEngine
+from core.storage import Storage
 from core.ipc_http import start_http_server
 from core.strategy_action_execution_layer import StrategyActionExecutionLayer
 from core.strategy_action_store import StrategyActionStore
@@ -79,6 +80,7 @@ class AutonomyPolicyEngineTest(unittest.TestCase):
                 mode="partial",
                 adaptive_policy_engine=adaptive,
                 bus=self.bus,
+                storage=Storage(),
             )
             engine._utcnow = lambda: now
 
@@ -98,6 +100,7 @@ class AutonomyPolicyEngineTest(unittest.TestCase):
                 mode="partial",
                 adaptive_policy_engine=adaptive,
                 bus=self.bus,
+                storage=Storage(),
             )
 
             eligible_ids = []
@@ -179,6 +182,7 @@ class AutonomyPolicyEngineTest(unittest.TestCase):
                 mode="partial",
                 adaptive_policy_engine=adaptive,
                 bus=self.bus,
+                storage=Storage(),
             )
             engine._utcnow = lambda: now
 
@@ -199,6 +203,7 @@ class AutonomyPolicyEngineTest(unittest.TestCase):
                 mode="manual",
                 adaptive_policy_engine=adaptive,
                 bus=self.bus,
+                storage=Storage(),
             )
 
             store.add(

@@ -1,6 +1,7 @@
 import logging
 import os
 import threading
+import uuid
 import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -74,8 +75,9 @@ class DailyScheduler:
             return False
 
         if now >= self._scheduled_for_day(now):
-            logger.info("Running daily scan", extra={"event_type": "scheduler_scan"})
-            self._bus.push(Event(type="RunInfoproductScan", payload={}, source="scheduler"))
+            request_id = str(uuid.uuid4())
+            logger.info("Running daily scan", extra={"event_type": "scheduler_scan", "request_id": request_id})
+            self._bus.push(Event(type="RunInfoproductScan", payload={"request_id": request_id}, source="scheduler", request_id=request_id))
             self._last_run_date = now.date()
             self._last_run_timestamp = now.isoformat()
             save_scheduler_state(self._last_run_date.isoformat(), self._last_run_timestamp)

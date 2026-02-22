@@ -17,9 +17,9 @@ class StrategyDecisionEngine:
     def __init__(
         self,
         product_launch_store: ProductLaunchStore,
+        storage: Storage,
         strategy_action_execution_layer: StrategyActionExecutionLayer | None = None,
         autonomy_policy_engine: AutonomyPolicyEngine | None = None,
-        storage: Storage | None = None,
     ):
         self._product_launch_store = product_launch_store
         self._performance_engine = PerformanceEngine(product_launch_store=product_launch_store)
@@ -144,8 +144,7 @@ class StrategyDecisionEngine:
             },
         }
         try:
-            if self._storage is not None:
-                self._storage.insert_decision_log(
+            self._storage.insert_decision_log(
                     engine="StrategyDecisionEngine",
                     input_snapshot={"launches": launches},
                     computed_score=float(confidence),
