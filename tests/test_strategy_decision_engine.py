@@ -12,6 +12,7 @@ from core.product_proposal_store import ProductProposalStore
 from core.strategy_action_execution_layer import StrategyActionExecutionLayer
 from core.strategy_action_store import StrategyActionStore
 from core.strategy_decision_engine import StrategyDecisionEngine
+from core.storage import Storage
 
 
 class StrategyDecisionEngineTest(unittest.TestCase):
@@ -34,7 +35,7 @@ class StrategyDecisionEngineTest(unittest.TestCase):
             for _ in range(5):
                 launches.add_sale(launch["id"], 10)
 
-            decision = StrategyDecisionEngine(product_launch_store=launches).decide()
+            decision = StrategyDecisionEngine(product_launch_store=launches, storage=Storage()).decide()
 
             self.assertIn(
                 {
@@ -58,7 +59,7 @@ class StrategyDecisionEngineTest(unittest.TestCase):
             (root / "product_launches.json").write_text(json.dumps(items), encoding="utf-8")
 
             launches = ProductLaunchStore(proposal_store=proposals, path=root / "product_launches.json")
-            engine = StrategyDecisionEngine(product_launch_store=launches)
+            engine = StrategyDecisionEngine(product_launch_store=launches, storage=Storage())
             engine._utcnow = lambda: datetime(2025, 1, 10, tzinfo=timezone.utc)
 
             decision = engine.decide()
@@ -81,7 +82,7 @@ class StrategyDecisionEngineTest(unittest.TestCase):
             launches.transition_status(launch["id"], "active")
             launches.add_sale(launch["id"], 100)
 
-            decision = StrategyDecisionEngine(product_launch_store=launches).decide()
+            decision = StrategyDecisionEngine(product_launch_store=launches, storage=Storage()).decide()
 
             self.assertIn(
                 {
@@ -97,7 +98,7 @@ class StrategyDecisionEngineTest(unittest.TestCase):
             root = Path(tmp_dir)
             proposals, launches = self._stores(root)
 
-            decision = StrategyDecisionEngine(product_launch_store=launches).decide()
+            decision = StrategyDecisionEngine(product_launch_store=launches, storage=Storage()).decide()
 
             self.assertIn(
                 {
@@ -124,6 +125,7 @@ class StrategyDecisionEngineTest(unittest.TestCase):
             engine = StrategyDecisionEngine(
                 product_launch_store=launches,
                 strategy_action_execution_layer=action_execution_layer,
+                storage=Storage(),
             )
 
             engine.decide()
@@ -152,6 +154,7 @@ class StrategyDecisionEngineTest(unittest.TestCase):
             engine = StrategyDecisionEngine(
                 product_launch_store=launches,
                 strategy_action_execution_layer=action_execution_layer,
+                storage=Storage(),
             )
             engine.decide()
 
@@ -161,6 +164,7 @@ class StrategyDecisionEngineTest(unittest.TestCase):
                 strategy_decision_engine=engine,
                 bus=self.bus,
                 strategy_action_execution_layer=action_execution_layer,
+                storage=Storage(),
             )
             try:
                 port = server.server_port
@@ -214,7 +218,7 @@ class StrategyDecisionEngineTest(unittest.TestCase):
             for _ in range(5):
                 launches.add_sale(launch["id"], 10)
 
-            engine = StrategyDecisionEngine(product_launch_store=launches)
+            engine = StrategyDecisionEngine(product_launch_store=launches, storage=Storage())
             server = start_http_server(host="127.0.0.1", port=0, strategy_decision_engine=engine, bus=self.bus)
             try:
                 port = server.server_port

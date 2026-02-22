@@ -9,7 +9,7 @@ from core.storage import Storage
 class DecisionEngine:
     """Evaluate opportunities with weighted scoring and hard decision rules."""
 
-    def __init__(self, risk_tolerance: int = 5, max_daily_hours: int = 5, storage: Storage | None = None):
+    def __init__(self, storage: Storage, risk_tolerance: int = 5, max_daily_hours: int = 5):
         self.risk_tolerance = risk_tolerance
         self.max_daily_hours = max_daily_hours
         self._storage = storage
@@ -53,8 +53,7 @@ class DecisionEngine:
             "reasoning": reasoning,
         }
         try:
-            if self._storage is not None:
-                self._storage.insert_decision_log(
+            self._storage.insert_decision_log(
                     engine="DecisionEngine",
                     input_snapshot=opportunity,
                     computed_score=float(score),

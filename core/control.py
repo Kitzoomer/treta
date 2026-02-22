@@ -29,6 +29,7 @@ from core.errors import InvariantViolationError
 from core.domain.lifecycle import EXECUTION_STATUSES
 from core.reddit_public.config import get_config
 from core.reddit_public.pain_scoring import compute_pain_score
+from core.storage import Storage
 from core.openclaw_agent import (
     OpenClawRedditScanner,
     normalize_openclaw_to_scan_summary,
@@ -65,7 +66,7 @@ class Control:
         subreddit_performance_store: SubredditPerformanceStore | None = None,
         bus: EventBus | None = None,
     ):
-        self.decision_engine = decision_engine or DecisionEngine()
+        self.decision_engine = decision_engine or DecisionEngine(storage=Storage())
         self.gumroad_client = gumroad_client
         self.action_planner = action_planner or ActionPlanner()
         self.confirmation_queue = confirmation_queue or ConfirmationQueue()

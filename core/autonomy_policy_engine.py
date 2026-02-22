@@ -19,11 +19,11 @@ class AutonomyPolicyEngine:
         self,
         strategy_action_store: StrategyActionStore,
         strategy_action_execution_layer: StrategyActionExecutionLayer,
+        storage: Storage,
         mode: str = "manual",
         max_auto_executions_per_24h: int = 3,
         adaptive_policy_engine: AdaptivePolicyEngine | None = None,
         bus: EventBus | None = None,
-        storage: Storage | None = None,
     ):
         self._strategy_action_store = strategy_action_store
         self._strategy_action_execution_layer = strategy_action_execution_layer
@@ -100,8 +100,7 @@ class AutonomyPolicyEngine:
                 )
             )
             try:
-                if self._storage is not None:
-                    self._storage.insert_decision_log(
+                self._storage.insert_decision_log(
                         engine="AutonomyPolicyEngine",
                         input_snapshot=action,
                         computed_score=float(action.get("expected_impact_score", 0) or 0),
