@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import sqlite3
 
-from core.migrations import migration_001_base_schema
+from core.migrations import migration_001_base_schema, migration_003_unify_reddit_db
 
 
 def _upgrade_scheduler_state(conn: sqlite3.Connection) -> None:
@@ -22,6 +22,7 @@ def _upgrade_scheduler_state(conn: sqlite3.Connection) -> None:
 MIGRATIONS: list[tuple[int, callable]] = [
     (1, migration_001_base_schema.upgrade),
     (2, _upgrade_scheduler_state),
+    (3, migration_003_unify_reddit_db.upgrade),
 ]
 
 

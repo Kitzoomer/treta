@@ -3,15 +3,19 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
-from core.reddit_intelligence.models import get_connection, initialize_sqlite
+from core.reddit_intelligence.models import ensure_reddit_signals_schema
+from core.storage import Storage
 
 
 Signal = Dict[str, Any]
 
 
 class RedditSignalRepository:
+    def __init__(self, storage: Storage | None = None):
+        self.storage = storage or Storage()
+
     def ensure_initialized(self) -> None:
-        initialize_sqlite()
+        ensure_reddit_signals_schema(self.storage.conn)
 
     def save_signal(self, signal_data: Signal) -> Signal:
         self.ensure_initialized()
@@ -24,8 +28,8 @@ class RedditSignalRepository:
         payload.setdefault("created_at", now)
         payload["updated_at"] = now
 
-        with get_connection() as conn:
-            conn.execute(
+        with self.storage._lock:
+            self.storage.conn.execute(
                 """
                 INSERT INTO reddit_signals (
                     id, subreddit, post_url, post_text, detected_pain_type,
@@ -53,13 +57,13 @@ class RedditSignalRepository:
                     int(bool(payload.get("mention_used", False))),
                 ),
             )
-            conn.commit()
+            self.storage.conn.commit()
         return payload
 
     def get_pending_signals(self, limit: int = 20) -> List[Signal]:
         self.ensure_initialized()
-        with get_connection() as conn:
-            rows = conn.execute(
+        with self.storage._lock:
+            cursor = self.storage.conn.execute(
                 """
                 SELECT * FROM reddit_signals
                 WHERE status = 'pending'
@@ -67,14 +71,16 @@ class RedditSignalRepository:
                 LIMIT ?
                 """,
                 (max(int(limit), 0),),
-            ).fetchall()
-        return [dict(row) for row in rows]
+            )
+            rows = cursor.fetchall()
+            columns = [description[0] for description in cursor.description]
+        return [dict(zip(columns, row)) for row in rows]
 
     def update_signal_status(self, signal_id: str, status: str) -> Signal | None:
         self.ensure_initialized()
         now = datetime.now(timezone.utc).isoformat()
-        with get_connection() as conn:
-            conn.execute(
+        with self.storage._lock:
+            self.storage.conn.execute(
                 """
                 UPDATE reddit_signals
                 SET status = ?, updated_at = ?
@@ -82,7 +88,7 @@ class RedditSignalRepository:
                 """,
                 (status, now, signal_id),
             )
-            conn.commit()
+            self.storage.conn.commit()
         return self.find_signal_by_id(signal_id)
 
     def update_feedback(self, signal_id: str, karma: int, replies: int) -> Signal | None:
@@ -92,8 +98,8 @@ class RedditSignalRepository:
         replies_value = int(replies)
         performance_score = karma_value + (replies_value * 2)
 
-        with get_connection() as conn:
-            conn.execute(
+        with self.storage._lock:
+            self.storage.conn.execute(
                 """
                 UPDATE reddit_signals
                 SET karma = ?, replies = ?, performance_score = ?, updated_at = ?
@@ -101,14 +107,14 @@ class RedditSignalRepository:
                 """,
                 (karma_value, replies_value, performance_score, now, signal_id),
             )
-            conn.commit()
+            self.storage.conn.commit()
 
         return self.find_signal_by_id(signal_id)
 
     def get_average_performance_by_intent(self, intent_level: str) -> float:
         self.ensure_initialized()
-        with get_connection() as conn:
-            row = conn.execute(
+        with self.storage._lock:
+            row = self.storage.conn.execute(
                 """
                 SELECT AVG(performance_score) AS avg_performance
                 FROM reddit_signals
@@ -117,15 +123,15 @@ class RedditSignalRepository:
                 (intent_level,),
             ).fetchone()
 
-        if row is None or row["avg_performance"] is None:
+        if row is None or row[0] is None:
             return 0
-        return float(row["avg_performance"])
+        return float(row[0])
 
     def get_average_performance_by_subreddit(self, subreddit: str) -> float:
         self.ensure_initialized()
         cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-        with get_connection() as conn:
-            row = conn.execute(
+        with self.storage._lock:
+            row = self.storage.conn.execute(
                 """
                 SELECT AVG(performance_score) AS avg_performance
                 FROM reddit_signals
@@ -134,18 +140,20 @@ class RedditSignalRepository:
                 (subreddit, cutoff),
             ).fetchone()
 
-        if row is None or row["avg_performance"] is None:
+        if row is None or row[0] is None:
             return 0
-        return float(row["avg_performance"])
+        return float(row[0])
 
     def find_signal_by_id(self, signal_id: str) -> Signal | None:
         self.ensure_initialized()
-        with get_connection() as conn:
-            row = conn.execute(
+        with self.storage._lock:
+            cursor = self.storage.conn.execute(
                 "SELECT * FROM reddit_signals WHERE id = ?",
                 (signal_id,),
-            ).fetchone()
-        return dict(row) if row else None
+            )
+            row = cursor.fetchone()
+            columns = [description[0] for description in cursor.description]
+        return dict(zip(columns, row)) if row else None
 
     def _get_mention_ratio(self, where_clause: str = "", params: tuple[Any, ...] = ()) -> float:
         self.ensure_initialized()
@@ -162,14 +170,14 @@ class RedditSignalRepository:
         if where_clause:
             query += f" AND {where_clause}"
 
-        with get_connection() as conn:
-            row = conn.execute(query, query_params).fetchone()
+        with self.storage._lock:
+            row = self.storage.conn.execute(query, query_params).fetchone()
 
-        if row is None or row["total_responses"] == 0:
+        if row is None or row[0] == 0:
             return 0
 
-        mentions = row["mentions"] or 0
-        return float(mentions) / float(row["total_responses"])
+        mentions = row[1] or 0
+        return float(mentions) / float(row[0])
 
     def get_weekly_mention_ratio(self) -> float:
         return self._get_mention_ratio()
