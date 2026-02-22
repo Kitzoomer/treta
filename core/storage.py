@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+
 DATA_ROOT = Path(os.getenv("TRETA_DATA_DIR", "./.treta_data"))
 DB_PATH = DATA_ROOT / "memory" / "treta.sqlite"
 
@@ -15,36 +16,8 @@ class Storage:
     def __init__(self):
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        self.conn.execute("PRAGMA foreign_keys = ON;")
         self._lock = threading.Lock()
-        self._init_db()
-
-    def _init_db(self):
-        cur = self.conn.cursor()
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS state (
-            key TEXT PRIMARY KEY,
-            value TEXT
-        )
-        """)
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS decision_logs (
-                id TEXT PRIMARY KEY,
-                timestamp TEXT NOT NULL,
-                engine TEXT NOT NULL,
-                input_snapshot TEXT,
-                computed_score REAL,
-                rules_applied TEXT,
-                decision TEXT NOT NULL,
-                risk_level TEXT,
-                expected_impact_score REAL,
-                auto_executed BOOLEAN,
-                request_id TEXT,
-                metadata TEXT
-            )
-            """
-        )
-        self.conn.commit()
 
     def set_state(self, key: str, value: str):
         with self._lock:

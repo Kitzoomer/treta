@@ -15,6 +15,7 @@ from core.decision_engine import DecisionEngine
 from core.events import Event
 from core.ipc_http import start_http_server
 from core.memory_store import MemoryStore
+from core.migrations.runner import run_migrations
 from core.opportunity_store import OpportunityStore
 from core.performance_engine import PerformanceEngine
 from core.product_launch_store import ProductLaunchStore
@@ -34,6 +35,10 @@ from core.subreddit_performance_store import SubredditPerformanceStore
 class TretaApp:
     def __init__(self, storage: Storage | None = None):
         self.storage = storage or Storage()
+        conn = self.storage.conn
+        run_migrations(conn)
+        assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+
         self.bus = EventBus()
 
         last_state = self.storage.get_state("last_state") or State.IDLE
