@@ -21,11 +21,11 @@ class RevenueSummaryEndpointTest(unittest.TestCase):
                     payload = json.loads(response.read().decode("utf-8"))
 
                 self.assertTrue(payload["ok"])
-                self.assertIn("totals", payload)
-                self.assertIn("by_proposal", payload)
-                self.assertIn("by_subreddit", payload)
-                self.assertEqual(payload["totals"]["sales"], 1)
-                self.assertEqual(payload["by_proposal"]["proposal-1"]["revenue"], 19.0)
+                self.assertIn("totals", payload["data"])
+                self.assertIn("by_proposal", payload["data"])
+                self.assertIn("by_subreddit", payload["data"])
+                self.assertEqual(payload["data"]["totals"]["sales"], 1)
+                self.assertEqual(payload["data"]["by_proposal"]["proposal-1"]["revenue"], 19.0)
             finally:
                 server.shutdown()
                 server.server_close()

@@ -172,10 +172,11 @@ class StrategyDecisionEngineTest(unittest.TestCase):
                     self.assertEqual(response.status, 200)
                     pending_payload = json.loads(response.read().decode("utf-8"))
 
-                action_id = pending_payload["items"][0]["id"]
-                self.assertEqual(pending_payload["items"][0]["risk_level"], "low")
-                self.assertEqual(pending_payload["items"][0]["expected_impact_score"], 8)
-                self.assertTrue(pending_payload["items"][0]["auto_executable"])
+                self.assertTrue(pending_payload["ok"])
+                action_id = pending_payload["data"]["items"][0]["id"]
+                self.assertEqual(pending_payload["data"]["items"][0]["risk_level"], "low")
+                self.assertEqual(pending_payload["data"]["items"][0]["expected_impact_score"], 8)
+                self.assertTrue(pending_payload["data"]["items"][0]["auto_executable"])
                 execute_request = Request(
                     f"http://127.0.0.1:{port}/strategy/execute_action/{action_id}",
                     data=b"{}",
@@ -203,8 +204,10 @@ class StrategyDecisionEngineTest(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
 
-            self.assertEqual(executed["status"], "executed")
-            self.assertEqual(rejected["status"], "rejected")
+            self.assertTrue(executed["ok"])
+            self.assertEqual(executed["data"]["status"], "executed")
+            self.assertTrue(rejected["ok"])
+            self.assertEqual(rejected["data"]["status"], "rejected")
             recent_events = self.bus.recent(limit=1)
             self.assertEqual(recent_events[-1].type, "StrategyActionExecuted")
 
@@ -229,9 +232,10 @@ class StrategyDecisionEngineTest(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
 
-            self.assertIn("actions", payload)
-            self.assertGreaterEqual(payload["confidence"], 0)
-            self.assertLessEqual(payload["confidence"], 10)
+            self.assertTrue(payload["ok"])
+            self.assertIn("actions", payload["data"])
+            self.assertGreaterEqual(payload["data"]["confidence"], 0)
+            self.assertLessEqual(payload["data"]["confidence"], 10)
 
 
 if __name__ == "__main__":

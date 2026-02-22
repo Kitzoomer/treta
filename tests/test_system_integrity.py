@@ -110,11 +110,9 @@ class SystemIntegrityEndpointTest(unittest.TestCase):
 
             self.assertEqual(ctx.exception.code, 503)
             payload = json.loads(ctx.exception.read().decode("utf-8"))
-            self.assertFalse(payload.get("ok"))
+            self.assertFalse(payload["ok"])
             self.assertEqual(payload["error"]["type"], "dependency_error")
             self.assertEqual(payload["error"]["code"], "integrity_data_unavailable")
-            self.assertEqual(payload["data"].get("error"), "integrity_data_unavailable")
-            self.assertTrue(payload["data"].get("details"))
         finally:
             server.shutdown()
             server.server_close()
