@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from core.events import Event
-from core.creator_intelligence import CreatorPainClassifier, CreatorProductSuggester
+from core.creator_intelligence import CreatorOfferService, CreatorPainClassifier, CreatorProductSuggester
 from core.errors import (
     DependencyError,
     ErrorType,
@@ -699,6 +699,28 @@ class Handler(BaseHTTPRequestHandler):
             items = suggester.list_recent_suggestions(limit=20)
             return self._send_success(200, {"items": items})
 
+        if parsed.path == "/creator/offers":
+            if self.server.storage is None:
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "storage_unavailable", "storage_unavailable")
+            query = parse_qs(parsed.query)
+            try:
+                limit = int(query.get("limit", ["20"])[0])
+            except (TypeError, ValueError):
+                return self._send_error(400, ErrorType.CLIENT_ERROR, "invalid_limit", "invalid_limit")
+            service = CreatorOfferService(storage=self.server.storage)
+            items = service.list_offer_drafts(limit=limit)
+            return self._send_success(200, {"items": items})
+
+        if parsed.path.startswith("/creator/offers/"):
+            if self.server.storage is None:
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "storage_unavailable", "storage_unavailable")
+            offer_id = parsed.path.rsplit("/", 1)[-1]
+            service = CreatorOfferService(storage=self.server.storage)
+            item = service.get_offer_draft(offer_id)
+            if item is None:
+                return self._send_error(404, ErrorType.NOT_FOUND, "not_found", "not_found")
+            return self._send_success(200, item)
+
         if parsed.path == "/reddit/config":
             return self._send_success(200, get_config())
 
@@ -769,6 +791,7 @@ class Handler(BaseHTTPRequestHandler):
             "/reddit/mark_posted",
             "/conversation/message",
             "/voice/tts",
+            "/creator/offers/generate",
         }
         if self.path not in allowed_paths and transition_event_type is None and launch_sale_id is None and launch_status_id is None and launch_link_gumroad_id is None and strategy_execute_id is None and strategy_reject_id is None:
             return self._send_error(404, ErrorType.NOT_FOUND, "not_found", "not_found")
@@ -941,6 +964,21 @@ class Handler(BaseHTTPRequestHandler):
                     if not ok:
                         return self._send_timeout_error("gumroad_sync")
                     return self._send(200, summary)
+
+                if self.path == "/creator/offers/generate":
+                    if self.server.storage is None:
+                        return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "storage_unavailable", "storage_unavailable")
+                    suggestion_id = str(data.get("suggestion_id", "")).strip()
+                    if not suggestion_id:
+                        return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_suggestion_id", "missing_suggestion_id")
+                    service = CreatorOfferService(storage=self.server.storage)
+                    try:
+                        draft = service.generate_offer_draft(suggestion_id=suggestion_id)
+                    except ValueError as exc:
+                        if str(exc) == "suggestion_not_found":
+                            return self._send_error(404, ErrorType.NOT_FOUND, "suggestion_not_found", "suggestion_not_found")
+                        raise
+                    return self._send_success(200, draft)
 
                 if self.path == "/reddit/config":
                     editable_fields = {
