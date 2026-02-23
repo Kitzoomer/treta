@@ -15,6 +15,7 @@ from core.creator_intelligence import (
     CreatorOfferService,
     CreatorPainClassifier,
     CreatorProductSuggester,
+    CreatorLaunchTracker,
 )
 from core.errors import (
     DependencyError,
@@ -726,6 +727,24 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_error(404, ErrorType.NOT_FOUND, "not_found", "not_found")
             return self._send_success(200, item)
 
+        if parsed.path == "/creator/launches":
+            if self.server.storage is None:
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "storage_unavailable", "storage_unavailable")
+            query = parse_qs(parsed.query)
+            try:
+                limit = int(query.get("limit", ["50"])[0])
+            except (TypeError, ValueError):
+                return self._send_error(400, ErrorType.CLIENT_ERROR, "invalid_limit", "invalid_limit")
+            tracker = CreatorLaunchTracker(storage=self.server.storage)
+            items = tracker.list_launches(limit=limit)
+            return self._send_success(200, {"items": items})
+
+        if parsed.path == "/creator/launches/summary":
+            if self.server.storage is None:
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "storage_unavailable", "storage_unavailable")
+            tracker = CreatorLaunchTracker(storage=self.server.storage)
+            return self._send_success(200, tracker.get_performance_summary())
+
         if parsed.path == "/creator/demand":
             if self.server.storage is None:
                 return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "storage_unavailable", "storage_unavailable")
@@ -790,6 +809,11 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/strategy/execute_action/"):
             strategy_execute_id = self.path[len("/strategy/execute_action/"):]
 
+        creator_launch_sale_id = None
+        if self.path.startswith("/creator/launches/") and self.path.endswith("/sale"):
+            creator_launch_sale_id = self.path[len("/creator/launches/"):-len("/sale")]
+
+
         strategy_reject_id = None
         if self.path.startswith("/strategy/reject_action/"):
             strategy_reject_id = self.path[len("/strategy/reject_action/"):]
@@ -810,8 +834,9 @@ class Handler(BaseHTTPRequestHandler):
             "/voice/tts",
             "/creator/offers/generate",
             "/creator/demand/validate",
+            "/creator/launches/register",
         }
-        if self.path not in allowed_paths and transition_event_type is None and launch_sale_id is None and launch_status_id is None and launch_link_gumroad_id is None and strategy_execute_id is None and strategy_reject_id is None:
+        if self.path not in allowed_paths and transition_event_type is None and launch_sale_id is None and launch_status_id is None and launch_link_gumroad_id is None and strategy_execute_id is None and strategy_reject_id is None and creator_launch_sale_id is None:
             return self._send_error(404, ErrorType.NOT_FOUND, "not_found", "not_found")
 
         length = int(self.headers.get("Content-Length", "0"))
@@ -997,6 +1022,47 @@ class Handler(BaseHTTPRequestHandler):
                             return self._send_error(404, ErrorType.NOT_FOUND, "suggestion_not_found", "suggestion_not_found")
                         raise
                     return self._send_success(200, draft)
+
+                if self.path == "/creator/launches/register":
+                    if self.server.storage is None:
+                        return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "storage_unavailable", "storage_unavailable")
+                    offer_id = str(data.get("offer_id", "")).strip()
+                    if not offer_id:
+                        return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_offer_id", "missing_offer_id")
+                    try:
+                        price = float(data.get("price"))
+                    except (TypeError, ValueError):
+                        return self._send_error(400, ErrorType.CLIENT_ERROR, "invalid_price", "invalid_price")
+                    notes = str(data.get("notes", ""))
+                    tracker = CreatorLaunchTracker(storage=self.server.storage)
+                    try:
+                        launch = tracker.register_launch(offer_id=offer_id, price=price, notes=notes)
+                    except ValueError as exc:
+                        if str(exc) == "offer_not_found":
+                            return self._send_error(404, ErrorType.NOT_FOUND, "offer_not_found", "offer_not_found")
+                        raise
+                    return self._send_success(200, launch)
+
+                if self.path.startswith("/creator/launches/") and self.path.endswith("/sale"):
+                    if self.server.storage is None:
+                        return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "storage_unavailable", "storage_unavailable")
+                    launch_id = self.path[len("/creator/launches/") : -len("/sale")].strip("/")
+                    if not launch_id:
+                        return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_launch_id", "missing_launch_id")
+                    try:
+                        quantity = int(data.get("quantity", 1))
+                    except (TypeError, ValueError):
+                        return self._send_error(400, ErrorType.CLIENT_ERROR, "invalid_quantity", "invalid_quantity")
+                    tracker = CreatorLaunchTracker(storage=self.server.storage)
+                    try:
+                        launch = tracker.record_sale(launch_id=launch_id, quantity=quantity)
+                    except ValueError as exc:
+                        if str(exc) == "launch_not_found":
+                            return self._send_error(404, ErrorType.NOT_FOUND, "launch_not_found", "launch_not_found")
+                        if str(exc) == "invalid_quantity":
+                            return self._send_error(400, ErrorType.CLIENT_ERROR, "invalid_quantity", "invalid_quantity")
+                        raise
+                    return self._send_success(200, launch)
 
                 if self.path == "/creator/demand/validate":
                     if self.server.storage is None:

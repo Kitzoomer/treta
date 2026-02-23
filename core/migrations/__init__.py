@@ -34,6 +34,10 @@ migration_007_creator_demand_validations = _load_migration(
     "007_creator_demand_validations.py", "core.migrations.migration_007_creator_demand_validations"
 )
 
+migration_008_creator_launch_tracking = _load_migration(
+    "008_creator_launch_tracking.py", "core.migrations.migration_008_creator_launch_tracking"
+)
+
 __all__ = [
     "migration_001_base_schema",
     "migration_003_unify_reddit_db",
@@ -41,4 +45,5 @@ __all__ = [
     "migration_005_creator_product_suggestions",
     "migration_006_creator_offer_drafts",
     "migration_007_creator_demand_validations",
+    "migration_008_creator_launch_tracking",
 ]
