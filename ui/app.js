@@ -11,7 +11,10 @@ const STORAGE_KEYS = {
   profile: "treta.profile",
   autonomyEnabled: "treta_autonomy_enabled",
   chatMode: "treta_chat_mode",
+  focusMode: "treta_focus_mode",
 };
+
+let focusModeEnabled = localStorage.getItem(STORAGE_KEYS.focusMode) !== "false";
 
 const ACTION_TARGETS = {
   work: "work-response",
@@ -159,7 +162,9 @@ const state = {
 };
 
 function setHomeFocusMode(active) {
-  state.homeView.focusModeActive = Boolean(active);
+  focusModeEnabled = Boolean(active);
+  state.homeView.focusModeActive = focusModeEnabled;
+  localStorage.setItem(STORAGE_KEYS.focusMode, focusModeEnabled ? "true" : "false");
   const shouldEnableFocusMode = state.currentRoute === "home" && state.homeView.focusModeActive;
   document.body.classList.toggle("focus-mode-active", shouldEnableFocusMode);
 }
@@ -206,6 +211,9 @@ function normalizeEnvelopeObject(payload) {
 async function renderStrategicDashboard() {
   setHomeFocusMode(false);
   ui.pageContent.innerHTML = `
+    <section class="focus-mode-switch">
+      <button id="home-focus-mode">Volver a Modo Enfoque</button>
+    </section>
     <section class="hero">
       <h1>Esto es lo que puedes vender esta semana.</h1>
       <p>Basado en lo que los creadores están preguntando ahora mismo.</p>
@@ -257,6 +265,9 @@ async function renderStrategicDashboard() {
       || "N/A";
 
     ui.pageContent.innerHTML = `
+      <section class="focus-mode-switch">
+        <button id="home-focus-mode">Volver a Modo Enfoque</button>
+      </section>
       <section class="hero">
         <h1>Esto es lo que puedes vender esta semana.</h1>
         <p>Basado en lo que los creadores están preguntando ahora mismo.</p>
@@ -297,6 +308,9 @@ async function renderStrategicDashboard() {
     `;
   } catch (_error) {
     ui.pageContent.innerHTML = `
+      <section class="focus-mode-switch">
+        <button id="home-focus-mode">Volver a Modo Enfoque</button>
+      </section>
       <section class="hero">
         <h1>Esto es lo que puedes vender esta semana.</h1>
         <p>Basado en lo que los creadores están preguntando ahora mismo.</p>
@@ -307,6 +321,14 @@ async function renderStrategicDashboard() {
         <button id="create-offer-btn" data-route="#/work">Crear oferta ahora</button>
       </section>
     `;
+  }
+
+  const focusModeButton = document.getElementById("home-focus-mode");
+  if (focusModeButton) {
+    focusModeButton.addEventListener("click", () => {
+      setHomeFocusMode(true);
+      renderFocusMode();
+    });
   }
 }
 
@@ -974,7 +996,12 @@ const views = {
   },
 
   loadHome() {
-    return renderFocusMode();
+    const savedFocusMode = localStorage.getItem(STORAGE_KEYS.focusMode);
+    focusModeEnabled = savedFocusMode !== "false";
+    if (focusModeEnabled) {
+      return renderFocusMode();
+    }
+    return renderStrategicDashboard();
   },
 
   loadDashboard() {
