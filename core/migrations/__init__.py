@@ -30,10 +30,15 @@ migration_006_creator_offer_drafts = _load_migration(
     "006_creator_offer_drafts.py", "core.migrations.migration_006_creator_offer_drafts"
 )
 
+migration_007_creator_demand_validations = _load_migration(
+    "007_creator_demand_validations.py", "core.migrations.migration_007_creator_demand_validations"
+)
+
 __all__ = [
     "migration_001_base_schema",
     "migration_003_unify_reddit_db",
     "migration_004_creator_pain_analysis",
     "migration_005_creator_product_suggestions",
     "migration_006_creator_offer_drafts",
+    "migration_007_creator_demand_validations",
 ]

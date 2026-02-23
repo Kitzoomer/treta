@@ -9,6 +9,7 @@ from core.migrations import (
     migration_004_creator_pain_analysis,
     migration_005_creator_product_suggestions,
     migration_006_creator_offer_drafts,
+    migration_007_creator_demand_validations,
 )
 
 
@@ -32,6 +33,7 @@ MIGRATIONS: list[tuple[int, callable]] = [
     (4, migration_004_creator_pain_analysis.upgrade),
     (5, migration_005_creator_product_suggestions.upgrade),
     (6, migration_006_creator_offer_drafts.upgrade),
+    (7, migration_007_creator_demand_validations.upgrade),
 ]
 
 

@@ -10,7 +10,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from core.events import Event
-from core.creator_intelligence import CreatorOfferService, CreatorPainClassifier, CreatorProductSuggester
+from core.creator_intelligence import (
+    CreatorDemandValidator,
+    CreatorOfferService,
+    CreatorPainClassifier,
+    CreatorProductSuggester,
+)
 from core.errors import (
     DependencyError,
     ErrorType,
@@ -721,6 +726,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_error(404, ErrorType.NOT_FOUND, "not_found", "not_found")
             return self._send_success(200, item)
 
+        if parsed.path == "/creator/demand":
+            if self.server.storage is None:
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "storage_unavailable", "storage_unavailable")
+            query = parse_qs(parsed.query)
+            try:
+                limit = int(query.get("limit", ["20"])[0])
+            except (TypeError, ValueError):
+                return self._send_error(400, ErrorType.CLIENT_ERROR, "invalid_limit", "invalid_limit")
+            validator = CreatorDemandValidator(storage=self.server.storage)
+            items = validator.list_recent_validations(limit=limit)
+            return self._send_success(200, {"items": items})
+
         if parsed.path == "/reddit/config":
             return self._send_success(200, get_config())
 
@@ -792,6 +809,7 @@ class Handler(BaseHTTPRequestHandler):
             "/conversation/message",
             "/voice/tts",
             "/creator/offers/generate",
+            "/creator/demand/validate",
         }
         if self.path not in allowed_paths and transition_event_type is None and launch_sale_id is None and launch_status_id is None and launch_link_gumroad_id is None and strategy_execute_id is None and strategy_reject_id is None:
             return self._send_error(404, ErrorType.NOT_FOUND, "not_found", "not_found")
@@ -979,6 +997,13 @@ class Handler(BaseHTTPRequestHandler):
                             return self._send_error(404, ErrorType.NOT_FOUND, "suggestion_not_found", "suggestion_not_found")
                         raise
                     return self._send_success(200, draft)
+
+                if self.path == "/creator/demand/validate":
+                    if self.server.storage is None:
+                        return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "storage_unavailable", "storage_unavailable")
+                    validator = CreatorDemandValidator(storage=self.server.storage)
+                    items = validator.validate()
+                    return self._send_success(200, {"items": items})
 
                 if self.path == "/reddit/config":
                     editable_fields = {
