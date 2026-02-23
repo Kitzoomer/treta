@@ -208,21 +208,89 @@ function normalizeEnvelopeObject(payload) {
   return payload;
 }
 
-async function renderStrategicDashboard() {
-  setHomeFocusMode(false);
-  ui.pageContent.innerHTML = `
-    <section class="focus-mode-switch">
-      <button id="home-focus-mode">Volver a Modo Enfoque</button>
-    </section>
-    <section class="hero">
-      <h1>Esto es lo que puedes vender esta semana.</h1>
-      <p>Basado en lo que los creadores están preguntando ahora mismo.</p>
-    </section>
-    <section class="next-step">
-      <h2>👉 Tu próximo paso</h2>
-      <p>Cargando dashboard estratégico…</p>
-    </section>
-  `;
+async function renderStrategicDashboard(options = { mode: "full" }) {
+  const mode = options?.mode === "focus" ? "focus" : "full";
+  setHomeFocusMode(mode === "focus");
+
+  let dashboardRoot = ui.pageContent.querySelector(".strategic-dashboard");
+  if (!dashboardRoot) {
+    ui.pageContent.innerHTML = `
+      <div class="strategic-dashboard">
+        <section class="focus-mode-switch">
+          <button id="home-focus-mode">Volver a Modo Enfoque</button>
+          <button id="home-complete-mode">Modo completo</button>
+        </section>
+        <section class="hero">
+          <h1>Esto es lo que puedes vender esta semana.</h1>
+          <p>Basado en lo que los creadores están preguntando ahora mismo.</p>
+        </section>
+
+        <section class="next-step">
+          <h2>👉 Tu próximo paso</h2>
+          <p>Convierte este problema en una plantilla vendible:</p>
+          <strong id="dashboard-dominant-pain">Cargando señal dominante…</strong>
+          <p>Producto recomendado: <span id="dashboard-recommended-product">Calculando producto recomendado…</span></p>
+          <button id="create-offer-btn" data-route="#/work">Crear oferta ahora</button>
+        </section>
+
+        <section class="reddit-authority" data-focus-collapse>
+          <h2>🗣 Cómo hablar de esto en Reddit</h2>
+          <ul>
+            <li>Explica cómo resolver este problema paso a paso.</li>
+            <li>Responde a 3 hilos esta semana aportando valor.</li>
+            <li>Comparte tu plantilla solo cuando alguien lo pida.</li>
+          </ul>
+        </section>
+
+        <section class="pain-overview" data-focus-collapse>
+          <h2>Lo que más se repite esta semana</h2>
+          <ul id="dashboard-top-pains">
+            <li>Cargando señales…</li>
+          </ul>
+        </section>
+
+        <section class="revenue-summary" data-focus-collapse>
+          <h2>Lo que ya te está funcionando</h2>
+          <p>Total ventas: <span id="dashboard-total-sales">—</span></p>
+          <p>Total ingresos: <span id="dashboard-total-revenue">—</span></p>
+          <p>Categoría más rentable: <span id="dashboard-top-category">—</span></p>
+        </section>
+      </div>
+    `;
+    dashboardRoot = ui.pageContent.querySelector(".strategic-dashboard");
+  }
+
+  const collapsedSections = ui.pageContent.querySelectorAll("[data-focus-collapse]");
+  collapsedSections.forEach((section) => {
+    section.classList.toggle("dashboard-collapsed", mode === "focus");
+  });
+
+  const focusModeButton = document.getElementById("home-focus-mode");
+  const completeModeButton = document.getElementById("home-complete-mode");
+  if (focusModeButton) {
+    focusModeButton.classList.toggle("dashboard-mode-active", mode === "focus");
+    focusModeButton.classList.toggle("dashboard-hidden", mode === "focus");
+    focusModeButton.onclick = () => renderStrategicDashboard({ mode: "focus" });
+  }
+  if (completeModeButton) {
+    completeModeButton.classList.toggle("dashboard-mode-active", mode === "full");
+    completeModeButton.classList.toggle("dashboard-hidden", mode !== "focus");
+    completeModeButton.onclick = () => renderStrategicDashboard({ mode: "full" });
+  }
+
+  const dominantPainNode = document.getElementById("dashboard-dominant-pain");
+  const recommendedProductNode = document.getElementById("dashboard-recommended-product");
+  const topPainsNode = document.getElementById("dashboard-top-pains");
+  const totalSalesNode = document.getElementById("dashboard-total-sales");
+  const totalRevenueNode = document.getElementById("dashboard-total-revenue");
+  const topCategoryNode = document.getElementById("dashboard-top-category");
+
+  if (dominantPainNode) dominantPainNode.textContent = "Cargando señal dominante…";
+  if (recommendedProductNode) recommendedProductNode.textContent = "Calculando producto recomendado…";
+  if (topPainsNode) topPainsNode.innerHTML = "<li>Cargando señales…</li>";
+  if (totalSalesNode) totalSalesNode.textContent = "—";
+  if (totalRevenueNode) totalRevenueNode.textContent = "—";
+  if (topCategoryNode) topCategoryNode.textContent = "—";
 
   try {
     const [demandPayload, suggestionsPayload, painsPayload, launchesSummaryPayload] = await Promise.all([
@@ -264,160 +332,27 @@ async function renderStrategicDashboard() {
       || Object.entries(categoryRevenue).sort((left, right) => Number((right[1] || {}).revenue || 0) - Number((left[1] || {}).revenue || 0))[0]?.[0]
       || "N/A";
 
-    ui.pageContent.innerHTML = `
-      <section class="focus-mode-switch">
-        <button id="home-focus-mode">Volver a Modo Enfoque</button>
-      </section>
-      <section class="hero">
-        <h1>Esto es lo que puedes vender esta semana.</h1>
-        <p>Basado en lo que los creadores están preguntando ahora mismo.</p>
-      </section>
-
-      <section class="next-step">
-        <h2>👉 Tu próximo paso</h2>
-        <p>Convierte este problema en una plantilla vendible:</p>
-        <strong>${helpers.escape(dominantPainLabel)}</strong>
-        <p>Producto recomendado: ${helpers.escape(associatedSuggestion?.suggested_product || "Pendiente de sugerencia")}</p>
-        <button id="create-offer-btn" data-route="#/work">Crear oferta ahora</button>
-      </section>
-
-      <section class="reddit-authority">
-        <h2>🗣 Cómo hablar de esto en Reddit</h2>
-        <ul>
-          <li>Explica cómo resolver este problema paso a paso.</li>
-          <li>Responde a 3 hilos esta semana aportando valor.</li>
-          <li>Comparte tu plantilla solo cuando alguien lo pida.</li>
-        </ul>
-      </section>
-
-      <section class="pain-overview">
-        <h2>Lo que más se repite esta semana</h2>
-        <ul>
-          ${topPains.length
-    ? topPains.map((item) => `<li><strong>${helpers.escape(item.pain_category || "N/A")}</strong> · prioridad ${helpers.escape(helpers.t(item.launch_priority_score, "0"))} · ${helpers.escape(helpers.t(item.demand_strength, "unknown"))}</li>`).join("")
-    : "<li>Sin datos todavía.</li>"}
-        </ul>
-      </section>
-
-      <section class="revenue-summary">
-        <h2>Lo que ya te está funcionando</h2>
-        <p>Total ventas: ${helpers.escape(helpers.t(launchesSummary?.total_sales, 0))}</p>
-        <p>Total ingresos: ${helpers.escape(helpers.t(launchesSummary?.total_revenue, 0))}</p>
-        <p>Categoría más rentable: ${helpers.escape(topCategoryByRevenue)}</p>
-      </section>
-    `;
+    if (dominantPainNode) dominantPainNode.textContent = dominantPainLabel;
+    if (recommendedProductNode) {
+      recommendedProductNode.textContent = associatedSuggestion?.suggested_product || "Pendiente de sugerencia";
+    }
+    if (topPainsNode) {
+      topPainsNode.innerHTML = topPains.length
+        ? topPains.map((item) => `<li><strong>${helpers.escape(item.pain_category || "N/A")}</strong> · prioridad ${helpers.escape(helpers.t(item.launch_priority_score, "0"))} · ${helpers.escape(helpers.t(item.demand_strength, "unknown"))}</li>`).join("")
+        : "<li>Sin datos todavía.</li>";
+    }
+    if (totalSalesNode) totalSalesNode.textContent = helpers.escape(helpers.t(launchesSummary?.total_sales, 0));
+    if (totalRevenueNode) totalRevenueNode.textContent = helpers.escape(helpers.t(launchesSummary?.total_revenue, 0));
+    if (topCategoryNode) topCategoryNode.textContent = topCategoryByRevenue;
   } catch (_error) {
-    ui.pageContent.innerHTML = `
-      <section class="focus-mode-switch">
-        <button id="home-focus-mode">Volver a Modo Enfoque</button>
-      </section>
-      <section class="hero">
-        <h1>Esto es lo que puedes vender esta semana.</h1>
-        <p>Basado en lo que los creadores están preguntando ahora mismo.</p>
-      </section>
-      <section class="next-step">
-        <h2>👉 Tu próximo paso</h2>
-        <p class="empty">No se pudo cargar el dashboard estratégico en este momento.</p>
-        <button id="create-offer-btn" data-route="#/work">Crear oferta ahora</button>
-      </section>
-    `;
-  }
-
-  const focusModeButton = document.getElementById("home-focus-mode");
-  if (focusModeButton) {
-    focusModeButton.addEventListener("click", () => {
-      setHomeFocusMode(true);
-      renderFocusMode();
-    });
+    if (dominantPainNode) dominantPainNode.textContent = "No se pudo identificar el pain dominante ahora.";
+    if (recommendedProductNode) recommendedProductNode.textContent = "No se pudo cargar el producto sugerido.";
+    if (topPainsNode) topPainsNode.innerHTML = "<li class=\"empty\">No se pudo cargar el dashboard estratégico en este momento.</li>";
   }
 }
 
 async function renderFocusMode() {
-  setHomeFocusMode(true);
-
-  ui.pageContent.innerHTML = `
-    <section class="focus-mode-switch">
-      <button id="home-complete-mode">Modo completo</button>
-    </section>
-
-    <section class="focus-panel focus-header">
-      <h1>Hoy enfócate en esto.</h1>
-    </section>
-
-    <section class="focus-panel focus-problem">
-        <h2>Problema principal</h2>
-        <p>Cargando señal dominante…</p>
-    </section>
-
-    <section class="focus-panel focus-product">
-        <h2>Lo que vas a vender</h2>
-        <p>Calculando producto recomendado…</p>
-    </section>
-
-    <section class="focus-panel focus-action">
-        <h2>Acción en Reddit</h2>
-        <p>
-          Publica un post explicando cómo resolver este problema.
-          Responde a 3 hilos aportando valor.
-          Comparte tu plantilla solo si alguien lo pide.
-        </p>
-    </section>
-
-    <button id="expand-dashboard">
-      Ver análisis completo
-    </button>
-  `;
-
-  try {
-    const [demandPayload, suggestionsPayload] = await Promise.all([
-      api.fetchJson("/creator/demand"),
-      api.fetchJson("/creator/product_suggestions"),
-    ]);
-
-    const demandItems = normalizeEnvelopeItems(demandPayload);
-    const suggestionItems = normalizeEnvelopeItems(suggestionsPayload);
-    const demandByStrength = { strong: 3, moderate: 2, weak: 1 };
-
-    const dominantPain = [...demandItems].sort((left, right) => {
-      const leftStrength = demandByStrength[helpers.normalizeStatus(left.demand_strength)] || 0;
-      const rightStrength = demandByStrength[helpers.normalizeStatus(right.demand_strength)] || 0;
-      if (leftStrength !== rightStrength) return rightStrength - leftStrength;
-      return Number(right.launch_priority_score || 0) - Number(left.launch_priority_score || 0);
-    })[0] || null;
-
-    const dominantPainLabel = dominantPain?.pain_category || dominantPain?.pain || "Sin categoría dominante aún";
-    const dominantPainKey = helpers.normalizeStatus(dominantPain?.pain_category || dominantPain?.pain || "");
-
-    const associatedSuggestion = suggestionItems.find((item) => {
-      const itemPain = helpers.normalizeStatus(item.pain_category || item.pain || "");
-      return dominantPainKey && dominantPainKey === itemPain;
-    }) || suggestionItems[0] || null;
-
-    const focusProblem = ui.pageContent.querySelector(".focus-problem p");
-    const focusProduct = ui.pageContent.querySelector(".focus-product p");
-    if (focusProblem) focusProblem.textContent = dominantPainLabel;
-    if (focusProduct) focusProduct.textContent = associatedSuggestion?.suggested_product || "Pendiente de sugerencia";
-  } catch (_error) {
-    const focusProblem = ui.pageContent.querySelector(".focus-problem p");
-    const focusProduct = ui.pageContent.querySelector(".focus-product p");
-    if (focusProblem) focusProblem.textContent = "No se pudo identificar el pain dominante ahora.";
-    if (focusProduct) focusProduct.textContent = "No se pudo cargar el producto sugerido.";
-  }
-
-  const expandDashboardButton = document.getElementById("expand-dashboard");
-  const completeModeButton = document.getElementById("home-complete-mode");
-  const openFullDashboard = () => {
-    setHomeFocusMode(false);
-    renderStrategicDashboard();
-  };
-
-  if (expandDashboardButton) {
-    expandDashboardButton.addEventListener("click", openFullDashboard);
-  }
-
-  if (completeModeButton) {
-    completeModeButton.addEventListener("click", openFullDashboard);
-  }
+  return renderStrategicDashboard({ mode: "focus" });
 }
 
 function loadProfileState() {
