@@ -22,8 +22,13 @@ migration_004_creator_pain_analysis = _load_migration(
     "004_creator_pain_analysis.py", "core.migrations.migration_004_creator_pain_analysis"
 )
 
+migration_005_creator_product_suggestions = _load_migration(
+    "005_creator_product_suggestions.py", "core.migrations.migration_005_creator_product_suggestions"
+)
+
 __all__ = [
     "migration_001_base_schema",
     "migration_003_unify_reddit_db",
     "migration_004_creator_pain_analysis",
+    "migration_005_creator_product_suggestions",
 ]
