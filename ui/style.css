@@ -999,36 +999,29 @@ pre { white-space: pre-wrap; background: #0b1020; border: 1px solid var(--border
   padding-left: 18px;
 }
 
-.focus-container {
-  max-width: 700px;
-  margin: 0 auto;
-  display: grid;
-  gap: 14px;
-}
-
-.focus-container h1 {
-  margin: 0;
-}
-
-.focus-container .focus-problem,
-.focus-container .focus-product,
-.focus-container .focus-action {
-  background: var(--panel-2);
-  border: 1px solid rgba(217,31,51,.24);
-  border-radius: 10px;
-  padding: 12px;
-}
-
 .focus-mode-switch {
   display: flex;
   justify-content: flex-end;
 }
 
-body.focus-mode-active .app-layout {
-  grid-template-columns: 1fr;
+.focus-panel {
+  background: var(--panel-2);
+  border: 1px solid rgba(42,52,72,.8);
+  border-radius: 10px;
+  padding: 12px;
 }
 
-body.focus-mode-active .panel-left,
-body.focus-mode-active .panel-right {
+.focus-header h1 {
+  margin: 0;
+}
+
+body.focus-mode-active #system-status-panel,
+body.focus-mode-active #activity-timeline-panel,
+body.focus-mode-active #chat-panel,
+body.focus-mode-active #telemetry-panel {
   display: none;
+}
+
+body.focus-mode-active .panel-left {
+  align-content: start;
 }

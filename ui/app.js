@@ -336,36 +336,36 @@ async function renderFocusMode() {
   setHomeFocusMode(true);
 
   ui.pageContent.innerHTML = `
-    <div class="focus-container">
-      <div class="focus-mode-switch">
-        <button id="home-complete-mode">Modo completo</button>
-      </div>
+    <section class="focus-mode-switch">
+      <button id="home-complete-mode">Modo completo</button>
+    </section>
 
+    <section class="focus-panel focus-header">
       <h1>Hoy enfócate en esto.</h1>
+    </section>
 
-      <div class="focus-problem">
+    <section class="focus-panel focus-problem">
         <h2>Problema principal</h2>
         <p>Cargando señal dominante…</p>
-      </div>
+    </section>
 
-      <div class="focus-product">
+    <section class="focus-panel focus-product">
         <h2>Lo que vas a vender</h2>
         <p>Calculando producto recomendado…</p>
-      </div>
+    </section>
 
-      <div class="focus-action">
+    <section class="focus-panel focus-action">
         <h2>Acción en Reddit</h2>
         <p>
           Publica un post explicando cómo resolver este problema.
           Responde a 3 hilos aportando valor.
           Comparte tu plantilla solo si alguien lo pide.
         </p>
-      </div>
+    </section>
 
-      <button id="expand-dashboard">
-        Ver análisis completo
-      </button>
-    </div>
+    <button id="expand-dashboard">
+      Ver análisis completo
+    </button>
   `;
 
   try {
