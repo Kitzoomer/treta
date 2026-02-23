@@ -134,6 +134,9 @@ const state = {
   chatLoading: false,
   pendingVoiceConfirmation: null,
   currentRoute: CONFIG.defaultRoute,
+  homeView: {
+    focusModeActive: true,
+  },
   workView: {
     messages: {},
     traceFilter: "all",
@@ -154,6 +157,12 @@ const state = {
   },
   timerId: null,
 };
+
+function setHomeFocusMode(active) {
+  state.homeView.focusModeActive = Boolean(active);
+  const shouldEnableFocusMode = state.currentRoute === "home" && state.homeView.focusModeActive;
+  document.body.classList.toggle("focus-mode-active", shouldEnableFocusMode);
+}
 
 const ui = {
   pageContent: document.getElementById("page-content"),
@@ -195,6 +204,7 @@ function normalizeEnvelopeObject(payload) {
 }
 
 async function renderStrategicDashboard() {
+  setHomeFocusMode(false);
   ui.pageContent.innerHTML = `
     <section class="hero">
       <h1>Esto es lo que puedes vender esta semana.</h1>
@@ -297,6 +307,94 @@ async function renderStrategicDashboard() {
         <button id="create-offer-btn" data-route="#/work">Crear oferta ahora</button>
       </section>
     `;
+  }
+}
+
+async function renderFocusMode() {
+  setHomeFocusMode(true);
+
+  ui.pageContent.innerHTML = `
+    <div class="focus-container">
+      <div class="focus-mode-switch">
+        <button id="home-complete-mode">Modo completo</button>
+      </div>
+
+      <h1>Hoy enfócate en esto.</h1>
+
+      <div class="focus-problem">
+        <h2>Problema principal</h2>
+        <p>Cargando señal dominante…</p>
+      </div>
+
+      <div class="focus-product">
+        <h2>Lo que vas a vender</h2>
+        <p>Calculando producto recomendado…</p>
+      </div>
+
+      <div class="focus-action">
+        <h2>Acción en Reddit</h2>
+        <p>
+          Publica un post explicando cómo resolver este problema.
+          Responde a 3 hilos aportando valor.
+          Comparte tu plantilla solo si alguien lo pide.
+        </p>
+      </div>
+
+      <button id="expand-dashboard">
+        Ver análisis completo
+      </button>
+    </div>
+  `;
+
+  try {
+    const [demandPayload, suggestionsPayload] = await Promise.all([
+      api.fetchJson("/creator/demand"),
+      api.fetchJson("/creator/product_suggestions"),
+    ]);
+
+    const demandItems = normalizeEnvelopeItems(demandPayload);
+    const suggestionItems = normalizeEnvelopeItems(suggestionsPayload);
+    const demandByStrength = { strong: 3, moderate: 2, weak: 1 };
+
+    const dominantPain = [...demandItems].sort((left, right) => {
+      const leftStrength = demandByStrength[helpers.normalizeStatus(left.demand_strength)] || 0;
+      const rightStrength = demandByStrength[helpers.normalizeStatus(right.demand_strength)] || 0;
+      if (leftStrength !== rightStrength) return rightStrength - leftStrength;
+      return Number(right.launch_priority_score || 0) - Number(left.launch_priority_score || 0);
+    })[0] || null;
+
+    const dominantPainLabel = dominantPain?.pain_category || dominantPain?.pain || "Sin categoría dominante aún";
+    const dominantPainKey = helpers.normalizeStatus(dominantPain?.pain_category || dominantPain?.pain || "");
+
+    const associatedSuggestion = suggestionItems.find((item) => {
+      const itemPain = helpers.normalizeStatus(item.pain_category || item.pain || "");
+      return dominantPainKey && dominantPainKey === itemPain;
+    }) || suggestionItems[0] || null;
+
+    const focusProblem = ui.pageContent.querySelector(".focus-problem p");
+    const focusProduct = ui.pageContent.querySelector(".focus-product p");
+    if (focusProblem) focusProblem.textContent = dominantPainLabel;
+    if (focusProduct) focusProduct.textContent = associatedSuggestion?.suggested_product || "Pendiente de sugerencia";
+  } catch (_error) {
+    const focusProblem = ui.pageContent.querySelector(".focus-problem p");
+    const focusProduct = ui.pageContent.querySelector(".focus-product p");
+    if (focusProblem) focusProblem.textContent = "No se pudo identificar el pain dominante ahora.";
+    if (focusProduct) focusProduct.textContent = "No se pudo cargar el producto sugerido.";
+  }
+
+  const expandDashboardButton = document.getElementById("expand-dashboard");
+  const completeModeButton = document.getElementById("home-complete-mode");
+  const openFullDashboard = () => {
+    setHomeFocusMode(false);
+    renderStrategicDashboard();
+  };
+
+  if (expandDashboardButton) {
+    expandDashboardButton.addEventListener("click", openFullDashboard);
+  }
+
+  if (completeModeButton) {
+    completeModeButton.addEventListener("click", openFullDashboard);
   }
 }
 
@@ -843,6 +941,7 @@ const router = {
     const resolution = this.resolveRoute();
     state.currentRoute = resolution.route;
     document.body.dataset.route = state.currentRoute;
+    document.body.classList.toggle("focus-mode-active", state.currentRoute === "home" && state.homeView.focusModeActive);
     renderNavigation();
     if (state.currentRoute === "home") return views.loadHome();
     if (state.currentRoute === "dashboard") return views.loadDashboard();
@@ -875,7 +974,7 @@ const views = {
   },
 
   loadHome() {
-    return renderStrategicDashboard();
+    return renderFocusMode();
   },
 
   loadDashboard() {
