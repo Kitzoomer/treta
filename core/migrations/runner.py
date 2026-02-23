@@ -7,6 +7,7 @@ from core.migrations import (
     migration_001_base_schema,
     migration_003_unify_reddit_db,
     migration_004_creator_pain_analysis,
+    migration_005_creator_product_suggestions,
 )
 
 
@@ -28,6 +29,7 @@ MIGRATIONS: list[tuple[int, callable]] = [
     (2, _upgrade_scheduler_state),
     (3, migration_003_unify_reddit_db.upgrade),
     (4, migration_004_creator_pain_analysis.upgrade),
+    (5, migration_005_creator_product_suggestions.upgrade),
 ]
 
 

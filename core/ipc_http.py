@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from core.events import Event
-from core.creator_intelligence import CreatorPainClassifier
+from core.creator_intelligence import CreatorPainClassifier, CreatorProductSuggester
 from core.errors import (
     DependencyError,
     ErrorType,
@@ -691,6 +691,13 @@ class Handler(BaseHTTPRequestHandler):
             classifier = CreatorPainClassifier(storage=self.server.storage)
             items = classifier.list_recent_analysis(limit=50)
             return self._send(200, {"ok": True, "data": items, "error": None})
+
+        if parsed.path == "/creator/product_suggestions":
+            if self.server.storage is None:
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "storage_unavailable", "storage_unavailable")
+            suggester = CreatorProductSuggester(storage=self.server.storage)
+            items = suggester.list_recent_suggestions(limit=20)
+            return self._send_success(200, {"items": items})
 
         if parsed.path == "/reddit/config":
             return self._send_success(200, get_config())
