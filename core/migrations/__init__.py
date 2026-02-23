@@ -18,4 +18,12 @@ migration_003_unify_reddit_db = _load_migration(
     "003_unify_reddit_db.py", "core.migrations.migration_003_unify_reddit_db"
 )
 
-__all__ = ["migration_001_base_schema", "migration_003_unify_reddit_db"]
+migration_004_creator_pain_analysis = _load_migration(
+    "004_creator_pain_analysis.py", "core.migrations.migration_004_creator_pain_analysis"
+)
+
+__all__ = [
+    "migration_001_base_schema",
+    "migration_003_unify_reddit_db",
+    "migration_004_creator_pain_analysis",
+]

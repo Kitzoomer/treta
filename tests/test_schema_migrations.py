@@ -16,7 +16,7 @@ class SchemaMigrationsTest(unittest.TestCase):
             with sqlite3.connect(db_path) as conn:
                 run_migrations(conn)
                 version = get_current_version(conn)
-                self.assertGreaterEqual(version, 3)
+                self.assertGreaterEqual(version, 4)
 
                 tables = {
                     row[0]
@@ -30,6 +30,7 @@ class SchemaMigrationsTest(unittest.TestCase):
             self.assertIn("state", tables)
             self.assertIn("scheduler_state", tables)
             self.assertIn("reddit_signals", tables)
+            self.assertIn("creator_pain_analysis", tables)
 
     def test_storage_enables_foreign_keys(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
