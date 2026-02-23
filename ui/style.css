@@ -957,3 +957,44 @@ pre { white-space: pre-wrap; background: #0b1020; border: 1px solid var(--border
 .voice-status {
   color: var(--muted);
 }
+
+.hero,
+.next-step,
+.reddit-authority,
+.pain-overview,
+.revenue-summary {
+  background: var(--panel-2);
+  border: 1px solid rgba(217,31,51,.24);
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.hero h1 {
+  margin: 0 0 8px;
+  color: #ffd7dc;
+  font-size: 1.35rem;
+}
+
+.hero p,
+.next-step p,
+.reddit-authority li,
+.pain-overview li,
+.revenue-summary p {
+  color: #cad0dc;
+}
+
+.next-step strong {
+  display: block;
+  margin: 6px 0 8px;
+  font-size: 1rem;
+}
+
+.next-step #create-offer-btn {
+  margin-top: 8px;
+}
+
+.pain-overview ul,
+.reddit-authority ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}

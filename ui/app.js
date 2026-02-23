@@ -180,6 +180,126 @@ const degradedMode = window.TretaDegradedMode || {
 
 const voiceMode = window.TretaVoiceMode || null;
 
+function normalizeEnvelopeItems(payload) {
+  if (!payload || typeof payload !== "object") return [];
+  if (Array.isArray(payload.items)) return payload.items;
+  if (Array.isArray(payload.data)) return payload.data;
+  if (Array.isArray(payload.data?.items)) return payload.data.items;
+  return [];
+}
+
+function normalizeEnvelopeObject(payload) {
+  if (!payload || typeof payload !== "object") return {};
+  if (payload.data && typeof payload.data === "object") return payload.data;
+  return payload;
+}
+
+async function renderStrategicDashboard() {
+  ui.pageContent.innerHTML = `
+    <section class="hero">
+      <h1>Esto es lo que puedes vender esta semana.</h1>
+      <p>Basado en lo que los creadores están preguntando ahora mismo.</p>
+    </section>
+    <section class="next-step">
+      <h2>👉 Tu próximo paso</h2>
+      <p>Cargando dashboard estratégico…</p>
+    </section>
+  `;
+
+  try {
+    const [demandPayload, suggestionsPayload, painsPayload, launchesSummaryPayload] = await Promise.all([
+      api.fetchJson("/creator/demand"),
+      api.fetchJson("/creator/product_suggestions"),
+      api.fetchJson("/creator/pains"),
+      api.fetchJson("/creator/launches/summary"),
+    ]);
+
+    const demandItems = normalizeEnvelopeItems(demandPayload);
+    const suggestionItems = normalizeEnvelopeItems(suggestionsPayload);
+    const painItems = normalizeEnvelopeItems(painsPayload);
+    const launchesSummary = normalizeEnvelopeObject(launchesSummaryPayload);
+
+    const demandByStrength = { strong: 3, moderate: 2, weak: 1 };
+    const dominantPain = [...demandItems].sort((left, right) => {
+      const leftStrength = demandByStrength[helpers.normalizeStatus(left.demand_strength)] || 0;
+      const rightStrength = demandByStrength[helpers.normalizeStatus(right.demand_strength)] || 0;
+      if (leftStrength !== rightStrength) return rightStrength - leftStrength;
+      return Number(right.launch_priority_score || 0) - Number(left.launch_priority_score || 0);
+    })[0] || painItems[0] || null;
+
+    const dominantPainLabel = dominantPain?.pain_category || dominantPain?.pain || "Sin categoría dominante aún";
+    const dominantPainKey = helpers.normalizeStatus(dominantPain?.pain_category || dominantPain?.pain || "");
+
+    const associatedSuggestion = suggestionItems.find((item) => {
+      const itemPain = helpers.normalizeStatus(item.pain_category || item.pain || "");
+      return dominantPainKey && dominantPainKey === itemPain;
+    }) || suggestionItems[0] || null;
+
+    const topPains = [...demandItems]
+      .sort((left, right) => Number(right.launch_priority_score || 0) - Number(left.launch_priority_score || 0))
+      .slice(0, 3);
+
+    const categoryRevenue = launchesSummary?.categories && typeof launchesSummary.categories === "object"
+      ? launchesSummary.categories
+      : {};
+    const topCategoryByRevenue = launchesSummary?.top_category_by_revenue
+      || Object.entries(categoryRevenue).sort((left, right) => Number((right[1] || {}).revenue || 0) - Number((left[1] || {}).revenue || 0))[0]?.[0]
+      || "N/A";
+
+    ui.pageContent.innerHTML = `
+      <section class="hero">
+        <h1>Esto es lo que puedes vender esta semana.</h1>
+        <p>Basado en lo que los creadores están preguntando ahora mismo.</p>
+      </section>
+
+      <section class="next-step">
+        <h2>👉 Tu próximo paso</h2>
+        <p>Convierte este problema en una plantilla vendible:</p>
+        <strong>${helpers.escape(dominantPainLabel)}</strong>
+        <p>Producto recomendado: ${helpers.escape(associatedSuggestion?.suggested_product || "Pendiente de sugerencia")}</p>
+        <button id="create-offer-btn" data-route="#/work">Crear oferta ahora</button>
+      </section>
+
+      <section class="reddit-authority">
+        <h2>🗣 Cómo hablar de esto en Reddit</h2>
+        <ul>
+          <li>Explica cómo resolver este problema paso a paso.</li>
+          <li>Responde a 3 hilos esta semana aportando valor.</li>
+          <li>Comparte tu plantilla solo cuando alguien lo pida.</li>
+        </ul>
+      </section>
+
+      <section class="pain-overview">
+        <h2>Lo que más se repite esta semana</h2>
+        <ul>
+          ${topPains.length
+    ? topPains.map((item) => `<li><strong>${helpers.escape(item.pain_category || "N/A")}</strong> · prioridad ${helpers.escape(helpers.t(item.launch_priority_score, "0"))} · ${helpers.escape(helpers.t(item.demand_strength, "unknown"))}</li>`).join("")
+    : "<li>Sin datos todavía.</li>"}
+        </ul>
+      </section>
+
+      <section class="revenue-summary">
+        <h2>Lo que ya te está funcionando</h2>
+        <p>Total ventas: ${helpers.escape(helpers.t(launchesSummary?.total_sales, 0))}</p>
+        <p>Total ingresos: ${helpers.escape(helpers.t(launchesSummary?.total_revenue, 0))}</p>
+        <p>Categoría más rentable: ${helpers.escape(topCategoryByRevenue)}</p>
+      </section>
+    `;
+  } catch (_error) {
+    ui.pageContent.innerHTML = `
+      <section class="hero">
+        <h1>Esto es lo que puedes vender esta semana.</h1>
+        <p>Basado en lo que los creadores están preguntando ahora mismo.</p>
+      </section>
+      <section class="next-step">
+        <h2>👉 Tu próximo paso</h2>
+        <p class="empty">No se pudo cargar el dashboard estratégico en este momento.</p>
+        <button id="create-offer-btn" data-route="#/work">Crear oferta ahora</button>
+      </section>
+    `;
+  }
+}
+
 function loadProfileState() {
   const raw = localStorage.getItem(STORAGE_KEYS.profile);
   if (!raw) {
@@ -755,20 +875,7 @@ const views = {
   },
 
   loadHome() {
-    const phase = helpers.t(state.dailyLoop?.phase, "IDLE").toUpperCase();
-    ui.pageContent.innerHTML = `
-      <div class="card" style="margin-bottom: 12px; padding: 10px 14px;">
-        <strong>Daily Loop Phase:</strong> <span class="badge info">${helpers.escape(phase)}</span>
-        <span style="margin-left: 10px;">Backend: <span class="badge ${state.diagnostics.backendConnected ? "ok" : "error"}">${state.diagnostics.backendConnected ? "CONNECTED" : "DISCONNECTED"}</span></span>
-      </div>
-      ${renderRouteBanner()}
-      <section class="home-identity" aria-label="Treta identity">
-        <h1 class="treta-title" aria-label="TRETA">
-          <span class="treta-title-text">TRETA</span>
-          <span class="treta-wave" aria-hidden="true"></span>
-        </h1>
-      </section>
-    `;
+    return renderStrategicDashboard();
   },
 
   loadDashboard() {
