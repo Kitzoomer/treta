@@ -38,6 +38,10 @@ migration_008_creator_launch_tracking = _load_migration(
     "008_creator_launch_tracking.py", "core.migrations.migration_008_creator_launch_tracking"
 )
 
+migration_009_decision_logs_traceability = _load_migration(
+    "009_decision_logs_traceability.py", "core.migrations.migration_009_decision_logs_traceability"
+)
+
 __all__ = [
     "migration_001_base_schema",
     "migration_003_unify_reddit_db",
@@ -46,4 +50,5 @@ __all__ = [
     "migration_006_creator_offer_drafts",
     "migration_007_creator_demand_validations",
     "migration_008_creator_launch_tracking",
+    "migration_009_decision_logs_traceability",
 ]

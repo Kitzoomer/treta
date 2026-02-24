@@ -74,6 +74,20 @@ class AutonomyPolicyEngine:
 
     def apply(self, request_id: str | None = None) -> List[Dict[str, Any]]:
         if self._mode != "partial":
+            try:
+                self._storage.create_decision_log(
+                    {
+                        "decision_type": "autonomy",
+                        "decision": "MANUAL",
+                        "policy_name": "AutonomyPolicyEngine",
+                        "policy_snapshot_json": {"mode": self._mode},
+                        "reason": "Autonomy mode is manual; no auto execution.",
+                        "correlation_id": request_id,
+                        "status": "skipped",
+                    }
+                )
+            except Exception:
+                pass
             return []
 
         already_auto_executed = self._count_auto_executed_last_24h()
@@ -81,6 +95,20 @@ class AutonomyPolicyEngine:
         max_auto_executions = int(adaptive_status["max_auto_executions_per_24h"])
         remaining_budget = max(max_auto_executions - already_auto_executed, 0)
         if remaining_budget <= 0:
+            try:
+                self._storage.create_decision_log(
+                    {
+                        "decision_type": "autonomy",
+                        "decision": "DENY",
+                        "policy_name": "AutonomyPolicyEngine",
+                        "policy_snapshot_json": adaptive_status,
+                        "reason": "No remaining autonomy budget in the last 24h.",
+                        "correlation_id": request_id,
+                        "status": "skipped",
+                    }
+                )
+            except Exception:
+                pass
             return []
 
         executed: List[Dict[str, Any]] = []
@@ -100,18 +128,33 @@ class AutonomyPolicyEngine:
                 )
             )
             try:
-                self._storage.insert_decision_log(
-                        engine="AutonomyPolicyEngine",
-                        input_snapshot=action,
-                        computed_score=float(action.get("expected_impact_score", 0) or 0),
-                        rules_applied=["low_risk_only", "impact_threshold", "daily_budget"],
-                        decision="auto_execute",
-                        risk_level=str(action.get("risk_level", "")),
-                        expected_impact_score=float(action.get("expected_impact_score", 0) or 0),
-                        auto_executed=True,
-                        request_id=request_id,
-                        metadata={"mode": self._mode, "action_id": action_id},
-                    )
+                adaptive = self._adaptive_policy_engine.adaptive_status()
+                self._storage.create_decision_log(
+                    {
+                        "decision_type": "autonomy",
+                        "entity_type": "action",
+                        "entity_id": action_id,
+                        "action_type": "execute",
+                        "decision": "ALLOW",
+                        "risk_score": float(action.get("expected_impact_score", 0) or 0),
+                        "autonomy_score": float(action.get("expected_impact_score", 0) or 0),
+                        "policy_name": "AutonomyPolicyEngine",
+                        "policy_snapshot_json": {
+                            "mode": self._mode,
+                            "impact_threshold": adaptive.get("impact_threshold"),
+                            "max_auto_executions_per_24h": adaptive.get("max_auto_executions_per_24h"),
+                        },
+                        "inputs_json": {
+                            "action_id": action_id,
+                            "risk_level": action.get("risk_level"),
+                            "expected_impact_score": action.get("expected_impact_score"),
+                        },
+                        "outputs_json": {"action": updated},
+                        "reason": "Eligible low-risk action auto-executed within adaptive budget.",
+                        "correlation_id": request_id,
+                        "status": "executed",
+                    }
+                )
             except Exception as exc:
                 self._logger.exception("Failed to persist autonomy decision log", extra={"request_id": request_id, "error": str(exc)})
             executed.append(updated)

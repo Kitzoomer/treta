@@ -6,6 +6,7 @@ services:
       - "7777:7777"
 
     volumes:
+      - ./data:/app/data
       - ../../data:/data
       - ../../config:/config
 
@@ -15,6 +16,11 @@ services:
       - TRETA_SCAN_HOUR=9
       - GUMROAD_ACCESS_TOKEN=${GUMROAD_ACCESS_TOKEN}
 
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7777/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
     stdin_open: true
     tty: true
-

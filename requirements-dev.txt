@@ -1,0 +1,6 @@
+pytest
+requests
+ruff
+black
+bandit
+pip-audit

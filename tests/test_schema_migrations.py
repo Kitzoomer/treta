@@ -16,7 +16,7 @@ class SchemaMigrationsTest(unittest.TestCase):
             with sqlite3.connect(db_path) as conn:
                 run_migrations(conn)
                 version = get_current_version(conn)
-                self.assertGreaterEqual(version, 8)
+                self.assertGreaterEqual(version, 9)
 
                 tables = {
                     row[0]

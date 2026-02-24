@@ -61,6 +61,7 @@ class TretaApp:
         self.strategy_action_execution_layer = StrategyActionExecutionLayer(
             strategy_action_store=self.strategy_action_store,
             bus=self.bus,
+            storage=self.storage,
         )
         self.autonomy_policy_engine = AutonomyPolicyEngine(
             strategy_action_store=self.strategy_action_store,
