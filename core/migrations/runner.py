@@ -11,6 +11,7 @@ from core.migrations import (
     migration_006_creator_offer_drafts,
     migration_007_creator_demand_validations,
     migration_008_creator_launch_tracking,
+    migration_009_decision_logs_traceability,
 )
 
 
@@ -36,6 +37,7 @@ MIGRATIONS: list[tuple[int, callable]] = [
     (6, migration_006_creator_offer_drafts.upgrade),
     (7, migration_007_creator_demand_validations.upgrade),
     (8, migration_008_creator_launch_tracking.upgrade),
+    (9, migration_009_decision_logs_traceability.upgrade),
 ]
 
 

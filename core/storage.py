@@ -1,11 +1,16 @@
 import os
 import sqlite3
 import threading
-import json
-import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+from core.persistence.decision_logs import (
+    create_decision_log,
+    ensure_decision_logs_table,
+    get_decision_logs_for_entity as query_decision_logs_for_entity,
+    list_recent_decision_logs,
+    update_decision_log_status,
+)
 
 
 def get_db_path() -> Path:
@@ -19,6 +24,7 @@ class Storage:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.execute("PRAGMA foreign_keys = ON;")
+        ensure_decision_logs_table(self.conn)
         self._lock = threading.Lock()
 
     def set_state(self, key: str, value: str):
@@ -37,6 +43,26 @@ class Storage:
             row = cur.fetchone()
         return row[0] if row else None
 
+    def create_decision_log(self, log: dict) -> int:
+        with self._lock:
+            row_id = create_decision_log(self.conn, log)
+            self.conn.commit()
+        return row_id
+
+    def update_decision_log_status(self, id: int, status: str, error: str | None = None) -> None:
+        with self._lock:
+            update_decision_log_status(self.conn, id=id, status=status, error=error)
+            self.conn.commit()
+
+    def list_recent_decision_logs(self, limit: int = 50, decision_type: str | None = None) -> list[dict]:
+        with self._lock:
+            return list_recent_decision_logs(self.conn, limit=limit, decision_type=decision_type)
+
+    def get_decision_logs_for_entity(self, entity_type: str, entity_id: str, limit: int = 50) -> list[dict]:
+        with self._lock:
+            return query_decision_logs_for_entity(self.conn, entity_type=entity_type, entity_id=entity_id, limit=limit)
+
+    # Backward-compatible adapter used by existing engines/tests.
     def insert_decision_log(
         self,
         *,
@@ -50,74 +76,30 @@ class Storage:
         auto_executed: bool | None = None,
         request_id: str | None = None,
         metadata: dict | None = None,
-    ) -> str:
-        row_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc).isoformat()
-        with self._lock:
-            cur = self.conn.cursor()
-            cur.execute(
-            """
-            INSERT INTO decision_logs (
-                id, timestamp, engine, input_snapshot, computed_score, rules_applied,
-                decision, risk_level, expected_impact_score, auto_executed, request_id, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                row_id,
-                now,
-                engine,
-                json.dumps(input_snapshot) if input_snapshot is not None else None,
-                computed_score,
-                json.dumps(rules_applied) if rules_applied is not None else None,
-                decision,
-                risk_level,
-                expected_impact_score,
-                auto_executed,
-                request_id,
-                json.dumps(metadata) if metadata is not None else None,
-            ),
-            )
-            self.conn.commit()
-        return row_id
+    ) -> int:
+        return self.create_decision_log(
+            {
+                "decision_type": engine,
+                "decision": decision,
+                "risk_score": computed_score,
+                "autonomy_score": expected_impact_score,
+                "policy_name": engine,
+                "policy_snapshot_json": {"rules_applied": rules_applied or []},
+                "inputs_json": input_snapshot,
+                "outputs_json": metadata,
+                "reason": (metadata or {}).get("reasoning") if isinstance(metadata, dict) else None,
+                "correlation_id": request_id,
+                "status": "executed" if auto_executed else "recorded",
+                "entity_type": "action" if auto_executed else None,
+                "action_type": risk_level,
+            }
+        )
 
     def list_decision_logs(self, limit: int = 50) -> list[dict]:
-        safe_limit = max(min(int(limit), 500), 1)
-        with self._lock:
-            cur = self.conn.cursor()
-            cur.execute(
-            """
-            SELECT id, timestamp, engine, input_snapshot, computed_score, rules_applied,
-                   decision, risk_level, expected_impact_score, auto_executed, request_id, metadata
-            FROM decision_logs
-            ORDER BY timestamp DESC
-            LIMIT ?
-            """,
-                (safe_limit,),
-            )
-            rows = cur.fetchall()
-        keys = [
-            "id",
-            "timestamp",
-            "engine",
-            "input_snapshot",
-            "computed_score",
-            "rules_applied",
-            "decision",
-            "risk_level",
-            "expected_impact_score",
-            "auto_executed",
-            "request_id",
-            "metadata",
-        ]
-        items = []
-        for row in rows:
-            item = dict(zip(keys, row))
-            for key in ("input_snapshot", "rules_applied", "metadata"):
-                raw = item.get(key)
-                if raw:
-                    try:
-                        item[key] = json.loads(raw)
-                    except json.JSONDecodeError:
-                        pass
-            items.append(item)
+        items = self.list_recent_decision_logs(limit=limit)
+        for item in items:
+            if "engine" not in item:
+                item["engine"] = item.get("decision_type")
+            if "request_id" not in item:
+                item["request_id"] = item.get("correlation_id")
         return items

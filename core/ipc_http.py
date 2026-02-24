@@ -484,16 +484,33 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "strategy_decision_engine_unavailable", "strategy_decision_engine_unavailable")
             return self._send(200, self.strategy_decision_engine.decide(request_id=self._ensure_request_id()))
 
-        if parsed.path == "/system/decision_logs":
+        if parsed.path in {"/system/decision_logs", "/decision-logs"}:
             if self.server.storage is None:
                 return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "storage_unavailable", "storage_unavailable")
             query = parse_qs(parsed.query)
             limit_raw = query.get("limit", ["50"])[0]
+            decision_type = str(query.get("decision_type", [""])[0] or "").strip() or None
             try:
                 limit = int(limit_raw)
             except (TypeError, ValueError):
                 return self._send_error(400, ErrorType.CLIENT_ERROR, "invalid_limit", "invalid_limit")
-            items = self.server.storage.list_decision_logs(limit=limit)
+            items = self.server.storage.list_recent_decision_logs(limit=limit, decision_type=decision_type)
+            return self._send_success(200, items)
+
+        if parsed.path == "/decision-logs/entity":
+            if self.server.storage is None:
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "storage_unavailable", "storage_unavailable")
+            query = parse_qs(parsed.query)
+            entity_type = str(query.get("entity_type", [""])[0] or "").strip()
+            entity_id = str(query.get("entity_id", [""])[0] or "").strip()
+            limit_raw = query.get("limit", ["50"])[0]
+            if not entity_type or not entity_id:
+                return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_entity", "missing_entity")
+            try:
+                limit = int(limit_raw)
+            except (TypeError, ValueError):
+                return self._send_error(400, ErrorType.CLIENT_ERROR, "invalid_limit", "invalid_limit")
+            items = self.server.storage.get_decision_logs_for_entity(entity_type=entity_type, entity_id=entity_id, limit=limit)
             return self._send_success(200, items)
 
         if parsed.path == "/strategy/pending_actions":
@@ -522,6 +539,16 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/health/live":
             return self._send_success(200, {"status": "live"})
 
+        if parsed.path == "/health":
+            return self._send_success(
+                200,
+                {
+                    "status": "ok",
+                    "timestamp": time.time(),
+                    "version": VERSION,
+                },
+            )
+
         if parsed.path == "/health/ready":
             checks = {
                 "stores_loadable": all([
@@ -541,6 +568,21 @@ class Handler(BaseHTTPRequestHandler):
                 "not_ready",
                 details={"checks": checks},
             )
+
+        if parsed.path == "/ready":
+            if self.server.storage is None:
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "storage_unavailable", "storage_unavailable")
+            try:
+                self.server.storage.conn.execute("SELECT 1").fetchone()
+                return self._send_success(200, {"status": "ready", "timestamp": time.time(), "version": VERSION})
+            except Exception as exc:
+                return self._send_error(
+                    503,
+                    ErrorType.DEPENDENCY_ERROR,
+                    "db_not_ready",
+                    "db_not_ready",
+                    details={"error": str(exc)},
+                )
 
         if parsed.path == "/system/integrity":
             if self.product_proposal_store is None:

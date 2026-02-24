@@ -144,18 +144,26 @@ class StrategyDecisionEngine:
             },
         }
         try:
-            self._storage.insert_decision_log(
-                    engine="StrategyDecisionEngine",
-                    input_snapshot={"launches": launches},
-                    computed_score=float(confidence),
-                    rules_applied=["sales_scale_threshold", "stalled_launch_rule", "portfolio_activity_rule"],
-                    decision=primary_focus,
-                    risk_level=priority_level,
-                    expected_impact_score=float(confidence),
-                    auto_executed=False,
-                    request_id=request_id,
-                    metadata={"actions_count": len(actions), "risk_flags": risk_flags},
-                )
+            self._storage.create_decision_log(
+                {
+                    "decision_type": "strategy_action",
+                    "entity_type": "portfolio",
+                    "entity_id": "global",
+                    "action_type": "recommend",
+                    "decision": "RECOMMEND",
+                    "risk_score": float(confidence),
+                    "policy_name": "StrategyDecisionEngine",
+                    "policy_snapshot_json": {
+                        "rules": ["sales_scale_threshold", "stalled_launch_rule", "portfolio_activity_rule"],
+                        "priority_level": priority_level,
+                    },
+                    "inputs_json": {"launch_count": len(launches)},
+                    "outputs_json": {"actions": actions, "risk_flags": risk_flags},
+                    "reason": f"Primary focus resolved to {primary_focus}.",
+                    "correlation_id": request_id,
+                    "status": "recorded",
+                }
+            )
         except Exception as exc:
             self._logger.exception("Failed to persist strategy decision log", extra={"request_id": request_id, "error": str(exc)})
         return result
