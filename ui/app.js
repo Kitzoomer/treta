@@ -217,44 +217,51 @@ async function renderStrategicDashboard(options = { mode: "full" }) {
     ui.pageContent.innerHTML = `
       <div class="strategic-dashboard">
         <section class="focus-mode-switch">
-          <button id="home-focus-mode">Volver a Modo Enfoque</button>
-          <button id="home-complete-mode">Modo completo</button>
+          <button id="home-focus-mode" class="secondary-btn">Volver a Modo Enfoque</button>
+          <button id="home-complete-mode" class="secondary-btn">Modo completo</button>
         </section>
         <section class="hero">
           <h1>Esto es lo que puedes vender esta semana.</h1>
           <p>Basado en lo que los creadores están preguntando ahora mismo.</p>
         </section>
 
-        <section class="next-step">
-          <h2>👉 Tu próximo paso</h2>
-          <p>Convierte este problema en una plantilla vendible:</p>
+        <section class="pain-overview">
+          <h2>Oportunidad actual</h2>
           <strong id="dashboard-dominant-pain">Cargando señal dominante…</strong>
-          <p>Producto recomendado: <span id="dashboard-recommended-product">Calculando producto recomendado…</span></p>
-          <button id="create-offer-btn" data-route="#/work">Crear oferta ahora</button>
-        </section>
-
-        <section class="reddit-authority" data-focus-collapse>
-          <h2>🗣 Cómo hablar de esto en Reddit</h2>
-          <ul>
-            <li>Explica cómo resolver este problema paso a paso.</li>
-            <li>Responde a 3 hilos esta semana aportando valor.</li>
-            <li>Comparte tu plantilla solo cuando alguien lo pida.</li>
-          </ul>
-        </section>
-
-        <section class="pain-overview" data-focus-collapse>
-          <h2>Lo que más se repite esta semana</h2>
           <ul id="dashboard-top-pains">
             <li>Cargando señales…</li>
           </ul>
         </section>
 
+        <section class="next-step">
+          <h2>👉 Acción recomendada</h2>
+          <p>Convierte este problema en una plantilla vendible:</p>
+          <p>Producto recomendado: <span id="dashboard-recommended-product">Calculando producto recomendado…</span></p>
+          <button id="create-offer-btn" data-route="#/work">Crear oferta ahora</button>
+        </section>
+
         <section class="revenue-summary" data-focus-collapse>
-          <h2>Lo que ya te está funcionando</h2>
+          <h2>Progreso del negocio</h2>
           <p>Total ventas: <span id="dashboard-total-sales">—</span></p>
           <p>Total ingresos: <span id="dashboard-total-revenue">—</span></p>
           <p>Categoría más rentable: <span id="dashboard-top-category">—</span></p>
         </section>
+
+        <details class="system-details" data-focus-collapse>
+          <summary>System details</summary>
+          <section class="stack">
+            <p><strong>Daily loop:</strong> ${helpers.escape(helpers.t(state.dailyLoop?.phase, "IDLE"))}</p>
+            <p><strong>Backend:</strong> <span class="badge ${state.diagnostics.backendConnected ? "ok" : "error"}">${state.diagnostics.backendConnected ? "CONNECTED" : "DISCONNECTED"}</span></p>
+          </section>
+          <section class="reddit-authority">
+            <h2>🗣 Cómo hablar de esto en Reddit</h2>
+            <ul>
+              <li>Explica cómo resolver este problema paso a paso.</li>
+              <li>Responde a 3 hilos esta semana aportando valor.</li>
+              <li>Comparte tu plantilla solo cuando alguien lo pida.</li>
+            </ul>
+          </section>
+        </details>
       </div>
     `;
     dashboardRoot = ui.pageContent.querySelector(".strategic-dashboard");
@@ -1006,12 +1013,12 @@ const views = {
       }).join("");
       return `
         <article class="card degraded-banner">
-          <h3>Operator Degraded Mode</h3>
+          <h3>Operator Limited mode</h3>
           <p>${helpers.escape(degradedBanner.message)}</p>
           ${staleDetails ? `<ul class="mission-actionable-list">${staleDetails}</ul>` : ""}
           <div class="card-actions wrap">
-            <button data-action="dashboard-force-refresh">Force refresh now</button>
-            <button class="secondary-btn" data-action="dashboard-run-integrity">Run integrity now</button>
+            <button data-action="dashboard-force-refresh">Scan again</button>
+            <button class="secondary-btn" data-action="dashboard-run-integrity">Run system check</button>
           </div>
         </article>
       `;
@@ -1080,7 +1087,7 @@ const views = {
             <div class="metric"><span>Total revenue</span><strong>${helpers.escape(helpers.t(state.performance.total_revenue, 0))}</strong></div>
             <div class="metric"><span>Revenue trend</span><strong>${helpers.escape(revenueTrend)}</strong></div>
             <div class="metric"><span>Best leverage action</span><strong>${helpers.escape(bestLeverageAction)}</strong></div>
-            <div class="metric"><span>Projected impact</span><strong>${helpers.escape(helpers.t(topStrategicAction?.expected_impact_score, "-"))}</strong></div>
+            <div class="metric"><span>Revenue potential</span><strong>${helpers.escape(helpers.t(topStrategicAction?.expected_impact_score, "-"))}</strong></div>
           </section>
         </article>
       `;
@@ -1119,13 +1126,19 @@ const views = {
               <article class="dashboard-strategy-card">
                 <div class="dashboard-strategy-meta">
                   <span class="badge ${helpers.priorityBadgeClass(priority)}">${helpers.escape(priority)}</span>
-                  <span class="dashboard-risk-badge ${helpers.riskBadgeClass(risk)}">Risk: ${helpers.escape(risk)}</span>
+                  <span class="dashboard-risk-badge ${helpers.riskBadgeClass(risk)}">Execution risk: ${helpers.escape(risk)}</span>
                 </div>
                 <p><strong>Action type:</strong> ${helpers.escape(actionType)}</p>
-                <p><strong>Expected impact score:</strong> ${helpers.escape(impactScore)}</p>
+                <p><strong>Revenue potential:</strong> ${helpers.escape(impactScore)}</p>
                 <div class="card-actions">
-                  <button data-action="dashboard-strategy-execute" data-id="${helpers.escape(item.id)}">Execute</button>
-                  <button class="secondary-btn" data-action="dashboard-strategy-reject" data-id="${helpers.escape(item.id)}">Reject</button>
+                  <div>
+                    <button data-action="dashboard-strategy-execute" data-id="${helpers.escape(item.id)}">Launch</button>
+                    <p class="control-helper">Publishes the offer and starts tracking revenue.</p>
+                  </div>
+                  <div>
+                    <button class="secondary-btn" data-action="dashboard-strategy-reject" data-id="${helpers.escape(item.id)}">Skip for now</button>
+                    <p class="control-helper">Keeps the opportunity for later review.</p>
+                  </div>
                 </div>
               </article>
             `;
@@ -1239,8 +1252,8 @@ const views = {
           <h3>System Coherence</h3>
           <p><strong>Integrity:</strong> <span class="badge ${integrityTone}">${helpers.escape(integrityStatusLabel.toUpperCase())}</span></p>
           <div class="card-actions wrap dashboard-operator-actions">
-            <button data-action="dashboard-force-refresh">Force refresh now</button>
-            <button class="secondary-btn" data-action="dashboard-run-integrity">Run integrity now</button>
+            <button data-action="dashboard-force-refresh">Scan again</button>
+            <button class="secondary-btn" data-action="dashboard-run-integrity">Run system check</button>
           </div>
           ${lastScanHasData
     ? `<p><strong>Last scan:</strong> analyzed ${helpers.escape(lastScanAnalyzed)} · qualified ${helpers.escape(lastScanQualified)}</p>
@@ -1287,18 +1300,21 @@ const views = {
         </article>
 
         <article class="card">
-          <div class="card-actions wrap">
-            <button data-action="dashboard-toggle-more" class="secondary-btn">${state.diagnostics.showDashboardMore ? "Hide" : "Show"} More Observability</button>
-            <button data-action="dashboard-toggle-diagnostics" class="secondary-btn">${state.diagnostics.showPanel ? "Hide" : "Show"} Diagnostics</button>
-          </div>
-          ${state.diagnostics.showDashboardMore ? `
-            <div class="stack">
-              <p><strong>Today plan summary:</strong> ${helpers.escape(helpers.t(state.redditTodayPlan?.summary, "No plan yet."))}</p>
-              <p><strong>Daily actions count:</strong> ${helpers.escape((state.redditDailyActions || []).length)}</p>
-              <p><strong>Top 5 signals exposed:</strong> ${(state.redditSignals || []).slice(0, 5).map((item) => helpers.escape(helpers.t(item.title, item.post_title || "Untitled"))).join(" · ") || "-"}</p>
+          <details class="system-details">
+            <summary>System details</summary>
+            <div class="card-actions wrap">
+              <button data-action="dashboard-toggle-more" class="secondary-btn">${state.diagnostics.showDashboardMore ? "Hide" : "Show"} More Observability</button>
+              <button data-action="dashboard-toggle-diagnostics" class="secondary-btn">${state.diagnostics.showPanel ? "Hide" : "Show"} Diagnostics</button>
             </div>
-          ` : ""}
-          ${state.diagnostics.showPanel ? renderDiagnosticsPanel() : ""}
+            ${state.diagnostics.showDashboardMore ? `
+              <div class="stack">
+                <p><strong>Today plan summary:</strong> ${helpers.escape(helpers.t(state.redditTodayPlan?.summary, "No plan yet."))}</p>
+                <p><strong>Daily actions count:</strong> ${helpers.escape((state.redditDailyActions || []).length)}</p>
+                <p><strong>Top 5 signals exposed:</strong> ${(state.redditSignals || []).slice(0, 5).map((item) => helpers.escape(helpers.t(item.title, item.post_title || "Untitled"))).join(" · ") || "-"}</p>
+              </div>
+            ` : ""}
+            ${state.diagnostics.showPanel ? renderDiagnosticsPanel() : ""}
+          </details>
         </article>
       </section>
     `);
@@ -1312,9 +1328,15 @@ const views = {
   loadWork() {
     const transitionLabels = {
       approve: "Approve",
-      reject: "Reject",
+      reject: "Skip for now",
       ready: "Mark Ready",
       launch: "Launch",
+    };
+
+    const transitionHelpers = {
+      approve: "Moves this proposal into the build stage.",
+      reject: "Keeps the opportunity for later review.",
+      launch: "Publishes the offer and starts tracking revenue.",
     };
 
     const getOpportunityStatus = (item) => {
@@ -1368,10 +1390,14 @@ const views = {
         if (transition === "generate_execution_package") {
           return `<button class="secondary-btn" data-action="generate-execution-package" data-id="${helpers.escape(proposalId)}">Generate Execution Package</button>`;
         }
+        const helperText = transitionHelpers[transition] || "";
         return `
-          <button class="secondary-btn" data-action="proposal" data-transition="${helpers.escape(transition)}" data-id="${helpers.escape(proposalId)}">
-            ${helpers.escape(transitionLabels[transition] || helpers.statusLabel(transition))}
-          </button>
+          <div>
+            <button class="secondary-btn" data-action="proposal" data-transition="${helpers.escape(transition)}" data-id="${helpers.escape(proposalId)}">
+              ${helpers.escape(transitionLabels[transition] || helpers.statusLabel(transition))}
+            </button>
+            ${helperText ? `<p class="control-helper">${helpers.escape(helperText)}</p>` : ""}
+          </div>
         `;
       }).join("");
 
@@ -1777,16 +1803,22 @@ const views = {
             return `
               <article class="card">
                 <section class="card-grid cols-2">
-                  <div class="metric"><span>action_id</span><strong>${escapedActionId}</strong></div>
+                  <div class="metric"><span>Reference ID</span><strong>${escapedActionId}</strong></div>
                   <div class="metric"><span>action_type</span><strong>${helpers.escape(helpers.t(item.action_type, "unknown"))}</strong></div>
                   <div class="metric"><span>priority</span><strong><span class="badge ${helpers.priorityBadgeClass(item.priority)}">${helpers.escape(helpers.t(item.priority, "unknown"))}</span></strong></div>
-                  <div class="metric"><span>risk_level</span><strong><span class="badge ${helpers.riskBadgeClass(item.risk_level)}">${helpers.escape(helpers.t(item.risk_level, "unknown"))}</span></strong></div>
-                  <div class="metric"><span>expected_impact_score</span><strong>${helpers.escape(helpers.t(item.expected_impact_score, "-"))}</strong></div>
+                  <div class="metric"><span>Execution risk</span><strong><span class="badge ${helpers.riskBadgeClass(item.risk_level)}">${helpers.escape(helpers.t(item.risk_level, "unknown"))}</span></strong></div>
+                  <div class="metric"><span>Revenue potential</span><strong>${helpers.escape(helpers.t(item.expected_impact_score, "-"))}</strong></div>
                   <div class="metric"><span>auto_executable</span><strong>${item.auto_executable ? "true" : "false"}</strong></div>
                 </section>
                 <div class="card-actions wrap" style="margin-top: 12px;">
-                  <button data-action="strategy-execute" data-id="${actionId}">Execute</button>
-                  <button class="secondary-btn" data-action="strategy-reject" data-id="${actionId}">Reject</button>
+                  <div>
+                    <button data-action="strategy-execute" data-id="${actionId}">Launch</button>
+                    <p class="control-helper">Publishes the offer and starts tracking revenue.</p>
+                  </div>
+                  <div>
+                    <button class="secondary-btn" data-action="strategy-reject" data-id="${actionId}">Skip for now</button>
+                    <p class="control-helper">Keeps the opportunity for later review.</p>
+                  </div>
                 </div>
               </article>
             `;
@@ -1808,7 +1840,7 @@ const views = {
           </p>
           <section class="card-grid cols-2">
             <div class="metric"><span>Focus area</span><strong>${helpers.t(recommendation.focus_area || recommendation.focus, "No focus area available")}</strong></div>
-            <div class="metric"><span>Risk level</span><strong>${helpers.t(recommendation.risk_level, "Risk not specified")}</strong></div>
+            <div class="metric"><span>Execution risk</span><strong>${helpers.t(recommendation.risk_level, "Risk not specified")}</strong></div>
             <div class="metric"><span>Recommended next move</span><strong>${helpers.t(recommendation.suggested_next_move || recommendation.next_move, "No recommended move yet")}</strong></div>
             <div class="metric"><span>Summary</span><strong>${helpers.t(recommendation.summary_text || recommendation.summary, "No summary available")}</strong></div>
           </section>
@@ -1822,7 +1854,9 @@ const views = {
         </article>
 
         <article class="card">
-          <h3>Autonomy Engine</h3>
+          <details class="system-details">
+            <summary>System details</summary>
+            <h3>Autonomy Engine</h3>
           <p>
             <strong>Derived status:</strong>
             ${renderAutonomyStabilityBadge()}
@@ -1834,6 +1868,7 @@ const views = {
             <div class="metric"><span>Impact threshold</span><strong>${helpers.t(adaptiveStatus.impact_threshold || autonomyStatus.impact_threshold, "No threshold")}</strong></div>
             <div class="metric"><span>Executions today</span><strong>${helpers.t(autonomyStatus.executions_today || autonomyStatus.auto_executions_today || adaptiveStatus.executions_today, "Not available")}</strong></div>
           </section>
+          </details>
         </article>
       </section>
     `);
@@ -1871,7 +1906,7 @@ const views = {
           <div class="card-actions work-secondary-actions">
             <button class="secondary-btn" data-action="reddit-ops-view-copy" data-id="${helpers.escape(proposalId)}">View Copy</button>
             <button class="secondary-btn" data-action="reddit-ops-approve" data-id="${helpers.escape(proposalId)}">Approve</button>
-            <button class="secondary-btn" data-action="reddit-ops-reject" data-id="${helpers.escape(proposalId)}">Reject</button>
+            <button class="secondary-btn" data-action="reddit-ops-reject" data-id="${helpers.escape(proposalId)}">Skip for now</button>
           </div>
           ${view.messages[`proposal-${proposalId}`] ? `<p class="muted-note">${helpers.escape(view.messages[`proposal-${proposalId}`])}</p>` : ""}
         </article>
@@ -2053,9 +2088,28 @@ function renderEditableMetric(key, label) {
 
 function renderNavigation() {
   const active = state.currentRoute;
-  ui.pageNav.innerHTML = CONFIG.routes
-    .map((route) => `<button class="nav-btn ${route === active ? "active" : ""}" data-route="#/${route}">${route[0].toUpperCase()}${route.slice(1)}</button>`)
-    .join("");
+  const primaryNav = [
+    { route: "home", label: "Home" },
+    { route: "work", label: "Opportunities" },
+    { route: "reddit-ops", label: "Offers" },
+    { route: "dashboard", label: "Revenue" },
+    { route: "strategy", label: "System" },
+    { route: "settings", label: "Settings" },
+  ];
+
+  const isSystemActive = ["strategy", "dashboard"].includes(active);
+
+  ui.pageNav.innerHTML = `
+    ${primaryNav.map((item) => `<button class="nav-btn ${item.route === active ? "active" : ""}" data-route="#/${item.route}">${item.label}</button>`).join("")}
+    <details class="nav-system-details" ${isSystemActive ? "open" : ""}>
+      <summary>System details</summary>
+      <div class="nav-system-content">
+        <button class="nav-btn secondary-btn ${active === "dashboard" ? "active" : ""}" data-route="#/dashboard">Diagnostics &amp; Integrity</button>
+        <button class="nav-btn secondary-btn ${active === "strategy" ? "active" : ""}" data-route="#/strategy">Telemetry &amp; Daily Loop</button>
+      </div>
+      <p class="muted-note">Advanced status panels, logs, and operational diagnostics.</p>
+    </details>
+  `;
 }
 
 function log(role, message) {
@@ -2753,7 +2807,7 @@ async function refreshLoop() {
       } else {
         const integrityMessage = systemIntegrityResult.data?.error || `HTTP ${systemIntegrityResult.statusCode}`;
         state.diagnostics.integrity.lastError = integrityMessage;
-        state.diagnostics.lastApiErrors.system = `integrity degraded: ${integrityMessage}`;
+        state.diagnostics.lastApiErrors.system = `integrity limited mode: ${integrityMessage}`;
       }
 
       markSliceSuccess("system");
@@ -3412,7 +3466,7 @@ async function runIntegrityNow() {
     } else {
       const message = integrityResult.data?.error || `HTTP ${integrityResult.statusCode}`;
       state.diagnostics.integrity.lastError = message;
-      state.dashboardView.feedback = `Integrity check degraded: ${message}`;
+      state.dashboardView.feedback = `Integrity check limited mode: ${message}`;
     }
   } catch (error) {
     state.diagnostics.integrity.lastError = error.message;
