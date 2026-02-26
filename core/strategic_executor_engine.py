@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from core.model_policy_engine import ModelPolicyEngine
@@ -51,7 +52,21 @@ class StrategicExecutorEngine:
                 "content": f"step_id={step.get('id','')}\ntype={step.get('type','')}\ndescription={step.get('description','')}",
             },
         ]
+        started_at = time.perf_counter()
         output = str(self._gpt_client.chat(messages=messages, task_type="execution", model=model_name)).strip()
+        elapsed_ms = round((time.perf_counter() - started_at) * 1000, 2)
+        estimated_tokens = max(len(output) // 4, 1)
+        self._logger.info(
+            "Strategic executor llm step completed",
+            extra={
+                "phase": "execute",
+                "task_type": "execution",
+                "step_id": str(step.get("id") or ""),
+                "model": model_name,
+                "tokens_estimated": estimated_tokens,
+                "response_time_ms": elapsed_ms,
+            },
+        )
         return {
             "step_id": str(step.get("id") or ""),
             "status": "completed",

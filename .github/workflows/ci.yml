@@ -29,6 +29,10 @@ jobs:
             interfaces/openclaw/openclaw.py \
             openclaw/openclaw.py
 
+
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
       - name: Run tests (or smoke check)
         run: |
           if [ -d tests ]; then
