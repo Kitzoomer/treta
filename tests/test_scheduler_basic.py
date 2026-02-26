@@ -30,6 +30,8 @@ class DailySchedulerBasicTest(unittest.TestCase):
 
                 self.assertEqual(len(bus.events), 1)
                 self.assertEqual(bus.events[0].type, "RunInfoproductScan")
+                self.assertTrue(bus.events[0].request_id)
+                self.assertEqual(bus.events[0].payload.get("request_id"), bus.events[0].request_id)
 
     @patch.dict(os.environ, {"TRETA_TIMEZONE": "UTC", "TRETA_SCAN_HOUR": "9"}, clear=False)
     def test_tick_does_not_run_before_scheduled_hour(self):

@@ -863,7 +863,7 @@ class Control:
             if target is None:
                 return []
 
-            result = self.evaluate_opportunity(target["opportunity"], request_id=self._correlation_id_from_event(event))
+            result = self.evaluate_opportunity(target["opportunity"], request_id=event.request_id or str(event.payload.get("request_id", "") or ""))
             updated = self.opportunity_store.set_decision(item_id, result)
             if updated is None:
                 return []
@@ -883,7 +883,7 @@ class Control:
             return []
 
         if event.type == "EvaluateOpportunity":
-            result = self.evaluate_opportunity(event.payload, request_id=self._correlation_id_from_event(event))
+            result = self.evaluate_opportunity(event.payload, request_id=event.request_id or str(event.payload.get("request_id", "") or ""))
             logger.info(f"[DECISION] score={result['score']:.2f} decision={result['decision']}")
             return [Action(type="OpportunityEvaluated", payload=result)]
 
