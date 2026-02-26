@@ -50,6 +50,44 @@ def test_context_controller_builds_messages_with_history_limit():
     ]
 
 
+def test_context_controller_truncates_to_budget_keeping_required_messages():
+    context_controller = ContextController()
+
+    messages = context_controller.build_messages(
+        system_prompt="system baseline",
+        user_message="current user message " + ("x" * 120),
+        memory_messages=[
+            {"role": "user", "content": "old 1 " + ("a" * 80)},
+            {"role": "assistant", "content": "old 2 " + ("b" * 80)},
+            {"role": "user", "content": "old 3 " + ("c" * 80)},
+        ],
+        strategic_snapshot="snapshot " + ("s" * 200),
+        max_messages=10,
+        max_input_tokens=120,
+        reserve_output_tokens=20,
+    )
+
+    assert messages[0]["role"] == "system"
+    assert messages[-1]["role"] == "user"
+    assert "current user message" in messages[-1]["content"]
+    assert context_controller.count_tokens(messages) <= 100
+
+
+def test_context_controller_count_tokens_fallback_estimator_when_no_tiktoken():
+    context_controller = ContextController()
+    context_controller._encoder = None
+
+    messages = [
+        {"role": "system", "content": "hello world"},
+        {"role": "user", "content": "abcd" * 4},
+    ]
+
+    expected = max(len("system: hello world") // 4, 1) + max(
+        len("user: " + ("abcd" * 4)) // 4, 1
+    )
+    assert context_controller.count_tokens(messages) == expected
+
+
 def test_gpt_client_uses_model_policy_engine_for_task_type():
     openai_client = _FakeOpenAIClient()
     client = GPTClient(openai_client=openai_client)
