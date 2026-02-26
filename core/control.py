@@ -30,6 +30,7 @@ from core.domain.lifecycle import EXECUTION_STATUSES
 from core.reddit_public.config import get_config
 from core.reddit_public.pain_scoring import compute_pain_score
 from core.storage import Storage
+from core.strategy_decision_engine import StrategyDecisionEngine
 from core.openclaw_agent import (
     OpenClawRedditScanner,
     normalize_openclaw_to_scan_summary,
@@ -64,6 +65,7 @@ class Control:
         product_launch_store: ProductLaunchStore | None = None,
         revenue_attribution_store: RevenueAttributionStore | None = None,
         subreddit_performance_store: SubredditPerformanceStore | None = None,
+        strategy_decision_engine: StrategyDecisionEngine | None = None,
         bus: EventBus | None = None,
     ):
         self.decision_engine = decision_engine or DecisionEngine(storage=Storage())
@@ -109,6 +111,7 @@ class Control:
         self.subreddit_performance_store = subreddit_performance_store or SubredditPerformanceStore(
             path=(inferred_dir / "subreddit_performance.json") if inferred_dir is not None else None,
         )
+        self.strategy_decision_engine = strategy_decision_engine
         self.gumroad_sales_sync_service = (
             GumroadSyncService(
                 self.product_launch_store,
@@ -907,5 +910,17 @@ class Control:
             )
             logger.info(f"[DECISION] score={result['score']:.2f} decision={result['decision']}")
             return [Action(type="OpportunityEvaluated", payload=result)]
+
+        if event.type == "RunStrategyDecision":
+            if self.strategy_decision_engine is None:
+                logger.warning("RunStrategyDecision received without strategy_decision_engine configured")
+                return []
+
+            result = self.strategy_decision_engine.decide(
+                request_id=event.request_id or str(event.payload.get("request_id", "") or ""),
+                trace_id=event.trace_id or str(event.payload.get("trace_id", "") or ""),
+                event_id=event.event_id,
+            )
+            return [Action(type="StrategyDecisionCompleted", payload=result)]
 
         return []

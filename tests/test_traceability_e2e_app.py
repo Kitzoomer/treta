@@ -66,7 +66,12 @@ class TretaAppTraceabilityE2ETest(unittest.TestCase):
                     )
 
                     with urlopen(f"http://127.0.0.1:{server.server_port}/strategy/decide", timeout=3) as response:
-                        self.assertEqual(response.status, 200)
+                        self.assertEqual(response.status, 202)
+
+                    self._drain_bus_once(app)
+
+                    strategy_logs = app.storage.list_recent_decision_logs(limit=100, decision_type="strategy_action")
+                    self.assertTrue(len(strategy_logs) > 0)
 
                     app.scheduler.tick()
                     scheduler_event = app.bus.pop(timeout=0.2)

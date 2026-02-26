@@ -87,6 +87,7 @@ class TretaApp:
             product_launch_store=self.product_launch_store,
             revenue_attribution_store=self.revenue_attribution_store,
             subreddit_performance_store=self.subreddit_performance_store,
+            strategy_decision_engine=self.strategy_decision_engine,
             bus=self.bus,
             decision_engine=self.decision_engine,
         )
