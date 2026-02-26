@@ -134,7 +134,14 @@ class AutonomyPolicyEngine:
             action_id = str(action.get("id") or "").strip()
             if not action_id:
                 continue
-            updated = self._strategy_action_execution_layer.execute_action(action_id, status="auto_executed")
+            try:
+                updated = self._strategy_action_execution_layer.execute_action(
+                    action_id,
+                    status="auto_executed",
+                    request_id=request_id,
+                )
+            except TypeError:
+                updated = self._strategy_action_execution_layer.execute_action(action_id, status="auto_executed")
             revenue_delta = float(action.get("revenue_delta", 0) or 0)
             self._adaptive_policy_engine.record_action_outcome(revenue_delta=revenue_delta)
             self._bus.push(

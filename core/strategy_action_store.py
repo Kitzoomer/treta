@@ -23,7 +23,7 @@ class StrategyActionStore:
     """Persistent bounded store for strategy actions requiring confirmation."""
 
     _DEFAULT_DATA_DIR = "./.treta_data"
-    _ALLOWED_TYPES = {"scale", "review", "price_test", "new_product", "archive"}
+    _ALLOWED_TYPES = {"scale", "review", "price_test", "new_product", "archive", "draft_asset"}
     _ALLOWED_STATUSES = {"pending_confirmation", "executed", "auto_executed", "completed", "failed", "rejected"}
 
     def __init__(self, capacity: int = 200, path: Path | None = None):

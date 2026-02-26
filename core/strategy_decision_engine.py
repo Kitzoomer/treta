@@ -84,6 +84,13 @@ class StrategyDecisionEngine:
                         "reasoning": f"Launch has 0 sales after {days_since_launch} days.",
                     }
                 )
+                actions.append(
+                    {
+                        "type": "draft_asset",
+                        "target_id": launch_id,
+                        "reasoning": "Create a safe draft landing/email asset to improve launch messaging.",
+                    }
+                )
                 if "stalled_launch" not in risk_flags:
                     risk_flags.append("stalled_launch")
 

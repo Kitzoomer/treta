@@ -33,6 +33,7 @@ class Storage:
         self._ensure_runtime_overrides_table()
         self._ensure_processed_events_table()
         self._ensure_decision_outcomes_table()
+        self._ensure_action_executions_table()
         self._lock = threading.Lock()
 
 
@@ -73,6 +74,29 @@ class Storage:
             """
         )
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_decision_outcomes_strategy_type ON decision_outcomes(strategy_type)")
+
+    def _ensure_action_executions_table(self) -> None:
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS action_executions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                action_id TEXT NOT NULL,
+                action_type TEXT,
+                status TEXT NOT NULL,
+                executor TEXT,
+                started_at TEXT,
+                finished_at TEXT,
+                request_id TEXT,
+                trace_id TEXT,
+                correlation_id TEXT,
+                input_payload_json TEXT,
+                output_payload_json TEXT,
+                error TEXT
+            )
+            """
+        )
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_action_executions_action_id ON action_executions(action_id)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_action_executions_status ON action_executions(status)")
 
     def _configure_connection(self) -> None:
         self.conn.execute("PRAGMA foreign_keys = ON;")

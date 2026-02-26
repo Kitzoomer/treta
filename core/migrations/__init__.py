@@ -58,6 +58,10 @@ migration_013_decision_outcomes = _load_migration(
     "013_decision_outcomes.py", "core.migrations.migration_013_decision_outcomes"
 )
 
+migration_014_action_executions = _load_migration(
+    "014_action_executions.py", "core.migrations.migration_014_action_executions"
+)
+
 __all__ = [
     "migration_001_base_schema",
     "migration_003_unify_reddit_db",
@@ -71,4 +75,5 @@ __all__ = [
     "migration_011_processed_events",
     "migration_012_strategy_actions_sqlite",
     "migration_013_decision_outcomes",
+    "migration_014_action_executions",
 ]

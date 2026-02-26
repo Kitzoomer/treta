@@ -106,6 +106,7 @@ class TretaHTTPServer(ThreadingHTTPServer):
         self.revenue_attribution_store = dependencies.get("revenue_attribution_store")
         self.subreddit_performance_store = dependencies.get("subreddit_performance_store")
         self.storage = dependencies.get("storage")
+        self.action_execution_store = dependencies.get("action_execution_store")
         self.integrity_cache_ttl_seconds = 15
         self.integrity_cache = None
         self.operation_timeout_seconds = 8
@@ -627,6 +628,25 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_error(400, ErrorType.CLIENT_ERROR, "invalid_limit", "invalid_limit")
             items = self.server.storage.get_decision_logs_for_entity(entity_type=entity_type, entity_id=entity_id, limit=limit)
             return self._send_success(200, items)
+
+        if parsed.path == "/action-executions":
+            if self.strategy_action_execution_layer is None or self.strategy_action_execution_layer._action_execution_store is None:
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "action_execution_store_unavailable", "action_execution_store_unavailable")
+            query = parse_qs(parsed.query)
+            limit_raw = query.get("limit", ["50"])[0]
+            try:
+                limit = int(limit_raw)
+            except (TypeError, ValueError):
+                return self._send_error(400, ErrorType.CLIENT_ERROR, "invalid_limit", "invalid_limit")
+            items = self.strategy_action_execution_layer._action_execution_store.list_recent(limit=limit)
+            return self._send_success(200, {"items": items})
+
+        if parsed.path.startswith("/action-executions/"):
+            if self.strategy_action_execution_layer is None or self.strategy_action_execution_layer._action_execution_store is None:
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "action_execution_store_unavailable", "action_execution_store_unavailable")
+            action_id = parsed.path.rsplit("/", 1)[-1]
+            items = self.strategy_action_execution_layer._action_execution_store.list_for_action(action_id=action_id, limit=50)
+            return self._send_success(200, {"items": items})
 
         if parsed.path == "/strategy/pending_actions":
             if self.strategy_action_execution_layer is None:
@@ -1440,6 +1460,7 @@ def start_http_server(
     revenue_attribution_store: RevenueAttributionStore | None = None,
     subreddit_performance_store: SubredditPerformanceStore | None = None,
     storage=None,
+    action_execution_store=None,
 ):
     # Thread daemon: se muere si se muere el proceso principal (bien para dev)
     resolved_bus = bus or EventBus()
@@ -1464,6 +1485,7 @@ def start_http_server(
         revenue_attribution_store=revenue_attribution_store,
         subreddit_performance_store=subreddit_performance_store,
         storage=storage,
+        action_execution_store=action_execution_store,
         reddit_router=RedditIntelligenceRouter(),
     )
     t = threading.Thread(target=server.serve_forever, daemon=True)

@@ -114,6 +114,7 @@ class Dispatcher:
             "RejectAction",
             "ListPendingConfirmations",
             "RunStrategyDecision",
+            "ExecuteStrategyAction",
         }:
             if event.type == "UserMessageSubmitted":
                 self.conversation_core.consume(event)
