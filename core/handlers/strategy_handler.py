@@ -369,6 +369,68 @@ class StrategyHandler:
         if event.type == "ExecuteStrategyAction":
             return StrategyHandler._execute_strategy_action(event, context)
 
+        if event.type == "RunStrategyDecision":
+            if strategy_decision_engine is None:
+                logger.warning("RunStrategyDecision received without strategy_decision_engine configured")
+                return []
+
+            request_id = event.request_id or str(event.payload.get("request_id", "") or "")
+            trace_id = event.trace_id or str(event.payload.get("trace_id", "") or "")
+            now = datetime.now(timezone.utc)
+            cooldown_active, remaining_minutes = StrategyHandler._cooldown_status(storage=storage, now=now)
+            if cooldown_active:
+                logger.info(
+                    "Strategy decision skipped due to active cooldown",
+                    extra={
+                        "request_id": request_id,
+                        "trace_id": trace_id,
+                        "event_id": event.event_id,
+                        "cooldown_remaining_minutes": round(remaining_minutes, 2),
+                    },
+                )
+                if storage is not None:
+                    storage.create_decision_log(
+                        {
+                            "decision_type": "strategy_action_skipped",
+                            "entity_type": "portfolio",
+                            "entity_id": "global",
+                            "action_type": "recommend",
+                            "decision": "SKIPPED",
+                            "policy_name": "StrategyDecisionCooldown",
+                            "reason": "cooldown_active",
+                            "correlation_id": request_id,
+                            "request_id": request_id,
+                            "trace_id": trace_id,
+                            "event_id": event.event_id,
+                            "status": "skipped",
+                            "outputs_json": {
+                                "cooldown_remaining_minutes": round(remaining_minutes, 2),
+                                "cooldown_minutes": STRATEGY_DECISION_COOLDOWN_MINUTES,
+                            },
+                        }
+                    )
+                return [
+                    Action(
+                        type="StrategyDecisionCompleted",
+                        payload={
+                            "status": "skipped",
+                            "reason": "cooldown_active",
+                            "cooldown_active": True,
+                            "cooldown_remaining_minutes": round(remaining_minutes, 2),
+                        },
+                    )
+                ]
+
+            result = strategy_decision_engine.decide(
+                request_id=request_id,
+                trace_id=trace_id,
+                event_id=event.event_id,
+            )
+            payload = dict(result)
+            payload["status"] = "executed"
+            payload["cooldown_active"] = False
+            return [Action(type="StrategyDecisionCompleted", payload=payload)]
+
         if event.type == "OpportunityEvaluated":
             now = datetime.now(timezone.utc)
             in_cooldown, cooldown_remaining_minutes = StrategyHandler._cooldown_status(storage, now)
