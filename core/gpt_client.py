@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -27,6 +29,8 @@ class GPTClientConfigurationError(Exception):
 
 
 class GPTClient:
+    _TEMPORARY_ERROR_CODE_SET = {"rate_limit_exceeded", "server_error", "api_error", "timeout"}
+
     def __init__(
         self,
         revenue_attribution_store: RevenueAttributionStore | None = None,
@@ -34,6 +38,7 @@ class GPTClient:
         model_policy_engine: ModelPolicyEngine | None = None,
     ):
         self._revenue_attribution_store = revenue_attribution_store
+        self._logger = logging.getLogger("treta.gpt")
         self._model_policy_engine = model_policy_engine or ModelPolicyEngine()
         if openai_client is not None:
             self._client = openai_client
@@ -132,49 +137,184 @@ class GPTClient:
             return {"error": f"unknown_tool:{name}"}
         return handler()
 
-    def chat(self, messages: list[dict], task_type: str = "chat", model: str | None = None) -> str:
+    def _is_temporary_error(self, error: Exception) -> bool:
+        status_code = getattr(error, "status_code", None)
+        if isinstance(status_code, int):
+            if status_code == 429 or 500 <= status_code < 600:
+                return True
+
+        error_type = str(getattr(error, "type", "") or "").strip().lower()
+        if error_type in self._TEMPORARY_ERROR_CODE_SET:
+            return True
+
+        error_code = str(getattr(error, "code", "") or "").strip().lower()
+        if error_code in self._TEMPORARY_ERROR_CODE_SET:
+            return True
+
+        message = str(error).lower()
+        return "rate limit" in message or "temporar" in message
+
+    def _build_chat_request(
+        self,
+        *,
+        model_name: str,
+        messages: list[dict],
+        temperature: float | None,
+        max_tokens: int | None,
+        top_p: float | None,
+        response_format: dict | None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "model": model_name,
+            "messages": messages,
+            "tools": self._tool_spec(),
+        }
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        if top_p is not None:
+            payload["top_p"] = top_p
+        if response_format is not None:
+            payload["response_format"] = response_format
+        return payload
+
+    def chat(
+        self,
+        messages: list[dict],
+        task_type: str = "chat",
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        top_p: float | None = None,
+        response_format: dict | None = None,
+    ) -> str:
         model_name = str(model or self._model_policy_engine.get_model(task_type))
-        response = self._client.chat.completions.create(
-            model=model_name,
-            messages=messages,
-            tools=self._tool_spec(),
-        )
-        message = response.choices[0].message
+        start_time = time.perf_counter()
+        used_tool_call = False
 
-        tool_calls = getattr(message, "tool_calls", None) or []
-        if not tool_calls:
-            return str(getattr(message, "content", "") or "")
-
-        serialized_tool_calls = [
-            {
-                "id": getattr(tool_call, "id", ""),
-                "type": "function",
-                "function": {
-                    "name": getattr(getattr(tool_call, "function", None), "name", ""),
-                    "arguments": getattr(getattr(tool_call, "function", None), "arguments", "{}"),
-                },
-            }
-            for tool_call in tool_calls
-        ]
-        extended_messages = [
-            *messages,
-            {"role": "assistant", "content": getattr(message, "content", "") or "", "tool_calls": serialized_tool_calls},
-        ]
-        for tool_call in tool_calls:
-            function_payload = getattr(tool_call, "function", None)
-            function_name = getattr(function_payload, "name", "")
-            tool_result = self._execute_tool(str(function_name))
-            extended_messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": getattr(tool_call, "id", ""),
-                    "content": json.dumps(tool_result) if isinstance(tool_result, (dict, list)) else str(tool_result),
-                }
+        def _run_chat_flow(selected_model: str) -> str:
+            nonlocal used_tool_call
+            response = self._client.chat.completions.create(
+                **self._build_chat_request(
+                    model_name=selected_model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    top_p=top_p,
+                    response_format=response_format,
+                )
             )
+            message = response.choices[0].message
 
-        followup = self._client.chat.completions.create(
-            model=model_name,
-            messages=extended_messages,
-            tools=self._tool_spec(),
-        )
-        return str(getattr(followup.choices[0].message, "content", "") or "")
+            tool_calls = getattr(message, "tool_calls", None) or []
+            if not tool_calls:
+                return str(getattr(message, "content", "") or "")
+
+            used_tool_call = True
+            serialized_tool_calls = [
+                {
+                    "id": getattr(tool_call, "id", ""),
+                    "type": "function",
+                    "function": {
+                        "name": getattr(getattr(tool_call, "function", None), "name", ""),
+                        "arguments": getattr(getattr(tool_call, "function", None), "arguments", "{}"),
+                    },
+                }
+                for tool_call in tool_calls
+            ]
+            extended_messages = [
+                *messages,
+                {
+                    "role": "assistant",
+                    "content": getattr(message, "content", "") or "",
+                    "tool_calls": serialized_tool_calls,
+                },
+            ]
+            for tool_call in tool_calls:
+                function_payload = getattr(tool_call, "function", None)
+                function_name = getattr(function_payload, "name", "")
+                tool_result = self._execute_tool(str(function_name))
+                extended_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": getattr(tool_call, "id", ""),
+                        "content": json.dumps(tool_result) if isinstance(tool_result, (dict, list)) else str(tool_result),
+                    }
+                )
+
+            followup = self._client.chat.completions.create(
+                **self._build_chat_request(
+                    model_name=selected_model,
+                    messages=extended_messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    top_p=top_p,
+                    response_format=response_format,
+                )
+            )
+            return str(getattr(followup.choices[0].message, "content", "") or "")
+
+        try:
+            result = _run_chat_flow(model_name)
+            duration_ms = int((time.perf_counter() - start_time) * 1000)
+            self._logger.info(
+                "GPT chat completed",
+                extra={
+                    "task_type": task_type,
+                    "model": model_name,
+                    "tool_call_used": used_tool_call,
+                    "duration_ms": duration_ms,
+                },
+            )
+            return result
+        except Exception as error:
+            fallback_model = self._model_policy_engine.get_fallback_model(task_type, model_name)
+            if fallback_model and self._is_temporary_error(error):
+                self._logger.warning(
+                    "GPT temporary error; retrying with fallback model",
+                    extra={
+                        "task_type": task_type,
+                        "model": model_name,
+                        "fallback_model": fallback_model,
+                        "error_type": type(error).__name__,
+                    },
+                )
+                used_tool_call = False
+                try:
+                    result = _run_chat_flow(fallback_model)
+                    duration_ms = int((time.perf_counter() - start_time) * 1000)
+                    self._logger.info(
+                        "GPT chat completed via fallback",
+                        extra={
+                            "task_type": task_type,
+                            "model": fallback_model,
+                            "tool_call_used": used_tool_call,
+                            "duration_ms": duration_ms,
+                        },
+                    )
+                    return result
+                except Exception as fallback_error:
+                    duration_ms = int((time.perf_counter() - start_time) * 1000)
+                    self._logger.exception(
+                        "GPT chat failed after fallback",
+                        extra={
+                            "task_type": task_type,
+                            "model": fallback_model,
+                            "error_type": type(fallback_error).__name__,
+                            "duration_ms": duration_ms,
+                        },
+                    )
+                    raise
+
+            duration_ms = int((time.perf_counter() - start_time) * 1000)
+            self._logger.exception(
+                "GPT chat failed",
+                extra={
+                    "task_type": task_type,
+                    "model": model_name,
+                    "error_type": type(error).__name__,
+                    "duration_ms": duration_ms,
+                },
+            )
+            raise

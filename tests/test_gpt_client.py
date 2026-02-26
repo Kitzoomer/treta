@@ -23,6 +23,12 @@ class _MockOpenAIClient:
         self.chat = SimpleNamespace(completions=_MockChatCompletions(responses))
 
 
+class _TemporaryRateLimitError(Exception):
+    def __init__(self, message="rate limit"):
+        super().__init__(message)
+        self.status_code = 429
+
+
 class GPTClientTest(unittest.TestCase):
     def test_chat_returns_direct_message_when_no_tool_call(self):
         response = SimpleNamespace(
@@ -67,6 +73,52 @@ class GPTClientTest(unittest.TestCase):
         self.assertEqual(followup_messages[-1]["role"], "tool")
         self.assertEqual(followup_messages[-1]["tool_call_id"], "call_1")
         self.assertEqual(followup_messages[-1]["content"], "UTC")
+
+
+    def test_chat_passes_optional_generation_parameters_when_provided(self):
+        response = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="hello", tool_calls=None))]
+        )
+        openai_client = _MockOpenAIClient([response])
+        client = GPTClient(openai_client=openai_client)
+
+        result = client.chat(
+            [{"role": "user", "content": "hi"}],
+            temperature=0.2,
+            max_tokens=64,
+            top_p=0.9,
+            response_format={"type": "json_object"},
+        )
+
+        self.assertEqual(result, "hello")
+        first_call = openai_client.chat.completions.calls[0]
+        self.assertEqual(first_call["temperature"], 0.2)
+        self.assertEqual(first_call["max_tokens"], 64)
+        self.assertEqual(first_call["top_p"], 0.9)
+        self.assertEqual(first_call["response_format"], {"type": "json_object"})
+
+    def test_chat_retries_once_with_fallback_model_on_temporary_error(self):
+        response = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="ok fallback", tool_calls=None))]
+        )
+        completions = _MockChatCompletions([_TemporaryRateLimitError(), response])
+
+        def _create(**kwargs):
+            call_response = completions._responses.pop(0)
+            completions.calls.append(kwargs)
+            if isinstance(call_response, Exception):
+                raise call_response
+            return call_response
+
+        openai_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=_create)))
+        client = GPTClient(openai_client=openai_client)
+
+        result = client.chat([{"role": "user", "content": "plan"}], task_type="planning")
+
+        self.assertEqual(result, "ok fallback")
+        self.assertEqual(len(completions.calls), 2)
+        self.assertEqual(completions.calls[0]["model"], "gpt-4o")
+        self.assertEqual(completions.calls[1]["model"], "gpt-4o-mini")
 
     def test_revenue_tools_use_existing_store(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
