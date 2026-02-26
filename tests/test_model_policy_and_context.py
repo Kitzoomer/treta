@@ -26,6 +26,8 @@ def test_model_policy_engine_routes_models_by_task_type():
     assert policy_engine.get_model("evaluation") == "gpt-4o-mini"
     assert policy_engine.get_model("chat") == "gpt-4o-mini"
     assert policy_engine.get_model("unknown") == "gpt-4o-mini"
+    assert policy_engine.get_fallback_model("planning", "gpt-4o") == "gpt-4o-mini"
+    assert policy_engine.get_fallback_model("execution", "gpt-4o-mini") is None
 
 
 def test_context_controller_builds_messages_with_history_limit():
