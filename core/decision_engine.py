@@ -15,7 +15,13 @@ class DecisionEngine:
         self._storage = storage
         self._logger = logging.getLogger("treta.decision")
 
-    def evaluate(self, opportunity: Dict[str, Any], request_id: str | None = None) -> Dict[str, Any]:
+    def evaluate(
+        self,
+        opportunity: Dict[str, Any],
+        request_id: str | None = None,
+        trace_id: str | None = None,
+        event_id: str | None = None,
+    ) -> Dict[str, Any]:
         money = float(opportunity.get("money", 0))
         growth = float(opportunity.get("growth", 0))
         energy = float(opportunity.get("energy", 0))
@@ -61,6 +67,8 @@ class DecisionEngine:
                     decision=decision,
                     risk_level="high" if risk > self.risk_tolerance else "medium",
                     request_id=request_id,
+                    trace_id=trace_id,
+                    event_id=event_id,
                     metadata={"reasoning": reasoning},
                 )
         except Exception as exc:

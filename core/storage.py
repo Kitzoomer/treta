@@ -265,6 +265,8 @@ class Storage:
         expected_impact_score: float | None = None,
         auto_executed: bool | None = None,
         request_id: str | None = None,
+        trace_id: str | None = None,
+        event_id: str | None = None,
         metadata: dict | None = None,
     ) -> int:
         return self.create_decision_log(
@@ -279,11 +281,25 @@ class Storage:
                 "outputs_json": metadata,
                 "reason": (metadata or {}).get("reasoning") if isinstance(metadata, dict) else None,
                 "correlation_id": request_id,
+                "request_id": request_id,
+                "trace_id": trace_id,
+                "event_id": event_id,
                 "status": "executed" if auto_executed else "recorded",
                 "entity_type": "action" if auto_executed else None,
                 "action_type": risk_level,
             }
         )
+
+    def _request_id_from_correlation(self, correlation_id: str | None) -> str | None:
+        raw = str(correlation_id or "").strip()
+        if not raw:
+            return None
+        for part in raw.split("|"):
+            if part.startswith("request:"):
+                return part.replace("request:", "", 1)
+        if "|" not in raw:
+            return raw
+        return None
 
     def list_decision_logs(self, limit: int = 50) -> list[dict]:
         items = self.list_recent_decision_logs(limit=limit)
@@ -291,5 +307,5 @@ class Storage:
             if "engine" not in item:
                 item["engine"] = item.get("decision_type")
             if "request_id" not in item:
-                item["request_id"] = item.get("correlation_id")
+                item["request_id"] = self._request_id_from_correlation(item.get("correlation_id"))
         return items
