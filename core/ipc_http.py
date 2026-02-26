@@ -35,6 +35,7 @@ from core.reddit_public.config import get_config, update_config
 from core.http_response import error, ok
 from core.logging_config import set_request_id, set_trace_id
 from core.version import VERSION
+from core.config import API_TOKEN
 
 UI_DIR = Path(__file__).parent.parent / "ui"
 logger = logging.getLogger("treta.http")
@@ -43,6 +44,43 @@ try:
     from openai import OpenAI
 except ImportError:
     OpenAI = None
+
+_auth_dev_mode_warned = False
+
+
+def require_auth(headers) -> bool:
+    global _auth_dev_mode_warned
+    if API_TOKEN is None:
+        if not _auth_dev_mode_warned:
+            logger.warning("TRETA running in dev permissive mode (no API token set)")
+            _auth_dev_mode_warned = True
+        return True
+
+    auth_header = headers.get("Authorization")
+    if not auth_header:
+        return False
+
+    if not auth_header.startswith("Bearer "):
+        return False
+
+    token = auth_header.split(" ", 1)[1]
+    return token == API_TOKEN
+
+
+def _is_protected_endpoint(method: str, path: str) -> bool:
+    if method in {"PUT", "DELETE"}:
+        return True
+    if method != "POST":
+        return False
+    if path == "/strategy/decide":
+        return True
+    if path.startswith("/scan/"):
+        return True
+    if path == "/opportunities/evaluate":
+        return True
+    if path == "/autonomy/override":
+        return True
+    return False
 
 
 class TretaHTTPServer(ThreadingHTTPServer):
@@ -289,6 +327,15 @@ class Handler(BaseHTTPRequestHandler):
             details = details or {key: value for key, value in body.items() if key != "error"}
         return error(message, message, details, request_id)
 
+    def _check_auth_or_401(self, method: str, path: str) -> bool:
+        if not _is_protected_endpoint(method, path):
+            return True
+        if require_auth(self.headers):
+            return True
+        logger.warning("request_id=%s unauthorized endpoint=%s", self._ensure_request_id(), path)
+        self._send(401, {"error": "unauthorized"})
+        return False
+
     def _send_internal_error(self, exc: Exception):
         request_id = self._ensure_request_id()
         logger.exception("request_id=%s Unexpected server error", request_id, exc_info=exc)
@@ -500,6 +547,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, self.strategy_engine.generate_recommendations())
 
         if parsed.path == "/strategy/decide":
+            if not self._check_auth_or_401("POST", parsed.path):
+                return
             if self.strategy_decision_engine is None:
                 return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "strategy_decision_engine_unavailable", "strategy_decision_engine_unavailable")
             if self.control is None:
@@ -947,6 +996,9 @@ class Handler(BaseHTTPRequestHandler):
         }
         if self.path not in allowed_paths and transition_event_type is None and launch_sale_id is None and launch_status_id is None and launch_link_gumroad_id is None and strategy_execute_id is None and strategy_reject_id is None and creator_launch_sale_id is None:
             return self._send_error(404, ErrorType.NOT_FOUND, "not_found", "not_found")
+
+        if not self._check_auth_or_401("POST", self.path):
+            return
 
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
