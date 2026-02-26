@@ -575,7 +575,7 @@ class Control:
                 "strategy_decision_engine": self.strategy_decision_engine,
             },
             "dispatcher": self.bus,
-            "storage": getattr(self.decision_engine, "storage", None),
+            "storage": getattr(self.decision_engine, "storage", None) or getattr(self.decision_engine, "_storage", None),
         }
 
         handlers = {

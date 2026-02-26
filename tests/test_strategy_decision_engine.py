@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -6,6 +7,8 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 from core.bus import EventBus
+from core.control import Control
+from core.decision_engine import DecisionEngine
 from core.ipc_http import start_http_server
 from core.product_launch_store import ProductLaunchStore
 from core.product_proposal_store import ProductProposalStore
@@ -276,22 +279,91 @@ class StrategyDecisionEngineTest(unittest.TestCase):
             for _ in range(5):
                 launches.add_sale(launch["id"], 10)
 
-            engine = StrategyDecisionEngine(product_launch_store=launches, storage=Storage())
-            server = start_http_server(host="127.0.0.1", port=0, strategy_decision_engine=engine, bus=self.bus)
+            os.environ["TRETA_DATA_DIR"] = str(root / ".treta_data")
+            storage = Storage()
+            engine = StrategyDecisionEngine(product_launch_store=launches, storage=storage)
+            control = Control(
+                opportunity_store=None,
+                product_proposal_store=proposals,
+                product_plan_store=None,
+                product_launch_store=launches,
+                strategy_decision_engine=engine,
+                bus=self.bus,
+                decision_engine=DecisionEngine(storage=storage),
+            )
+            server = start_http_server(host="127.0.0.1", port=0, strategy_decision_engine=engine, control=control, storage=storage, bus=self.bus)
             try:
                 port = server.server_port
                 with urlopen(f"http://127.0.0.1:{port}/strategy/decide", timeout=2) as response:
-                    self.assertEqual(response.status, 202)
+                    self.assertEqual(response.status, 200)
                     payload = json.loads(response.read().decode("utf-8"))
             finally:
                 server.shutdown()
                 server.server_close()
 
             self.assertTrue(payload["ok"])
-            self.assertEqual(payload["data"].get("status"), "accepted")
-            self.assertEqual(payload["data"].get("message"), "Strategy decision queued")
-            recent_events = self.bus.recent(limit=1)
-            self.assertEqual(recent_events[-1].type, "RunStrategyDecision")
+            self.assertEqual(payload["data"].get("status"), "executed")
+            self.assertEqual(payload["data"].get("cooldown_active"), False)
+
+    def test_strategy_decide_endpoint_applies_cooldown_and_logs_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            proposals, launches = self._stores(root)
+            proposals.add({"id": "proposal-1", "product_name": "Growth Kit"})
+            launch = launches.add_from_proposal("proposal-1")
+            launches.transition_status(launch["id"], "active")
+            for _ in range(5):
+                launches.add_sale(launch["id"], 10)
+
+            class FakeAutonomyPolicyEngine:
+                def __init__(self):
+                    self.apply_calls = 0
+
+                def prioritize_strategy_actions(self, actions):
+                    return actions
+
+                def apply(self, request_id=None):
+                    self.apply_calls += 1
+                    return []
+
+            os.environ["TRETA_DATA_DIR"] = str(root / ".treta_data")
+            storage = Storage()
+            fake_autonomy = FakeAutonomyPolicyEngine()
+            engine = StrategyDecisionEngine(
+                product_launch_store=launches,
+                storage=storage,
+                autonomy_policy_engine=fake_autonomy,
+            )
+            control = Control(
+                opportunity_store=None,
+                product_proposal_store=proposals,
+                product_plan_store=None,
+                product_launch_store=launches,
+                strategy_decision_engine=engine,
+                bus=self.bus,
+                decision_engine=DecisionEngine(storage=storage),
+            )
+            server = start_http_server(host="127.0.0.1", port=0, strategy_decision_engine=engine, control=control, storage=storage, bus=self.bus)
+            try:
+                port = server.server_port
+                with urlopen(f"http://127.0.0.1:{port}/strategy/decide", timeout=2) as first_response:
+                    first_payload = json.loads(first_response.read().decode("utf-8"))
+                with urlopen(f"http://127.0.0.1:{port}/strategy/decide", timeout=2) as second_response:
+                    second_payload = json.loads(second_response.read().decode("utf-8"))
+            finally:
+                server.shutdown()
+                server.server_close()
+
+            self.assertEqual(first_payload["data"]["status"], "executed")
+            self.assertEqual(second_payload["data"]["status"], "skipped")
+            self.assertEqual(second_payload["data"]["reason"], "cooldown_active")
+            self.assertGreater(second_payload["data"]["cooldown_remaining_minutes"], 0)
+            self.assertEqual(fake_autonomy.apply_calls, 1)
+
+            skipped = storage.list_recent_decision_logs(limit=10, decision_type="strategy_action_skipped")
+            self.assertGreaterEqual(len(skipped), 1)
+            self.assertEqual(skipped[0].get("reason"), "cooldown_active")
+            self.assertEqual(skipped[0].get("status"), "skipped")
 
 
 if __name__ == "__main__":
