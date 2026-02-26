@@ -7,7 +7,7 @@ from typing import Any
 
 
 class ActionExecutionStore:
-    _TERMINAL_STATUSES = {"success", "failed", "skipped"}
+    _TERMINAL_STATUSES = {"success", "failed", "failed_timeout", "skipped"}
 
     def __init__(self, conn):
         self._conn = conn
@@ -100,6 +100,39 @@ class ActionExecutionStore:
                     str(error or "") or None,
                     execution_id,
                 ),
+            )
+            self._conn.commit()
+
+
+
+    def latest_for_action(self, action_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT id, action_id, action_type, status, executor, started_at, finished_at,
+                       request_id, trace_id, correlation_id, input_payload_json, output_payload_json, error
+                FROM action_executions
+                WHERE action_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (action_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_dict(row)
+
+    def mark_failed_timeout(self, execution_id: int, *, error: str | None = None) -> None:
+        with self._lock:
+            self._conn.execute(
+                """
+                UPDATE action_executions
+                SET status = 'failed_timeout',
+                    finished_at = ?,
+                    error = ?
+                WHERE id = ?
+                """,
+                (self._now(), str(error or "execution timeout exceeded"), execution_id),
             )
             self._conn.commit()
 
