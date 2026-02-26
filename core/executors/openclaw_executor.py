@@ -6,7 +6,6 @@ import os
 
 OPENCLAW_BASE_URL = None
 OPENCLAW_TIMEOUT_SECONDS = 5
-requests = None
 
 
 class OpenClawExecutor:
@@ -39,8 +38,9 @@ class OpenClawExecutor:
         }
 
         try:
-            global requests
-            if requests is None:
+            try:
+                import requests
+            except Exception:
                 requests = importlib.import_module("requests")
 
             response = requests.post(
