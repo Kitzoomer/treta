@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 import logging
 
-from core.config import STRATEGY_DECISION_COOLDOWN_MINUTES
+from core.config import ACTION_EXECUTION_TIMEOUT_SECONDS, STRATEGY_DECISION_COOLDOWN_MINUTES
 
 logger = logging.getLogger("treta.control")
 
@@ -56,8 +56,32 @@ class StrategyHandler:
         if execution_store is None or registry is None:
             return []
 
-        if execution_store.has_success_for_action(action_id):
-            return [Action(type="StrategyActionExecutionSkipped", payload={"action_id": action_id, "reason": "already_success"})]
+        latest_execution = execution_store.latest_for_action(action_id)
+        if isinstance(latest_execution, dict):
+            latest_status = str(latest_execution.get("status") or "")
+            latest_execution_id = latest_execution.get("id")
+            if latest_status == "success":
+                logger.info("Strategy action execution skipped: already successful", extra={"action_id": action_id})
+                return [Action(type="StrategyActionExecutionSkipped", payload={"action_id": action_id, "reason": "already_success"})]
+            if latest_status == "running":
+                started_at = StrategyHandler._parse_iso_datetime(latest_execution.get("started_at"))
+                now = datetime.now(timezone.utc)
+                if started_at is not None and (now - started_at).total_seconds() < ACTION_EXECUTION_TIMEOUT_SECONDS:
+                    logger.warning(
+                        "Strategy action execution already in progress",
+                        extra={"action_id": action_id, "execution_id": latest_execution_id},
+                    )
+                    return [
+                        Action(
+                            type="StrategyActionExecutionSkipped",
+                            payload={"action_id": action_id, "reason": "execution_already_in_progress"},
+                        )
+                    ]
+                if latest_execution_id is not None:
+                    execution_store.mark_failed_timeout(
+                        int(latest_execution_id),
+                        error="execution timeout exceeded before completion",
+                    )
 
         ctx = {
             "request_id": event.request_id or str(event.payload.get("request_id") or ""),
