@@ -21,6 +21,8 @@ class AdaptivePolicyEngine:
         "new_product": 1.0,
         "archive": 1.0,
     }
+    MIN_STRATEGY_WEIGHT = 0.1
+    MAX_STRATEGY_WEIGHT = 3.0
 
     def __init__(
         self,
@@ -161,13 +163,25 @@ class AdaptivePolicyEngine:
             score = float(metrics.get("score", 0) or 0)
             score_normalized = float(normalized_scores.get(strategy_type, 0.0) or 0.0)
             new_weight = (old_weight * 0.7) + (score_normalized * 0.3)
-            weights[strategy_type] = new_weight
+            clamped_weight = max(self.MIN_STRATEGY_WEIGHT, min(new_weight, self.MAX_STRATEGY_WEIGHT))
+            weights[strategy_type] = clamped_weight
+            if new_weight != clamped_weight:
+                self._logger.info(
+                    "adaptive_strategy_weight_clamped",
+                    extra={
+                        "strategy_type": strategy_type,
+                        "old_weight": old_weight,
+                        "raw_new_weight": new_weight,
+                        "clamped_weight": clamped_weight,
+                        "reason": "weight_clamped",
+                    },
+                )
             self._logger.info(
                 "adaptive_strategy_weight_updated",
                 extra={
                     "strategy_type": strategy_type,
                     "old_weight": old_weight,
-                    "new_weight": new_weight,
+                    "new_weight": clamped_weight,
                     "score": score,
                 },
             )
