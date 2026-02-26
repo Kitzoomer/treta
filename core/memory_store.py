@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import os
 from pathlib import Path
+import sqlite3
 from typing import Any, Dict, List
 
 from core.persistence.json_io import atomic_read_json, atomic_write_json
@@ -17,6 +18,27 @@ class MemoryStore:
         self._path = path or data_dir / "memory_store.json"
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._state: Dict[str, Any] = self._load()
+        self._conn: sqlite3.Connection | None = None
+        self._init_snapshot_db(data_dir)
+
+    def _init_snapshot_db(self, data_dir: Path) -> None:
+        db_path = data_dir / "memory" / "treta.sqlite"
+        try:
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._conn = sqlite3.connect(db_path, check_same_thread=False)
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS strategic_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    snapshot_text TEXT NOT NULL
+                )
+                """
+            )
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_strategic_snapshots_created_at ON strategic_snapshots(created_at)")
+            self._conn.commit()
+        except sqlite3.Error:
+            self._conn = None
 
     def _default_state(self) -> Dict[str, Any]:
         return {
@@ -71,3 +93,23 @@ class MemoryStore:
         self._state["chat_history"] = history[-20:]
         self.save()
         return deepcopy(message)
+
+    def save_snapshot(self, snapshot_text: str, ts: str | None = None) -> None:
+        if self._conn is None:
+            return
+        timestamp = ts or datetime.now(timezone.utc).isoformat()
+        self._conn.execute(
+            "INSERT INTO strategic_snapshots (created_at, snapshot_text) VALUES (?, ?)",
+            (timestamp, str(snapshot_text)),
+        )
+        self._conn.commit()
+
+    def get_latest_snapshot(self) -> str:
+        if self._conn is None:
+            return ""
+        row = self._conn.execute(
+            "SELECT snapshot_text FROM strategic_snapshots ORDER BY created_at DESC, id DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            return ""
+        return str(row[0] or "")

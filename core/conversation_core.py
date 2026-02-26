@@ -93,6 +93,7 @@ class ConversationCore:
             system_prompt=self._system_prompt(),
             user_message=user_message,
             memory_messages=memory_messages,
+            strategic_snapshot=self.memory_store.get_latest_snapshot(),
         )
 
         task_type = "chat"

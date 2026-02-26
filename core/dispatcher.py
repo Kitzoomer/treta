@@ -6,6 +6,7 @@ from core.bus import EventBus
 from core.memory_store import MemoryStore
 from core.conversation_core import ConversationCore
 from core.storage import Storage
+from core.strategic_snapshot_engine import StrategicSnapshotEngine
 from core.logging_config import set_decision_id, set_event_id, set_request_id, set_trace_id
 
 
@@ -41,6 +42,80 @@ class Dispatcher:
             state_machine=self.sm,
             memory_store=self.memory_store,
         )
+        self.strategic_snapshot_engine = StrategicSnapshotEngine(
+            gpt_client_optional=getattr(self.conversation_core, "gpt_client", None)
+        )
+
+    def _build_strategic_full_state(self) -> dict:
+        opportunity_store = getattr(self.control, "opportunity_store", None)
+        strategy_action_store = getattr(self.control, "strategy_action_execution_layer", None)
+        action_store = getattr(strategy_action_store, "_strategy_action_store", None)
+
+        opportunities = opportunity_store.list() if opportunity_store is not None and hasattr(opportunity_store, "list") else []
+        actions = action_store.list() if action_store is not None and hasattr(action_store, "list") else []
+
+        active_opportunities = [
+            {
+                "id": item.get("id"),
+                "title": item.get("title"),
+                "status": item.get("status"),
+            }
+            for item in opportunities
+            if isinstance(item, dict) and str(item.get("status", "")).strip() not in {"dismissed", "archived"}
+        ][:12]
+
+        current_strategies = [
+            {
+                "id": item.get("id"),
+                "type": item.get("type"),
+                "status": item.get("status"),
+            }
+            for item in actions
+            if isinstance(item, dict) and str(item.get("status", "")).strip() in {"executed", "auto_executed", "completed", "pending_confirmation"}
+        ][:16]
+
+        pending_actions = [
+            {
+                "id": item.get("id"),
+                "type": item.get("type"),
+                "reasoning": item.get("reasoning"),
+                "risk_score": item.get("risk_score"),
+            }
+            for item in actions
+            if isinstance(item, dict) and str(item.get("status", "")).strip() == "pending_confirmation"
+        ][:16]
+
+        active_risks = [
+            {
+                "action_id": item.get("id"),
+                "risk_score": float(item.get("risk_score", 0) or 0),
+                "type": item.get("type"),
+            }
+            for item in actions
+            if isinstance(item, dict)
+            and str(item.get("status", "")).strip() in {"pending_confirmation", "failed"}
+            and float(item.get("risk_score", 0) or 0) > 0
+        ][:16]
+
+        return {
+            "active_opportunities": active_opportunities,
+            "current_strategies": current_strategies,
+            "pending_actions": pending_actions,
+            "active_risks": active_risks,
+        }
+
+    def _maybe_generate_strategic_snapshot(self, event: Event, actions: list) -> None:
+        if event.type != "RunStrategyDecision":
+            return
+        if not actions:
+            return
+        if not any(getattr(action, "type", "") == "StrategyDecisionCompleted" for action in actions):
+            return
+
+        full_state = self._build_strategic_full_state()
+        snapshot_text = self.strategic_snapshot_engine.generate_snapshot(full_state)
+        if snapshot_text:
+            self.memory_store.save_snapshot(snapshot_text)
 
     def handle(self, event: Event):
         if isinstance(event.payload, dict):
@@ -123,6 +198,7 @@ class Dispatcher:
             else:
 
                 actions = self.control.consume(event)
+                self._maybe_generate_strategic_snapshot(event, actions)
                 for action in actions:
                     logger.info("Action emitted", extra={"event_type": action.type, "payload": action.payload, **ids})
                     action_payload = dict(action.payload) if isinstance(action.payload, dict) else {"value": action.payload}
