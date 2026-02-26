@@ -1,5 +1,5 @@
 const CONFIG = {
-  routes: ["home", "dashboard", "work", "profile", "game", "strategy", "reddit-ops", "settings"],
+  routes: ["home", "dashboard", "work", "profile", "game", "strategy", "reddit-ops", "decision-intelligence", "settings"],
   defaultRoute: "home",
   defaultRefreshMs: 3000,
   maxEventStream: 20,
@@ -914,6 +914,7 @@ const router = {
     if (state.currentRoute === "game") return views.loadGame();
     if (state.currentRoute === "strategy") return views.loadStrategy();
     if (state.currentRoute === "reddit-ops") return views.loadRedditOps();
+    if (state.currentRoute === "decision-intelligence") return views.loadDecisionIntelligence();
     return views.loadSettings();
   },
 };
@@ -1323,6 +1324,20 @@ const views = {
     if (!dashboardView.loading && !dashboardView.loaded) {
       loadDashboardPendingActions();
     }
+  },
+
+  async loadDecisionIntelligence() {
+    const component = window.TretaDecisionIntelligence;
+    if (!component || typeof component.render !== "function") {
+      this.shell(
+        "Decision Intelligence",
+        "Latest strategic decisions and execution signals.",
+        '<section class="card"><p class="error">Decision Intelligence component is unavailable.</p></section>'
+      );
+      return;
+    }
+
+    await component.render({ target: ui.pageContent, api });
   },
 
   loadWork() {
@@ -2094,6 +2109,7 @@ function renderNavigation() {
     { route: "reddit-ops", label: "Offers" },
     { route: "dashboard", label: "Revenue" },
     { route: "strategy", label: "System" },
+    { route: "decision-intelligence", label: "Decision Intelligence" },
     { route: "settings", label: "Settings" },
   ];
 
