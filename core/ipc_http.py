@@ -34,6 +34,7 @@ from core.reddit_intelligence.router import RedditIntelligenceRouter
 from core.reddit_public.config import get_config, update_config
 from core.http_response import error, ok
 from core.logging_config import set_request_id, set_trace_id
+from core.model_policy_engine import ModelPolicyEngine
 from core.version import VERSION
 from core.config import API_TOKEN
 
@@ -107,6 +108,7 @@ class TretaHTTPServer(ThreadingHTTPServer):
         self.subreddit_performance_store = dependencies.get("subreddit_performance_store")
         self.storage = dependencies.get("storage")
         self.action_execution_store = dependencies.get("action_execution_store")
+        self.model_policy_engine = dependencies.get("model_policy_engine") or ModelPolicyEngine()
         self.integrity_cache_ttl_seconds = 15
         self.integrity_cache = None
         self.operation_timeout_seconds = 8
@@ -229,6 +231,10 @@ class Handler(BaseHTTPRequestHandler):
     @property
     def subreddit_performance_store(self):
         return self.server.subreddit_performance_store
+
+    @property
+    def model_policy_engine(self):
+        return self.server.model_policy_engine
 
     def _reddit_posts_path(self) -> Path:
         data_dir = Path(__file__).resolve().parent.parent / ".treta_data"
@@ -1143,9 +1149,11 @@ class Handler(BaseHTTPRequestHandler):
                     if not api_key or OpenAI is None:
                         return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "gpt_not_configured", "gpt_not_configured")
 
-                    client = OpenAI()
+                    resolved_model = self.model_policy_engine.get_model("tts")
+                    logger.info("TTS request", extra={"model": resolved_model, "event_type": "tts_request"})
+                    client = OpenAI(api_key=api_key)
                     response = client.audio.speech.create(
-                        model="gpt-4o-mini-tts",
+                        model=resolved_model,
                         voice="sol",
                         input=text,
                     )

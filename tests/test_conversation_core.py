@@ -20,8 +20,9 @@ class _MockGPTClient:
         self.response = response
         self.messages = None
 
-    def chat(self, messages):
+    def chat(self, messages, **kwargs):
         self.messages = messages
+        self.kwargs = kwargs
         return self.response
 
 
@@ -107,6 +108,7 @@ class ConversationCoreTest(unittest.TestCase):
             self.assertEqual(generated.payload["text"], "from gpt")
             self.assertIsNotNone(mock_gpt.messages)
             self.assertEqual(mock_gpt.messages[1]["content"], "hello treta")
+            self.assertEqual(mock_gpt.kwargs.get("task_type"), "chat")
 
     def test_memory_endpoint_returns_chat_history(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

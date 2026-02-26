@@ -18,6 +18,7 @@ from core.decision_engine import DecisionEngine
 from core.events import Event
 from core.ipc_http import start_http_server
 from core.memory_store import MemoryStore
+from core.model_policy_engine import ModelPolicyEngine
 from core.migrations.runner import run_migrations
 from core.opportunity_store import OpportunityStore
 from core.performance_engine import PerformanceEngine
@@ -71,6 +72,7 @@ class TretaApp:
         self.performance_engine = PerformanceEngine(product_launch_store=self.product_launch_store)
         self.strategy_engine = StrategyEngine(product_launch_store=self.product_launch_store)
         self.strategy_action_store = StrategyActionStore()
+        self.model_policy_engine = ModelPolicyEngine()
         self.action_execution_store = ActionExecutionStore(self.storage.conn)
         self.executor_registry = ActionExecutorRegistry()
         bootstrap_executors(self.executor_registry, config)
@@ -115,7 +117,10 @@ class TretaApp:
             decision_engine=self.decision_engine,
         )
         try:
-            gpt_client = GPTClient(revenue_attribution_store=self.revenue_attribution_store)
+            gpt_client = GPTClient(
+                revenue_attribution_store=self.revenue_attribution_store,
+                model_policy_engine=self.model_policy_engine,
+            )
         except GPTClientConfigurationError:
             gpt_client = None
 
@@ -160,6 +165,7 @@ class TretaApp:
             subreddit_performance_store=self.subreddit_performance_store,
             storage=self.storage,
             action_execution_store=self.action_execution_store,
+            model_policy_engine=self.model_policy_engine,
         )
         return self.http_server
 

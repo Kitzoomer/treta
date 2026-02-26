@@ -89,7 +89,7 @@ class ConversationCore:
         ]
 
         try:
-            return str(self.gpt_client.chat(messages))
+            return str(self.gpt_client.chat(messages, task_type="chat"))
         except Exception:
             return "Treta GPT connection error. Check configuration."
 

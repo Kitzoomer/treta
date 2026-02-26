@@ -12,7 +12,9 @@ class VoiceTTSEndpointTest(unittest.TestCase):
     def test_voice_tts_returns_mpeg_audio(self, mock_openai):
         server = start_http_server(host="127.0.0.1", port=0)
         previous_api_key = os.environ.get("OPENAI_API_KEY")
+        previous_tts_model = os.environ.get("TRETA_MODEL_TTS")
         os.environ["OPENAI_API_KEY"] = "test-key"
+        os.environ["TRETA_MODEL_TTS"] = "gpt-4o-mini-tts-custom"
 
         try:
             mock_response = Mock()
@@ -35,7 +37,7 @@ class VoiceTTSEndpointTest(unittest.TestCase):
             self.assertEqual(response.headers.get("Content-Type"), "audio/mpeg")
             self.assertEqual(body, b"fake-mp3")
             mock_client.audio.speech.create.assert_called_once_with(
-                model="gpt-4o-mini-tts",
+                model="gpt-4o-mini-tts-custom",
                 voice="sol",
                 input="Hola",
             )
@@ -44,6 +46,10 @@ class VoiceTTSEndpointTest(unittest.TestCase):
                 os.environ.pop("OPENAI_API_KEY", None)
             else:
                 os.environ["OPENAI_API_KEY"] = previous_api_key
+            if previous_tts_model is None:
+                os.environ.pop("TRETA_MODEL_TTS", None)
+            else:
+                os.environ["TRETA_MODEL_TTS"] = previous_tts_model
             server.shutdown()
             server.server_close()
 

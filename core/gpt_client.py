@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+
+from core.model_policy_engine import ModelPolicyEngine, TaskType
 
 import pytz
 
@@ -14,6 +17,9 @@ try:
     from openai import OpenAI
 except ImportError:
     OpenAI = None
+
+
+logger = logging.getLogger("treta.gpt_client")
 
 
 @dataclass
@@ -30,8 +36,10 @@ class GPTClient:
         self,
         revenue_attribution_store: RevenueAttributionStore | None = None,
         openai_client: Any | None = None,
+        model_policy_engine: ModelPolicyEngine | None = None,
     ):
         self._revenue_attribution_store = revenue_attribution_store
+        self._model_policy_engine = model_policy_engine or ModelPolicyEngine()
         if openai_client is not None:
             self._client = openai_client
             return
@@ -129,9 +137,18 @@ class GPTClient:
             return {"error": f"unknown_tool:{name}"}
         return handler()
 
-    def chat(self, messages: list[dict]) -> str:
+    def _resolve_model(self, task_type: TaskType, model: str | None = None) -> str:
+        if model is not None:
+            normalized_model = str(model).strip()
+            if normalized_model:
+                return normalized_model
+        return self._model_policy_engine.get_model(task_type)
+
+    def chat(self, messages: list[dict], model: str | None = None, task_type: TaskType = "chat") -> str:
+        resolved_model = self._resolve_model(task_type=task_type, model=model)
+        logger.info("GPT chat request", extra={"task_type": task_type, "model": resolved_model, "event_type": "gpt_chat_request"})
         response = self._client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=resolved_model,
             messages=messages,
             tools=self._tool_spec(),
         )
@@ -169,7 +186,7 @@ class GPTClient:
             )
 
         followup = self._client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=resolved_model,
             messages=extended_messages,
             tools=self._tool_spec(),
         )

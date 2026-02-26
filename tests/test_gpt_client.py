@@ -68,6 +68,28 @@ class GPTClientTest(unittest.TestCase):
         self.assertEqual(followup_messages[-1]["tool_call_id"], "call_1")
         self.assertEqual(followup_messages[-1]["content"], "UTC")
 
+
+
+    def test_chat_uses_model_policy_env_override(self):
+        response = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="hello", tool_calls=None))]
+        )
+        openai_client = _MockOpenAIClient([response])
+        client = GPTClient(openai_client=openai_client)
+
+        previous = os.environ.get("TRETA_MODEL_CHAT")
+        os.environ["TRETA_MODEL_CHAT"] = "gpt-4.1-mini"
+        try:
+            result = client.chat([{"role": "user", "content": "hi"}])
+        finally:
+            if previous is None:
+                os.environ.pop("TRETA_MODEL_CHAT", None)
+            else:
+                os.environ["TRETA_MODEL_CHAT"] = previous
+
+        self.assertEqual(result, "hello")
+        self.assertEqual(openai_client.chat.completions.calls[0]["model"], "gpt-4.1-mini")
+
     def test_revenue_tools_use_existing_store(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             store = RevenueAttributionStore(path=Path(tmp_dir) / "revenue_attribution.json")
