@@ -71,7 +71,6 @@ class TretaApp:
             bus=self.bus,
             storage=self.storage,
             action_execution_store=self.action_execution_store,
-            executor_registry=self.executor_registry,
         )
         self.autonomy_policy_engine = AutonomyPolicyEngine(
             strategy_action_store=self.strategy_action_store,
@@ -123,7 +122,7 @@ class TretaApp:
         self.scheduler = DailyScheduler(bus=self.bus)
         self.http_server = None
 
-    def start_http_server(self, host: str = "0.0.0.0", port: int = 7777):
+    def start_http_server(self, host: str = "0.0.0.0", port: int = 7777, action_execution_store=None):
         self.http_server = start_http_server(
             host=host,
             port=port,
@@ -146,7 +145,6 @@ class TretaApp:
             subreddit_performance_store=self.subreddit_performance_store,
             storage=self.storage,
             action_execution_store=self.action_execution_store,
-            executor_registry=self.executor_registry,
         )
         return self.http_server
 

@@ -70,30 +70,32 @@ class StrategyActionExecutionLayer:
 
     def execute_action(self, action_id: str, status: str = "executed", request_id: str | None = None, trace_id: str | None = None) -> Dict[str, Any]:
         updated = self._strategy_action_store.set_status(action_id, status)
-        self._bus.push(
-            Event(
-                type="StrategyActionExecuted",
-                payload={"action": updated},
-                source="strategy_action_execution_layer",
-                request_id=request_id or "",
-                trace_id=trace_id or "",
+        if self._action_execution_store is None or self._executor_registry is None:
+            self._bus.push(
+                Event(
+                    type="StrategyActionExecuted",
+                    payload={"action": updated},
+                    source="strategy_action_execution_layer",
+                    request_id=request_id or "",
+                    trace_id=trace_id or "",
+                )
             )
-        )
-        self._bus.push(
-            Event(
-                type="ExecuteStrategyAction",
-                payload={
-                    "action_id": action_id,
-                    "request_id": request_id or str(updated.get("event_id") or ""),
-                    "trace_id": trace_id or str(updated.get("trace_id") or ""),
-                    "correlation_id": str(updated.get("decision_id") or ""),
-                    "strategy_status": status,
-                },
-                source="strategy_action_execution_layer",
-                request_id=request_id or "",
-                trace_id=trace_id or "",
+        else:
+            self._bus.push(
+                Event(
+                    type="ExecuteStrategyAction",
+                    payload={
+                        "action_id": action_id,
+                        "request_id": request_id or str(updated.get("event_id") or ""),
+                        "trace_id": trace_id or str(updated.get("trace_id") or ""),
+                        "correlation_id": str(updated.get("decision_id") or ""),
+                        "strategy_status": status,
+                    },
+                    source="strategy_action_execution_layer",
+                    request_id=request_id or "",
+                    trace_id=trace_id or "",
+                )
             )
-        )
         if self._storage is not None:
             self._storage.create_decision_log(
                 {

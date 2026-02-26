@@ -105,7 +105,20 @@ class StrategyHandler:
                     ),
                 )
                 storage.conn.commit()
-            return [Action(type="StrategyActionExecutionCompleted", payload={"action": updated, "execution_id": execution_id, "output": output})]
+            return [
+                Action(
+                    type="StrategyActionExecuted",
+                    payload={
+                        "action_id": action_id,
+                        "status": "success",
+                        "executor": executor_name,
+                        "correlation_id": str(ctx.get("correlation_id") or ""),
+                        "action": updated,
+                        "execution_id": execution_id,
+                        "output": output,
+                    },
+                )
+            ]
         except Exception as exc:
             execution_store.complete(execution_id, status="failed", error=str(exc), output_payload={})
             updated = action_store.set_status(action_id, "failed")
@@ -128,7 +141,20 @@ class StrategyHandler:
                     ),
                 )
                 storage.conn.commit()
-            return [Action(type="StrategyActionExecutionFailed", payload={"action": updated, "error": str(exc), "execution_id": execution_id})]
+            return [
+                Action(
+                    type="StrategyActionFailed",
+                    payload={
+                        "action_id": action_id,
+                        "status": "failed",
+                        "executor": executor_name,
+                        "correlation_id": str(ctx.get("correlation_id") or ""),
+                        "action": updated,
+                        "error": str(exc),
+                        "execution_id": execution_id,
+                    },
+                )
+            ]
 
     @staticmethod
     def handle(event, context):

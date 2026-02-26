@@ -106,6 +106,7 @@ class TretaHTTPServer(ThreadingHTTPServer):
         self.revenue_attribution_store = dependencies.get("revenue_attribution_store")
         self.subreddit_performance_store = dependencies.get("subreddit_performance_store")
         self.storage = dependencies.get("storage")
+        self.action_execution_store = dependencies.get("action_execution_store")
         self.integrity_cache_ttl_seconds = 15
         self.integrity_cache = None
         self.operation_timeout_seconds = 8
@@ -1459,6 +1460,7 @@ def start_http_server(
     revenue_attribution_store: RevenueAttributionStore | None = None,
     subreddit_performance_store: SubredditPerformanceStore | None = None,
     storage=None,
+    action_execution_store=None,
 ):
     # Thread daemon: se muere si se muere el proceso principal (bien para dev)
     resolved_bus = bus or EventBus()
@@ -1483,6 +1485,7 @@ def start_http_server(
         revenue_attribution_store=revenue_attribution_store,
         subreddit_performance_store=subreddit_performance_store,
         storage=storage,
+        action_execution_store=action_execution_store,
         reddit_router=RedditIntelligenceRouter(),
     )
     t = threading.Thread(target=server.serve_forever, daemon=True)
