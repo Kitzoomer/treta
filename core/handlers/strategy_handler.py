@@ -107,6 +107,44 @@ class StrategyHandler:
 
         try:
             output = executor.execute(action, ctx)
+            if str(output.get("status") or "").lower() == "failed":
+                error_text = str(output.get("error") or "executor_reported_failure")
+                execution_store.complete(execution_id, status="failed", error=error_text, output_payload=output)
+                updated = action_store.set_status(action_id, "failed")
+                if storage is not None:
+                    storage.conn.execute(
+                        """
+                        INSERT OR REPLACE INTO decision_outcomes (
+                            decision_id, strategy_type, was_autonomous, predicted_risk,
+                            revenue_generated, outcome, evaluated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            str(updated.get("decision_id") or f"action_execution:{action_id}"),
+                            str(updated.get("type") or ""),
+                            0,
+                            float(updated.get("risk_score", 0) or 0),
+                            float(updated.get("revenue_generated", updated.get("revenue_delta", 0)) or 0),
+                            "failed",
+                            datetime.now(timezone.utc).isoformat(),
+                        ),
+                    )
+                    storage.conn.commit()
+                return [
+                    Action(
+                        type="StrategyActionFailed",
+                        payload={
+                            "action_id": action_id,
+                            "status": "failed",
+                            "executor": executor_name,
+                            "correlation_id": str(ctx.get("correlation_id") or ""),
+                            "action": updated,
+                            "error": error_text,
+                            "execution_id": execution_id,
+                            "output": output,
+                        },
+                    )
+                ]
             execution_store.complete(execution_id, status="success", output_payload=output)
             target_status = "auto_executed" if str(ctx.get("strategy_status")) == "auto_executed" else "executed"
             updated = action_store.set_status(action_id, target_status)

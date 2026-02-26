@@ -3,6 +3,8 @@ from __future__ import annotations
 import time
 import logging
 
+import core.config as config
+
 from core.action_execution_store import ActionExecutionStore
 from core.autonomy_policy_engine import AutonomyPolicyEngine
 from core.bus import EventBus
@@ -35,6 +37,18 @@ from core.revenue_attribution.store import RevenueAttributionStore
 from core.subreddit_performance_store import SubredditPerformanceStore
 
 
+def bootstrap_executors(registry: ActionExecutorRegistry, app_config=config) -> None:
+    registry.register(DraftAssetExecutor())
+
+    if str(app_config.OPENCLAW_BASE_URL or "").strip():
+        from core.executors.openclaw_executor import OpenClawExecutor
+
+        registry.register(OpenClawExecutor())
+        return
+
+    logging.getLogger("treta.executors").warning("OpenClaw executor disabled")
+
+
 class TretaApp:
     def __init__(self, storage: Storage | None = None):
         self.storage = storage or Storage()
@@ -59,7 +73,7 @@ class TretaApp:
         self.strategy_action_store = StrategyActionStore()
         self.action_execution_store = ActionExecutionStore(self.storage.conn)
         self.executor_registry = ActionExecutorRegistry()
-        self.executor_registry.register(DraftAssetExecutor())
+        bootstrap_executors(self.executor_registry, config)
         self.daily_loop_engine = DailyLoopEngine(
             opportunity_store=self.opportunity_store,
             proposal_store=self.product_proposal_store,
@@ -71,6 +85,7 @@ class TretaApp:
             bus=self.bus,
             storage=self.storage,
             action_execution_store=self.action_execution_store,
+            executor_registry=self.executor_registry,
         )
         self.autonomy_policy_engine = AutonomyPolicyEngine(
             strategy_action_store=self.strategy_action_store,

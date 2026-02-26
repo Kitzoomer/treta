@@ -91,6 +91,13 @@ class StrategyDecisionEngine:
                         "reasoning": "Create a safe draft landing/email asset to improve launch messaging.",
                     }
                 )
+                actions.append(
+                    {
+                        "type": "queue_openclaw_task",
+                        "target_id": launch_id,
+                        "reasoning": "Queue a non-destructive external analysis task for stalled launch diagnostics.",
+                    }
+                )
                 if "stalled_launch" not in risk_flags:
                     risk_flags.append("stalled_launch")
 
