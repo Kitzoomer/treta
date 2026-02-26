@@ -17,9 +17,15 @@ class OpenClawExecutor:
     ]
 
     def execute(self, action: dict, context: dict) -> dict:
+        try:
+            import requests  # noqa: F401
+        except Exception:
+            pass
+
         base_url = OPENCLAW_BASE_URL or os.getenv("OPENCLAW_BASE_URL", "")
         timeout_seconds = OPENCLAW_TIMEOUT_SECONDS
         timeout_from_env = os.getenv("OPENCLAW_TIMEOUT_SECONDS")
+
         if timeout_from_env is not None:
             try:
                 timeout_seconds = int(timeout_from_env)
@@ -27,6 +33,7 @@ class OpenClawExecutor:
                 timeout_seconds = OPENCLAW_TIMEOUT_SECONDS
 
         now_iso = datetime.now(timezone.utc).isoformat()
+
         payload = {
             "task_type": str(action.get("type") or ""),
             "action_id": str(action.get("id") or ""),
@@ -36,27 +43,25 @@ class OpenClawExecutor:
         }
 
         try:
-            try:
-                import requests  # noqa: F401
-            except Exception:
-                pass
-
             requests = importlib.import_module("requests")
             response = requests.post(
                 f"{str(base_url).rstrip('/')}/tasks",
                 json=payload,
                 timeout=timeout_seconds,
             )
+
             if 200 <= response.status_code < 300:
                 data = response.json() if response.content else {}
                 return {
                     "status": "queued",
                     "openclaw_task_id": data.get("task_id"),
                 }
+
             return {
                 "status": "failed",
                 "error": response.text,
             }
+
         except Exception as exc:
             return {
                 "status": "failed",
