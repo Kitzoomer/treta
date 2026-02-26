@@ -9,6 +9,14 @@ from core.model_policy_engine import ModelPolicyEngine
 from core.output_validator import OutputValidator
 
 
+class StrategicPlannerError(ValueError):
+    """Controlled planner error with structured payload for observability."""
+
+    def __init__(self, payload: dict[str, Any]):
+        self.payload = payload
+        super().__init__(json.dumps(payload, ensure_ascii=False))
+
+
 class StrategicPlannerEngine:
     """Builds a strict strategic plan JSON from an objective and state snapshot."""
 
@@ -78,6 +86,36 @@ class StrategicPlannerEngine:
 
         return plan
 
+    def _chat_with_optional_json_format(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        model_name: str,
+        response_format: dict[str, str] | None,
+    ) -> str:
+        if response_format is None:
+            return str(self._gpt_client.chat(messages=messages, task_type="planning", model=model_name) or "")
+
+        try:
+            return str(
+                self._gpt_client.chat(
+                    messages=messages,
+                    task_type="planning",
+                    model=model_name,
+                    response_format=response_format,
+                )
+                or ""
+            )
+        except TypeError:
+            return str(self._gpt_client.chat(messages=messages, task_type="planning", model=model_name) or "")
+
+    def _parse_validate_plan(self, raw_payload: str) -> dict[str, Any]:
+        parsed = self._output_validator.validate_json(raw_payload)
+        self._output_validator.validate_required_fields(parsed, ["objective", "steps"])
+        self._output_validator.validate_schema(parsed, {"objective": "string", "steps": []})
+        self._output_validator.validate_non_empty_strings(parsed)
+        return self._validate_plan(parsed)
+
     def create_plan(self, objective: str, state_snapshot: str) -> dict[str, Any]:
         normalized_objective = str(objective or "").strip()
         normalized_snapshot = str(state_snapshot or "").strip()
@@ -104,7 +142,8 @@ class StrategicPlannerEngine:
 
         prompt = (
             "Devuelve EXCLUSIVAMENTE JSON válido (sin markdown) con el schema exacto solicitado. "
-            "No agregues campos extra y usa requires_llm=true solo cuando sea necesario LLM."
+            "No agregues campos extra y usa requires_llm=true solo cuando sea necesario LLM. "
+            "Si no puedes cumplir, responde igual con un JSON del schema pedido sin texto adicional."
         )
 
         messages = [
@@ -121,19 +160,23 @@ class StrategicPlannerEngine:
 
         model_name = self._model_policy_engine.get_model(task_type="planning")
         started_at = time.perf_counter()
+        trace: dict[str, Any] = {"model": model_name, "attempts": [], "error": None}
         self._logger.info(
             "Strategic planner creating plan",
             extra={"objective": normalized_objective, "model": model_name, "phase": "plan"},
         )
+
+        raw_attempt_1 = ""
         try:
-            raw = self._gpt_client.chat(messages=messages, task_type="planning", model=model_name)
-            parsed = self._output_validator.validate_json(str(raw or "{}"))
-            self._output_validator.validate_required_fields(parsed, ["objective", "steps"])
-            self._output_validator.validate_schema(parsed, {"objective": "string", "steps": []})
-            self._output_validator.validate_non_empty_strings(parsed)
-            validated = self._validate_plan(parsed)
+            raw_attempt_1 = self._chat_with_optional_json_format(
+                messages=messages,
+                model_name=model_name,
+                response_format={"type": "json_object"},
+            )
+            validated = self._parse_validate_plan(str(raw_attempt_1 or "{}"))
+            trace["attempts"].append({"attempt": 1, "type": "strict_json", "status": "success"})
             elapsed_ms = round((time.perf_counter() - started_at) * 1000, 2)
-            estimated_tokens = max(len(str(raw or "")) // 4, 1)
+            estimated_tokens = max(len(str(raw_attempt_1 or "")) // 4, 1)
             self._logger.info(
                 "Strategic planner plan generated",
                 extra={
@@ -144,12 +187,76 @@ class StrategicPlannerEngine:
                     "task_type": "planning",
                     "tokens_estimated": estimated_tokens,
                     "response_time_ms": elapsed_ms,
+                    "attempts": trace["attempts"],
                 },
             )
             return validated
-        except Exception as exc:
-            self._logger.warning(
-                "Strategic planner failed, using fallback",
-                extra={"objective": normalized_objective, "model": model_name, "phase": "plan", "error": str(exc)},
+        except Exception as first_exc:
+            trace["attempts"].append(
+                {"attempt": 1, "type": "strict_json", "status": "failed", "error": str(first_exc)}
             )
-            return self._validate_plan(self._fallback_plan(normalized_objective, normalized_snapshot))
+
+        repair_messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Repara el contenido recibido y devuelve EXCLUSIVAMENTE JSON válido con el schema exacto. "
+                    "No incluyas markdown, explicaciones ni campos extra."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"schema: {json.dumps(schema, ensure_ascii=False)}\n"
+                    f"invalid_payload: {raw_attempt_1}"
+                ),
+            },
+        ]
+
+        try:
+            raw_attempt_2 = self._chat_with_optional_json_format(
+                messages=repair_messages,
+                model_name=model_name,
+                response_format={"type": "json_object"},
+            )
+            validated = self._parse_validate_plan(str(raw_attempt_2 or "{}"))
+            trace["attempts"].append({"attempt": 2, "type": "repair_json", "status": "success"})
+            elapsed_ms = round((time.perf_counter() - started_at) * 1000, 2)
+            estimated_tokens = max(len(str(raw_attempt_2 or "")) // 4, 1)
+            self._logger.info(
+                "Strategic planner plan generated",
+                extra={
+                    "objective": normalized_objective,
+                    "model": model_name,
+                    "steps": len(validated.get("steps", [])),
+                    "phase": "plan",
+                    "task_type": "planning",
+                    "tokens_estimated": estimated_tokens,
+                    "response_time_ms": elapsed_ms,
+                    "attempts": trace["attempts"],
+                },
+            )
+            return validated
+        except Exception as second_exc:
+            trace["attempts"].append(
+                {"attempt": 2, "type": "repair_json", "status": "failed", "error": str(second_exc)}
+            )
+            trace["error"] = str(second_exc)
+            self._logger.error(
+                "Strategic planner failed with controlled error",
+                extra={
+                    "objective": normalized_objective,
+                    "model": model_name,
+                    "phase": "plan",
+                    "task_type": "planning",
+                    "attempts": trace["attempts"],
+                    "error": trace["error"],
+                },
+            )
+            raise StrategicPlannerError(
+                {
+                    "code": "STRATEGIC_PLANNER_JSON_FAILURE",
+                    "message": "Planner could not produce a valid JSON plan after retries.",
+                    "trace": trace,
+                }
+            ) from second_exc
