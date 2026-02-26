@@ -6,6 +6,7 @@ import os
 
 OPENCLAW_BASE_URL = None
 OPENCLAW_TIMEOUT_SECONDS = 5
+requests = None
 
 
 class OpenClawExecutor:
@@ -17,11 +18,6 @@ class OpenClawExecutor:
     ]
 
     def execute(self, action: dict, context: dict) -> dict:
-        try:
-            import requests  # noqa: F401
-        except Exception:
-            pass
-
         base_url = OPENCLAW_BASE_URL or os.getenv("OPENCLAW_BASE_URL", "")
         timeout_seconds = OPENCLAW_TIMEOUT_SECONDS
         timeout_from_env = os.getenv("OPENCLAW_TIMEOUT_SECONDS")
@@ -43,7 +39,10 @@ class OpenClawExecutor:
         }
 
         try:
-            requests = importlib.import_module("requests")
+            global requests
+            if requests is None:
+                requests = importlib.import_module("requests")
+
             response = requests.post(
                 f"{str(base_url).rstrip('/')}/tasks",
                 json=payload,
