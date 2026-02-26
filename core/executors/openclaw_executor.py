@@ -36,6 +36,11 @@ class OpenClawExecutor:
         }
 
         try:
+            try:
+                import requests  # noqa: F401
+            except Exception:
+                pass
+
             requests = importlib.import_module("requests")
             response = requests.post(
                 f"{str(base_url).rstrip('/')}/tasks",
