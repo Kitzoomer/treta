@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock
 
 from core.adaptive_policy_engine import AdaptivePolicyEngine
 
@@ -19,15 +20,12 @@ class AdaptivePolicyEngineTest(unittest.TestCase):
                     "revenue_delta_per_action": [],
                 },
             )
-            self.assertEqual(
-                engine.adaptive_status(),
-                {
-                    "success_rate": 0.0,
-                    "avg_revenue_delta": 0.0,
-                    "impact_threshold": 6,
-                    "max_auto_executions_per_24h": 3,
-                },
-            )
+            status = engine.adaptive_status()
+            self.assertEqual(status["success_rate"], 0.0)
+            self.assertEqual(status["avg_revenue_delta"], 0.0)
+            self.assertEqual(status["impact_threshold"], 6)
+            self.assertEqual(status["max_auto_executions_per_24h"], 3)
+            self.assertEqual(status["strategy_weights"]["scale"], 1.0)
 
     def test_adapts_up_and_down_with_bounds(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -71,6 +69,52 @@ class AdaptivePolicyEngineTest(unittest.TestCase):
                 reloaded.adaptive_status()["max_auto_executions_per_24h"],
                 raw["max_auto_executions_per_24h"],
             )
+
+    def test_refresh_strategy_weights_with_smoothing(self):
+        storage = Mock()
+        storage.get_strategy_performance.return_value = {
+            "scale": {
+                "total_decisions": 8,
+                "avg_revenue": 20.0,
+                "success_rate": 0.5,
+                "avg_predicted_risk": 1.0,
+                "score": 5.0,
+            },
+            "review": {
+                "total_decisions": 8,
+                "avg_revenue": 5.0,
+                "success_rate": 0.4,
+                "avg_predicted_risk": 1.0,
+                "score": 1.0,
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            engine = AdaptivePolicyEngine(path=Path(tmp_dir) / "adaptive.json", storage=storage)
+            updated = engine.refresh_strategy_weights()
+
+        self.assertAlmostEqual(updated["scale"], 1.0)
+        self.assertAlmostEqual(updated["review"], 0.76)
+        self.assertEqual(engine.prioritized_strategy_types(["review", "scale"]), ["scale", "review"])
+
+    def test_refresh_strategy_weights_skips_when_insufficient_metrics(self):
+        storage = Mock()
+        storage.get_strategy_performance.return_value = {
+            "scale": {
+                "total_decisions": 4,
+                "avg_revenue": 20.0,
+                "success_rate": 0.5,
+                "avg_predicted_risk": 1.0,
+                "score": 5.0,
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            engine = AdaptivePolicyEngine(path=Path(tmp_dir) / "adaptive.json", storage=storage)
+            original = dict(engine.adaptive_status()["strategy_weights"])
+            updated = engine.refresh_strategy_weights()
+
+        self.assertEqual(updated, original)
 
 
 if __name__ == "__main__":
