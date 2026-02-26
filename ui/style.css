@@ -1133,3 +1133,97 @@ body.focus-mode-active .telemetry-content {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 0.82rem;
 }
+
+.autonomy-telemetry-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+}
+
+.autonomy-block {
+  grid-column: span 12;
+  box-shadow: 0 6px 20px rgba(10, 24, 40, 0.08);
+}
+
+.autonomy-status-grid,
+.autonomy-metrics-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.autonomy-mode-card,
+.autonomy-metric-card {
+  border: 1px solid var(--border-color, #2b3f57);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(8, 16, 28, 0.45);
+}
+
+.autonomy-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 120px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.autonomy-mode-badge.mode-manual {
+  background: #6b7280;
+  color: #ffffff;
+}
+
+.autonomy-mode-badge.mode-partial {
+  background: #2563eb;
+  color: #eff6ff;
+}
+
+.autonomy-mode-badge.mode-disabled {
+  background: #b91c1c;
+  color: #fee2e2;
+}
+
+.budget-empty {
+  color: #ef4444;
+}
+
+.budget-low {
+  color: #f59e0b;
+}
+
+.budget-healthy {
+  color: #22c55e;
+}
+
+.autonomy-telemetry-loading {
+  margin: 0;
+  color: var(--muted-color, #94a3b8);
+}
+
+.autonomy-telemetry-error {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  border-radius: 10px;
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.25);
+}
+
+.autonomy-manual-note {
+  margin: 12px 0 0;
+  color: #cbd5e1;
+}
+
+.autonomy-priority-card {
+  grid-column: span 2;
+}
+
+@media (max-width: 860px) {
+  .autonomy-priority-card {
+    grid-column: span 1;
+  }
+}

@@ -1,5 +1,5 @@
 const CONFIG = {
-  routes: ["home", "dashboard", "work", "profile", "game", "strategy", "reddit-ops", "decision-intelligence", "settings"],
+  routes: ["home", "dashboard", "work", "profile", "game", "strategy", "reddit-ops", "decision-intelligence", "autonomy-telemetry", "settings"],
   defaultRoute: "home",
   defaultRefreshMs: 3000,
   maxEventStream: 20,
@@ -915,6 +915,7 @@ const router = {
     if (state.currentRoute === "strategy") return views.loadStrategy();
     if (state.currentRoute === "reddit-ops") return views.loadRedditOps();
     if (state.currentRoute === "decision-intelligence") return views.loadDecisionIntelligence();
+    if (state.currentRoute === "autonomy-telemetry") return views.loadAutonomyTelemetry();
     return views.loadSettings();
   },
 };
@@ -1333,6 +1334,20 @@ const views = {
         "Decision Intelligence",
         "Latest strategic decisions and execution signals.",
         '<section class="card"><p class="error">Decision Intelligence component is unavailable.</p></section>'
+      );
+      return;
+    }
+
+    await component.render({ target: ui.pageContent, api });
+  },
+
+  async loadAutonomyTelemetry() {
+    const component = window.TretaAutonomyTelemetry;
+    if (!component || typeof component.render !== "function") {
+      this.shell(
+        "Autonomy Telemetry",
+        "Live autonomous policy state, limits, and adaptive behavior.",
+        '<section class="card"><p class="error">Autonomy Telemetry component is unavailable.</p></section>'
       );
       return;
     }
@@ -2110,6 +2125,7 @@ function renderNavigation() {
     { route: "dashboard", label: "Revenue" },
     { route: "strategy", label: "System" },
     { route: "decision-intelligence", label: "Decision Intelligence" },
+    { route: "autonomy-telemetry", label: "Autonomy Telemetry" },
     { route: "settings", label: "Settings" },
   ];
 
