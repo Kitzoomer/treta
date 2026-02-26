@@ -75,6 +75,14 @@ class StrategyDecisionEngineTest(unittest.TestCase):
                 },
                 decision["actions"],
             )
+            self.assertIn(
+                {
+                    "type": "queue_openclaw_task",
+                    "target_id": launch["id"],
+                    "reasoning": "Queue a non-destructive external analysis task for stalled launch diagnostics.",
+                },
+                decision["actions"],
+            )
 
     def test_rule_price_test_when_high_revenue_per_sale_and_low_sales(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

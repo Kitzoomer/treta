@@ -6,7 +6,7 @@ import logging
 from core.action_execution_store import ActionExecutionStore
 from core.autonomy_policy_engine import AutonomyPolicyEngine
 from core.bus import EventBus
-from core.config import get_autonomy_mode
+from core.config import OPENCLAW_BASE_URL, get_autonomy_mode
 from core.control import Control
 from core.conversation_core import ConversationCore
 from core.daily_loop import DailyLoopEngine
@@ -26,6 +26,7 @@ from core.scheduler import DailyScheduler
 from core.state_machine import State, StateMachine
 from core.storage import Storage
 from core.executors.draft_asset_executor import DraftAssetExecutor
+from core.executors.openclaw_executor import OpenClawExecutor
 from core.executors.registry import ActionExecutorRegistry
 from core.strategy_action_execution_layer import StrategyActionExecutionLayer
 from core.strategy_action_store import StrategyActionStore
@@ -60,6 +61,10 @@ class TretaApp:
         self.action_execution_store = ActionExecutionStore(self.storage.conn)
         self.executor_registry = ActionExecutorRegistry()
         self.executor_registry.register(DraftAssetExecutor())
+        if OPENCLAW_BASE_URL:
+            self.executor_registry.register(OpenClawExecutor())
+        else:
+            logging.getLogger("treta.executors").warning("OPENCLAW_BASE_URL not configured; OpenClaw executor disabled")
         self.daily_loop_engine = DailyLoopEngine(
             opportunity_store=self.opportunity_store,
             proposal_store=self.product_proposal_store,
@@ -71,6 +76,7 @@ class TretaApp:
             bus=self.bus,
             storage=self.storage,
             action_execution_store=self.action_execution_store,
+            executor_registry=self.executor_registry,
         )
         self.autonomy_policy_engine = AutonomyPolicyEngine(
             strategy_action_store=self.strategy_action_store,

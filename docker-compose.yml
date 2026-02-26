@@ -15,6 +15,8 @@ services:
       - TRETA_TIMEZONE=Asia/Bangkok
       - TRETA_SCAN_HOUR=9
       - GUMROAD_ACCESS_TOKEN=${GUMROAD_ACCESS_TOKEN}
+      - OPENCLAW_BASE_URL=${OPENCLAW_BASE_URL:-http://openclaw:8080}
+      - OPENCLAW_TIMEOUT_SECONDS=${OPENCLAW_TIMEOUT_SECONDS:-5}
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:7777/health"]
