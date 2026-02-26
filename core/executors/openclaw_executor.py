@@ -6,10 +6,6 @@ import importlib
 from core.config import OPENCLAW_BASE_URL, OPENCLAW_TIMEOUT_SECONDS
 
 
-def _load_requests_module():
-    return importlib.import_module("requests")
-
-
 class OpenClawExecutor:
     name = "openclaw_executor"
     supported_types = [
@@ -29,7 +25,7 @@ class OpenClawExecutor:
         }
 
         try:
-            requests = _load_requests_module()
+            requests = importlib.import_module("requests")
             response = requests.post(
                 f"{OPENCLAW_BASE_URL.rstrip('/')}/tasks",
                 json=payload,
