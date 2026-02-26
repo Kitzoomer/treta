@@ -33,7 +33,7 @@ from core.system_integrity import compute_system_integrity
 from core.reddit_intelligence.router import RedditIntelligenceRouter
 from core.reddit_public.config import get_config, update_config
 from core.http_response import error, ok
-from core.logging_config import set_request_id
+from core.logging_config import set_request_id, set_trace_id
 from core.version import VERSION
 
 UI_DIR = Path(__file__).parent.parent / "ui"
@@ -105,6 +105,19 @@ class Handler(BaseHTTPRequestHandler):
             self.request_id = incoming_request_id or str(uuid.uuid4())
             set_request_id(self.request_id)
         return self.request_id
+
+    def _ensure_trace_id(self) -> str:
+        if not hasattr(self, "trace_id"):
+            incoming_trace_id = str(self.headers.get("X-Trace-Id", "")).strip()
+            self.trace_id = incoming_trace_id or str(uuid.uuid4())
+            set_trace_id(self.trace_id)
+        return self.trace_id
+
+    def _ensure_event_id(self) -> str:
+        if not hasattr(self, "event_id"):
+            incoming_event_id = str(self.headers.get("X-Event-Id", "")).strip()
+            self.event_id = incoming_event_id or str(uuid.uuid4())
+        return self.event_id
 
     @property
     def bus(self) -> EventBus:
@@ -347,6 +360,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _do_get(self):
         self._ensure_request_id()
+        self._ensure_trace_id()
         parsed = urlparse(self.path)
 
         try:
@@ -377,6 +391,7 @@ class Handler(BaseHTTPRequestHandler):
                     "request_id": event.request_id,
                     "trace_id": event.trace_id,
                     "timestamp": event.timestamp,
+                    "event_id": event.event_id,
                 }
                 for event in self.bus.recent(limit=10)
             ]
@@ -474,6 +489,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_success(200, {"dominant_subreddits": [], "total_tracked": 0})
             return self._send_success(200, self.control.get_dominant_subreddits(limit=2))
 
+        if parsed.path == "/metrics/strategic/summary":
+            if self.server.storage is None:
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "storage_unavailable", "storage_unavailable")
+            return self._send_success(200, self.server.storage.get_strategic_metrics_summary())
+
         if parsed.path == "/strategy/recommendations":
             if self.strategy_engine is None:
                 return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "strategy_engine_unavailable", "strategy_engine_unavailable")
@@ -482,7 +502,19 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/strategy/decide":
             if self.strategy_decision_engine is None:
                 return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "strategy_decision_engine_unavailable", "strategy_decision_engine_unavailable")
-            return self._send(200, self.strategy_decision_engine.decide(request_id=self._ensure_request_id()))
+            return self._send(200, self.strategy_decision_engine.decide(request_id=self._ensure_request_id(), trace_id=self._ensure_trace_id(), event_id=self._ensure_event_id()))
+
+        if parsed.path == "/debug/events/recent":
+            if self.server.storage is None:
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "storage_unavailable", "storage_unavailable")
+            query = parse_qs(parsed.query)
+            limit_raw = query.get("limit", ["50"])[0]
+            try:
+                limit = int(limit_raw)
+            except (TypeError, ValueError):
+                return self._send_error(400, ErrorType.CLIENT_ERROR, "invalid_limit", "invalid_limit")
+            items = self.server.storage.list_recent_processed_events(limit=limit)
+            return self._send_success(200, {"items": items})
 
         if parsed.path in {"/system/decision_logs", "/decision-logs"}:
             if self.server.storage is None:
@@ -877,6 +909,7 @@ class Handler(BaseHTTPRequestHandler):
             "/creator/offers/generate",
             "/creator/demand/validate",
             "/creator/launches/register",
+            "/autonomy/override",
         }
         if self.path not in allowed_paths and transition_event_type is None and launch_sale_id is None and launch_status_id is None and launch_link_gumroad_id is None and strategy_execute_id is None and strategy_reject_id is None and creator_launch_sale_id is None:
             return self._send_error(404, ErrorType.NOT_FOUND, "not_found", "not_found")
@@ -924,7 +957,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not ev_type:
                         return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_type", "missing_type")
 
-                    self.bus.push(Event(type=ev_type, payload={**payload, "request_id": self._ensure_request_id()}, source=source, request_id=self._ensure_request_id()))
+                    self.bus.push(Event(type=ev_type, payload={**payload, "request_id": self._ensure_request_id(), "trace_id": self._ensure_trace_id()}, source=source, request_id=self._ensure_request_id(), trace_id=self._ensure_trace_id()))
                     return self._send_success(200, {"status": "ok"})
 
                 if self.path == "/scan/infoproduct":
@@ -934,6 +967,7 @@ class Handler(BaseHTTPRequestHandler):
                             payload={"request_id": self._ensure_request_id()},
                             source="http",
                             request_id=self._ensure_request_id(),
+                            trace_id=self._ensure_trace_id(),
                         )
                     )
                     return self._send_success(200, {"status": "ok"})
@@ -948,6 +982,7 @@ class Handler(BaseHTTPRequestHandler):
                             payload={"proposal_id": proposal_id, "request_id": self._ensure_request_id()},
                             source="http",
                             request_id=self._ensure_request_id(),
+                            trace_id=self._ensure_trace_id(),
                         )
                     )
                     return self._send_success(200, {"status": "ok"})
@@ -983,6 +1018,15 @@ class Handler(BaseHTTPRequestHandler):
                         return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_text", "missing_text")
                     reply_text = self.conversation_core.reply(text, source=source)
                     return self._send_success(200, {"reply_text": reply_text})
+
+                if self.path == "/autonomy/override":
+                    if self.autonomy_policy_engine is None:
+                        return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "autonomy_policy_engine_unavailable", "autonomy_policy_engine_unavailable")
+                    requested_mode = str(data.get("mode", "")).strip().lower()
+                    if requested_mode not in {"manual", "partial", "disabled"}:
+                        return self._send_error(400, ErrorType.CLIENT_ERROR, "invalid_mode", "invalid_mode")
+                    effective_mode = self.autonomy_policy_engine.set_runtime_mode_override(requested_mode)
+                    return self._send_success(200, {"mode": effective_mode, "status": self.autonomy_policy_engine.status()})
 
                 if self.path == "/voice/tts":
                     text = str(data.get("text", "")).strip()
@@ -1245,6 +1289,7 @@ class Handler(BaseHTTPRequestHandler):
                             payload={"id": event_id, "request_id": self._ensure_request_id()},
                             source="http",
                             request_id=self._ensure_request_id(),
+                            trace_id=self._ensure_trace_id(),
                         )
                     )
                     return self._send_success(200, {"status": "ok"})
@@ -1256,6 +1301,7 @@ class Handler(BaseHTTPRequestHandler):
                             payload={"id": event_id, "request_id": self._ensure_request_id()},
                             source="http",
                             request_id=self._ensure_request_id(),
+                            trace_id=self._ensure_trace_id(),
                         )
                     )
                     return self._send_success(200, {"status": "ok"})

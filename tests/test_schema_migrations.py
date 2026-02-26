@@ -16,7 +16,7 @@ class SchemaMigrationsTest(unittest.TestCase):
             with sqlite3.connect(db_path) as conn:
                 run_migrations(conn)
                 version = get_current_version(conn)
-                self.assertGreaterEqual(version, 9)
+                self.assertGreaterEqual(version, 13)
 
                 tables = {
                     row[0]
@@ -35,6 +35,17 @@ class SchemaMigrationsTest(unittest.TestCase):
             self.assertIn("creator_offer_drafts", tables)
             self.assertIn("creator_demand_validations", tables)
             self.assertIn("creator_offer_launches", tables)
+            self.assertIn("runtime_overrides", tables)
+            self.assertIn("processed_events", tables)
+            self.assertIn("strategy_actions", tables)
+            self.assertIn("decision_outcomes", tables)
+
+            indexes = {
+                row[0]
+                for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'").fetchall()
+            }
+            self.assertIn("idx_decision_logs_type", indexes)
+            self.assertIn("idx_decision_outcomes_strategy_type", indexes)
 
     def test_storage_enables_foreign_keys(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -42,6 +53,10 @@ class SchemaMigrationsTest(unittest.TestCase):
                 storage = Storage()
                 pragma = storage.conn.execute("PRAGMA foreign_keys").fetchone()[0]
                 self.assertEqual(pragma, 1)
+                journal_mode = str(storage.conn.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+                self.assertEqual(journal_mode, "wal")
+                busy_timeout = storage.conn.execute("PRAGMA busy_timeout").fetchone()[0]
+                self.assertEqual(int(busy_timeout), 5000)
 
     def test_migration_unifies_legacy_reddit_db(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

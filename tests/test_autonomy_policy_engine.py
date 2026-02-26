@@ -1,9 +1,10 @@
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from core.bus import EventBus
 from core.adaptive_policy_engine import AdaptivePolicyEngine
@@ -191,6 +192,75 @@ class AutonomyPolicyEngineTest(unittest.TestCase):
             self.assertEqual(status["mode"], "partial")
             self.assertEqual(status["auto_executed_last_24h"], 1)
             self.assertEqual(status["pending_low_risk_actions"], 1)
+
+
+    def test_runtime_override_takes_precedence_over_env_mode(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = StrategyActionStore(path=Path(tmp_dir) / "strategy_actions.json")
+            execution_layer = StrategyActionExecutionLayer(strategy_action_store=store, bus=self.bus)
+            adaptive = AdaptivePolicyEngine(path=Path(tmp_dir) / "adaptive_policy.json")
+            engine = AutonomyPolicyEngine(
+                strategy_action_store=store,
+                strategy_action_execution_layer=execution_layer,
+                mode="manual",
+                adaptive_policy_engine=adaptive,
+                bus=self.bus,
+                storage=Storage(),
+            )
+            self.assertEqual(engine.status()["mode"], "manual")
+
+            mode = engine.set_runtime_mode_override("partial")
+
+            self.assertEqual(mode, "partial")
+            self.assertEqual(engine.status()["mode"], "partial")
+            self.assertEqual(engine.status()["env_mode"], "manual")
+            self.assertEqual(engine.status()["runtime_override"], "partial")
+
+    def test_autonomy_override_endpoint_persists_runtime_mode(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with tempfile.TemporaryDirectory() as data_dir:
+                store = StrategyActionStore(path=Path(tmp_dir) / "strategy_actions.json")
+                execution_layer = StrategyActionExecutionLayer(strategy_action_store=store, bus=self.bus)
+                adaptive = AdaptivePolicyEngine(path=Path(tmp_dir) / "adaptive_policy.json")
+                with patch.dict("os.environ", {"TRETA_DATA_DIR": data_dir}, clear=False):
+                    storage = Storage()
+                    engine = AutonomyPolicyEngine(
+                        strategy_action_store=store,
+                        strategy_action_execution_layer=execution_layer,
+                        mode="manual",
+                        adaptive_policy_engine=adaptive,
+                        bus=self.bus,
+                        storage=storage,
+                    )
+
+                    server = start_http_server(
+                        host="127.0.0.1",
+                        port=0,
+                        autonomy_policy_engine=engine,
+                        bus=self.bus,
+                    )
+                    try:
+                        port = server.server_port
+                        req = Request(
+                            f"http://127.0.0.1:{port}/autonomy/override",
+                            data=json.dumps({"mode": "disabled"}).encode("utf-8"),
+                            headers={"Content-Type": "application/json"},
+                            method="POST",
+                        )
+                        with urlopen(req, timeout=2) as response:
+                            self.assertEqual(response.status, 200)
+                            payload = json.loads(response.read().decode("utf-8"))
+                    finally:
+                        server.shutdown()
+                        server.server_close()
+
+                self.assertTrue(payload["ok"])
+                self.assertEqual(payload["data"]["mode"], "disabled")
+                self.assertEqual(payload["data"]["status"]["mode"], "disabled")
+
+                with patch.dict("os.environ", {"TRETA_DATA_DIR": data_dir}, clear=False):
+                    reloaded = Storage()
+                    self.assertEqual(reloaded.get_runtime_override("autonomy_mode"), "disabled")
 
     def test_autonomy_status_endpoint(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

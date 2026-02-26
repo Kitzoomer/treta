@@ -27,7 +27,7 @@ class AutonomyPolicyEngine:
     ):
         self._strategy_action_store = strategy_action_store
         self._strategy_action_execution_layer = strategy_action_execution_layer
-        self._mode = "partial" if mode == "partial" else "manual"
+        self._env_mode = self._normalize_mode(mode)
         self._adaptive_policy_engine = adaptive_policy_engine or AdaptivePolicyEngine(
             impact_threshold=6,
             max_auto_executions_per_24h=max_auto_executions_per_24h,
@@ -36,6 +36,22 @@ class AutonomyPolicyEngine:
         self._storage = storage
         self._logger = logging.getLogger("treta.autonomy")
 
+    def _normalize_mode(self, mode: str | None) -> str:
+        normalized = str(mode or "").strip().lower()
+        if normalized in {"manual", "partial", "disabled"}:
+            return normalized
+        return "manual"
+
+    def _effective_mode(self) -> str:
+        override = self._storage.get_runtime_override("autonomy_mode")
+        if override:
+            return self._normalize_mode(override)
+        return self._env_mode
+
+    def set_runtime_mode_override(self, mode: str) -> str:
+        normalized = self._normalize_mode(mode)
+        self._storage.set_runtime_override("autonomy_mode", normalized)
+        return normalized
 
     def _utcnow(self) -> datetime:
         return datetime.now(timezone.utc)
@@ -73,14 +89,15 @@ class AutonomyPolicyEngine:
         return sorted(eligible, key=lambda item: (str(item.get("created_at", "")), str(item.get("id", ""))))
 
     def apply(self, request_id: str | None = None) -> List[Dict[str, Any]]:
-        if self._mode != "partial":
+        effective_mode = self._effective_mode()
+        if effective_mode != "partial":
             try:
                 self._storage.create_decision_log(
                     {
                         "decision_type": "autonomy",
                         "decision": "MANUAL",
                         "policy_name": "AutonomyPolicyEngine",
-                        "policy_snapshot_json": {"mode": self._mode},
+                        "policy_snapshot_json": {"mode": effective_mode},
                         "reason": "Autonomy mode is manual; no auto execution.",
                         "correlation_id": request_id,
                         "status": "skipped",
@@ -122,7 +139,7 @@ class AutonomyPolicyEngine:
             self._bus.push(
                 Event(
                     type="AutonomyActionAutoExecuted",
-                    payload={"action": updated, "mode": self._mode, "request_id": request_id},
+                    payload={"action": updated, "mode": effective_mode, "request_id": request_id},
                     source="autonomy_policy_engine",
                     request_id=request_id or "",
                 )
@@ -140,7 +157,7 @@ class AutonomyPolicyEngine:
                         "autonomy_score": float(action.get("expected_impact_score", 0) or 0),
                         "policy_name": "AutonomyPolicyEngine",
                         "policy_snapshot_json": {
-                            "mode": self._mode,
+                            "mode": effective_mode,
                             "impact_threshold": adaptive.get("impact_threshold"),
                             "max_auto_executions_per_24h": adaptive.get("max_auto_executions_per_24h"),
                         },
@@ -163,7 +180,9 @@ class AutonomyPolicyEngine:
 
     def status(self) -> Dict[str, Any]:
         summary = {
-            "mode": self._mode,
+            "mode": self._effective_mode(),
+            "env_mode": self._env_mode,
+            "runtime_override": self._storage.get_runtime_override("autonomy_mode"),
             "auto_executed_last_24h": self._count_auto_executed_last_24h(),
             "pending_low_risk_actions": len(self._eligible_pending_low_risk_actions()),
         }

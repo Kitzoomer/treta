@@ -1,6 +1,9 @@
 import os
 import sqlite3
 import threading
+import logging
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -23,18 +26,104 @@ class Storage:
         self.db_path = get_db_path()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        self.conn.execute("PRAGMA foreign_keys = ON;")
+        self._logger = logging.getLogger("treta.storage")
+        self._configure_connection()
         ensure_decision_logs_table(self.conn)
+        self._ensure_runtime_overrides_table()
+        self._ensure_processed_events_table()
+        self._ensure_decision_outcomes_table()
         self._lock = threading.Lock()
 
-    def set_state(self, key: str, value: str):
+
+    def _ensure_runtime_overrides_table(self) -> None:
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS runtime_overrides (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at TEXT
+            )
+            """
+        )
+
+    def _ensure_processed_events_table(self) -> None:
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS processed_events (
+                event_id TEXT PRIMARY KEY,
+                event_type TEXT,
+                processed_at TEXT
+            )
+            """
+        )
+
+    def _ensure_decision_outcomes_table(self) -> None:
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS decision_outcomes (
+                decision_id TEXT PRIMARY KEY,
+                strategy_type TEXT,
+                was_autonomous INTEGER,
+                predicted_risk REAL,
+                revenue_generated REAL DEFAULT 0,
+                outcome TEXT,
+                evaluated_at TEXT
+            )
+            """
+        )
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_decision_outcomes_strategy_type ON decision_outcomes(strategy_type)")
+
+    def _configure_connection(self) -> None:
+        self.conn.execute("PRAGMA foreign_keys = ON;")
+        self.conn.execute("PRAGMA journal_mode = WAL;")
+        self.conn.execute("PRAGMA synchronous = NORMAL;")
+        self.conn.execute("PRAGMA busy_timeout = 5000;")
+        wal_mode = str(self.conn.execute("PRAGMA journal_mode;").fetchone()[0]).lower()
+        self._logger.info("SQLite configured", extra={"journal_mode": wal_mode, "foreign_keys": 1})
+
+    @contextmanager
+    def transaction(self):
         with self._lock:
-            cur = self.conn.cursor()
+            try:
+                self.conn.execute("BEGIN")
+                yield self.conn
+            except Exception:
+                self.conn.rollback()
+                raise
+            else:
+                self.conn.commit()
+
+    def _build_correlation_id(self, log: dict) -> str | None:
+        base = str(log.get("correlation_id") or "").strip()
+        request_id = str(log.get("request_id") or "").strip()
+        trace_id = str(log.get("trace_id") or "").strip()
+        event_id = str(log.get("event_id") or "").strip()
+        parts: list[str] = []
+        if base:
+            parts.append(base)
+        if request_id:
+            parts.append(f"request:{request_id}")
+        if trace_id:
+            parts.append(f"trace:{trace_id}")
+        if event_id:
+            parts.append(f"event:{event_id}")
+        if not parts:
+            return None
+        merged: list[str] = []
+        seen = set()
+        for part in parts:
+            if part not in seen:
+                seen.add(part)
+                merged.append(part)
+        return "|".join(merged)
+
+    def set_state(self, key: str, value: str):
+        with self.transaction() as conn:
+            cur = conn.cursor()
             cur.execute(
                 "INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)",
                 (key, value),
             )
-            self.conn.commit()
 
     def get_state(self, key: str) -> Optional[str]:
         with self._lock:
@@ -44,15 +133,116 @@ class Storage:
         return row[0] if row else None
 
     def create_decision_log(self, log: dict) -> int:
-        with self._lock:
-            row_id = create_decision_log(self.conn, log)
-            self.conn.commit()
+        payload = dict(log)
+        payload["correlation_id"] = self._build_correlation_id(payload)
+        with self.transaction() as conn:
+            row_id = create_decision_log(conn, payload)
         return row_id
 
     def update_decision_log_status(self, id: int, status: str, error: str | None = None) -> None:
+        with self.transaction() as conn:
+            update_decision_log_status(conn, id=id, status=status, error=error)
+
+    def set_runtime_override(self, key: str, value: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO runtime_overrides (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = excluded.updated_at
+                """,
+                (key, value, now),
+            )
+
+    def get_runtime_override(self, key: str) -> Optional[str]:
         with self._lock:
-            update_decision_log_status(self.conn, id=id, status=status, error=error)
-            self.conn.commit()
+            row = self.conn.execute("SELECT value FROM runtime_overrides WHERE key = ?", (key,)).fetchone()
+        return str(row[0]) if row else None
+
+
+    def is_event_processed(self, event_id: str) -> bool:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT 1 FROM processed_events WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+        return row is not None
+
+    def mark_event_processed(self, event_id: str, event_type: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO processed_events (event_id, event_type, processed_at)
+                VALUES (?, ?, ?)
+                """,
+                (event_id, event_type, now),
+            )
+
+    def list_recent_processed_events(self, limit: int = 50) -> list[dict]:
+        safe_limit = max(min(int(limit), 500), 1)
+        query = """
+            SELECT pe.event_id, pe.event_type, pe.processed_at,
+                   dl.id as decision_id,
+                   COALESCE(dl.status, 'processed') as status
+            FROM processed_events pe
+            LEFT JOIN decision_logs dl
+              ON dl.id = (
+                SELECT d.id
+                FROM decision_logs d
+                WHERE d.correlation_id LIKE '%' || pe.event_id || '%'
+                ORDER BY d.created_at DESC
+                LIMIT 1
+              )
+            ORDER BY pe.processed_at DESC
+            LIMIT ?
+        """
+        with self._lock:
+            rows = self.conn.execute(query, (safe_limit,)).fetchall()
+        return [
+            {
+                "event_id": str(row[0]),
+                "event_type": str(row[1]) if row[1] is not None else "",
+                "processed_at": row[2],
+                "decision_id": None if row[3] is None else str(row[3]),
+                "status": str(row[4] or "processed"),
+            }
+            for row in rows
+        ]
+
+    def get_strategic_metrics_summary(self) -> dict:
+        with self._lock:
+            totals = self.conn.execute(
+                """
+                SELECT
+                    COUNT(*) as total_decisions,
+                    SUM(CASE WHEN was_autonomous = 1 THEN 1 ELSE 0 END) as total_autonomous,
+                    SUM(CASE WHEN was_autonomous = 0 THEN 1 ELSE 0 END) as total_manual,
+                    COALESCE(SUM(revenue_generated), 0) as total_revenue,
+                    COALESCE(AVG(CASE WHEN outcome = 'success' THEN 1.0 ELSE 0.0 END), 0) as success_rate
+                FROM decision_outcomes
+                """
+            ).fetchone()
+            rows = self.conn.execute(
+                """
+                SELECT strategy_type, COALESCE(SUM(revenue_generated), 0)
+                FROM decision_outcomes
+                GROUP BY strategy_type
+                """
+            ).fetchall()
+
+        revenue_map = {str(row[0] or "unknown"): float(row[1] or 0) for row in rows}
+        return {
+            "total_decisions": int(totals[0] or 0),
+            "total_autonomous": int(totals[1] or 0),
+            "total_manual": int(totals[2] or 0),
+            "total_revenue": float(totals[3] or 0),
+            "success_rate": float(totals[4] or 0),
+            "revenue_por_strategy_type": revenue_map,
+        }
 
     def list_recent_decision_logs(self, limit: int = 50, decision_type: str | None = None) -> list[dict]:
         with self._lock:
