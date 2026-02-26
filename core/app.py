@@ -26,7 +26,6 @@ from core.scheduler import DailyScheduler
 from core.state_machine import State, StateMachine
 from core.storage import Storage
 from core.executors.draft_asset_executor import DraftAssetExecutor
-from core.executors.openclaw_executor import OpenClawExecutor
 from core.executors.registry import ActionExecutorRegistry
 from core.strategy_action_execution_layer import StrategyActionExecutionLayer
 from core.strategy_action_store import StrategyActionStore
@@ -34,6 +33,18 @@ from core.strategy_decision_engine import StrategyDecisionEngine
 from core.strategy_engine import StrategyEngine
 from core.revenue_attribution.store import RevenueAttributionStore
 from core.subreddit_performance_store import SubredditPerformanceStore
+
+
+def bootstrap_executors(registry: ActionExecutorRegistry) -> None:
+    registry.register(DraftAssetExecutor())
+
+    if OPENCLAW_BASE_URL:
+        from core.executors.openclaw_executor import OpenClawExecutor
+
+        registry.register(OpenClawExecutor())
+        return
+
+    logging.getLogger("treta.executors").warning("OpenClaw executor disabled")
 
 
 class TretaApp:
@@ -60,11 +71,7 @@ class TretaApp:
         self.strategy_action_store = StrategyActionStore()
         self.action_execution_store = ActionExecutionStore(self.storage.conn)
         self.executor_registry = ActionExecutorRegistry()
-        self.executor_registry.register(DraftAssetExecutor())
-        if OPENCLAW_BASE_URL:
-            self.executor_registry.register(OpenClawExecutor())
-        else:
-            logging.getLogger("treta.executors").warning("OPENCLAW_BASE_URL not configured; OpenClaw executor disabled")
+        bootstrap_executors(self.executor_registry)
         self.daily_loop_engine = DailyLoopEngine(
             opportunity_store=self.opportunity_store,
             proposal_store=self.product_proposal_store,
