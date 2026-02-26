@@ -244,6 +244,38 @@ class Storage:
             "revenue_por_strategy_type": revenue_map,
         }
 
+    def get_strategy_performance(self) -> dict[str, dict[str, float | int]]:
+        with self._lock:
+            rows = self.conn.execute(
+                """
+                SELECT
+                    strategy_type,
+                    COUNT(*) as total_decisions,
+                    COALESCE(AVG(revenue_generated), 0) as avg_revenue,
+                    COALESCE(AVG(CASE WHEN outcome = 'success' THEN 1.0 ELSE 0.0 END), 0) as success_rate,
+                    COALESCE(AVG(predicted_risk), 0) as avg_predicted_risk
+                FROM decision_outcomes
+                GROUP BY strategy_type
+                """
+            ).fetchall()
+
+        performance: dict[str, dict[str, float | int]] = {}
+        for row in rows:
+            strategy_type = str(row[0] or "unknown")
+            total_decisions = int(row[1] or 0)
+            avg_revenue = float(row[2] or 0)
+            success_rate = float(row[3] or 0)
+            avg_predicted_risk = float(row[4] or 0)
+            score = (avg_revenue * success_rate) / (1.0 + avg_predicted_risk)
+            performance[strategy_type] = {
+                "total_decisions": total_decisions,
+                "avg_revenue": avg_revenue,
+                "success_rate": success_rate,
+                "avg_predicted_risk": avg_predicted_risk,
+                "score": score,
+            }
+        return performance
+
     def list_recent_decision_logs(self, limit: int = 50, decision_type: str | None = None) -> list[dict]:
         with self._lock:
             return list_recent_decision_logs(self.conn, limit=limit, decision_type=decision_type)

@@ -109,6 +109,32 @@ class StrategyDecisionEngineTest(unittest.TestCase):
                 decision["actions"],
             )
 
+    def test_decide_uses_adaptive_prioritization_when_available(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            proposals, launches = self._stores(root)
+            proposals.add({"id": "proposal-1", "product_name": "Growth Kit"})
+            launch = launches.add_from_proposal("proposal-1")
+            launches.transition_status(launch["id"], "active")
+            launches.add_sale(launch["id"], 100)
+
+            class FakeAutonomyPolicyEngine:
+                def prioritize_strategy_actions(self, actions):
+                    return sorted(actions, key=lambda item: 0 if item.get("type") == "price_test" else 1)
+
+                def apply(self, request_id=None):
+                    return []
+
+            engine = StrategyDecisionEngine(
+                product_launch_store=launches,
+                storage=Storage(),
+                autonomy_policy_engine=FakeAutonomyPolicyEngine(),
+            )
+
+            decision = engine.decide()
+            self.assertGreaterEqual(len(decision["actions"]), 1)
+            self.assertEqual(decision["actions"][0]["type"], "price_test")
+
     def test_decide_creates_pending_strategy_actions(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)

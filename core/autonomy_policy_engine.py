@@ -31,6 +31,7 @@ class AutonomyPolicyEngine:
         self._adaptive_policy_engine = adaptive_policy_engine or AdaptivePolicyEngine(
             impact_threshold=6,
             max_auto_executions_per_24h=max_auto_executions_per_24h,
+            storage=storage,
         )
         self._bus = bus or EventBus()
         self._storage = storage
@@ -188,6 +189,15 @@ class AutonomyPolicyEngine:
         }
         summary.update(self._adaptive_policy_engine.adaptive_status())
         return summary
+
+
+    def prioritize_strategy_actions(self, actions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not actions:
+            return []
+        strategy_types = [str(item.get("type") or "") for item in actions]
+        prioritized_types = self._adaptive_policy_engine.prioritized_strategy_types(strategy_types)
+        rank = {strategy_type: index for index, strategy_type in enumerate(prioritized_types)}
+        return sorted(actions, key=lambda item: rank.get(str(item.get("type") or ""), len(rank)))
 
     def adaptive_status(self) -> Dict[str, Any]:
         return self._adaptive_policy_engine.adaptive_status()

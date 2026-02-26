@@ -54,6 +54,40 @@ class StrategyMetricsSummaryTest(unittest.TestCase):
                 self.assertEqual(float(row[4]), 0.0)
                 self.assertEqual(row[5], "neutral")
 
+
+    def test_get_strategy_performance_includes_score(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch.dict("os.environ", {"TRETA_DATA_DIR": tmp_dir}, clear=False):
+                storage = Storage()
+                storage.conn.execute(
+                    """
+                    INSERT OR REPLACE INTO decision_outcomes (
+                        decision_id, strategy_type, was_autonomous, predicted_risk,
+                        revenue_generated, outcome, evaluated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    ("d-1", "scale", 1, 1.0, 10.0, "success", "2026-01-01T00:00:00+00:00"),
+                )
+                storage.conn.execute(
+                    """
+                    INSERT OR REPLACE INTO decision_outcomes (
+                        decision_id, strategy_type, was_autonomous, predicted_risk,
+                        revenue_generated, outcome, evaluated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    ("d-2", "scale", 1, 3.0, 6.0, "neutral", "2026-01-01T01:00:00+00:00"),
+                )
+                storage.conn.commit()
+
+                performance = storage.get_strategy_performance()
+
+                self.assertIn("scale", performance)
+                self.assertEqual(performance["scale"]["total_decisions"], 2)
+                self.assertAlmostEqual(performance["scale"]["avg_revenue"], 8.0)
+                self.assertAlmostEqual(performance["scale"]["success_rate"], 0.5)
+                self.assertAlmostEqual(performance["scale"]["avg_predicted_risk"], 2.0)
+                self.assertAlmostEqual(performance["scale"]["score"], (8.0 * 0.5) / 3.0)
+
     def test_metrics_summary_endpoint_returns_aggregations(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             with patch.dict("os.environ", {"TRETA_DATA_DIR": tmp_dir}, clear=False):
