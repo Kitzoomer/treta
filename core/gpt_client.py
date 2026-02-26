@@ -8,6 +8,7 @@ from typing import Any
 
 import pytz
 
+from core.model_policy_engine import ModelPolicyEngine
 from core.revenue_attribution.store import RevenueAttributionStore
 
 try:
@@ -30,8 +31,10 @@ class GPTClient:
         self,
         revenue_attribution_store: RevenueAttributionStore | None = None,
         openai_client: Any | None = None,
+        model_policy_engine: ModelPolicyEngine | None = None,
     ):
         self._revenue_attribution_store = revenue_attribution_store
+        self._model_policy_engine = model_policy_engine or ModelPolicyEngine()
         if openai_client is not None:
             self._client = openai_client
             return
@@ -129,9 +132,10 @@ class GPTClient:
             return {"error": f"unknown_tool:{name}"}
         return handler()
 
-    def chat(self, messages: list[dict]) -> str:
+    def chat(self, messages: list[dict], task_type: str = "chat", model: str | None = None) -> str:
+        model_name = str(model or self._model_policy_engine.get_model(task_type))
         response = self._client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=model_name,
             messages=messages,
             tools=self._tool_spec(),
         )
@@ -169,7 +173,7 @@ class GPTClient:
             )
 
         followup = self._client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=model_name,
             messages=extended_messages,
             tools=self._tool_spec(),
         )
