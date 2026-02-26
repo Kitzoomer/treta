@@ -31,6 +31,11 @@ from core.reddit_public.config import get_config
 from core.reddit_public.pain_scoring import compute_pain_score
 from core.storage import Storage
 from core.strategy_decision_engine import StrategyDecisionEngine
+from core.handlers.strategy_handler import StrategyHandler
+from core.handlers.opportunity_handler import OpportunityHandler
+from core.handlers.scan_handler import ScanHandler
+from core.handlers.autonomy_handler import AutonomyHandler
+
 from core.openclaw_agent import (
     OpenClawRedditScanner,
     normalize_openclaw_to_scan_summary,
@@ -546,381 +551,74 @@ class Control:
 
     def consume(self, event: Event) -> List[Action]:
         logger.info("Control consume", extra={"event_type": event.type, "request_id": event.request_id, "trace_id": event.trace_id, "event_id": event.event_id, "decision_id": str(event.payload.get("decision_id", "")) if isinstance(event.payload, dict) else ""})
-        if event.type == "DailyBriefRequested":
-            logger.info("[CONTROL] DailyBriefRequested -> would build daily brief summary (stub)")
-            return [Action(type="BuildDailyBrief", payload={"dry_run": True})]
 
-        if event.type == "OpportunityScanRequested":
-            logger.info("[CONTROL] OpportunityScanRequested -> would run opportunity scan (stub)")
-            return [Action(type="RunOpportunityScan", payload={"dry_run": True})]
-
-        if event.type == "RunInfoproductScan":
-            self._scan_reddit_public_opportunities()
-            self._generate_reddit_daily_plan()
-            return []
-
-        if event.type == "EmailTriageRequested":
-            logger.info("[CONTROL] EmailTriageRequested -> would triage inbox in dry-run mode (stub)")
-            return [Action(type="RunEmailTriage", payload={"dry_run": True})]
-
-        if event.type == "GumroadStatsRequested":
-            if self.gumroad_client is None:
-                return [
-                    Action(
-                        type="GumroadStatsReady",
-                        payload={"products": [], "sales": [], "balance": {}},
-                    )
-                ]
-
-            products_payload = self.gumroad_client.get_products()
-            sales_payload = self.gumroad_client.get_sales()
-            balance_payload = self.gumroad_client.get_balance()
-
-            return [
-                Action(
-                    type="GumroadStatsReady",
-                    payload={
-                        "products": products_payload.get("products", []),
-                        "sales": sales_payload.get("sales", []),
-                        "balance": balance_payload,
-                    },
-                )
-            ]
-
-        if event.type == "ActionApproved":
-            plan = self.action_planner.plan(event.payload)
-            return [Action(type="ActionPlanGenerated", payload=plan)]
-
-        if event.type == "ActionPlanGenerated":
-            plan_id = self.confirmation_queue.add(event.payload)
-            return [
-                Action(
-                    type="AwaitingConfirmation",
-                    payload={"plan_id": plan_id, "plan": event.payload},
-                )
-            ]
-
-        if event.type == "ListPendingConfirmations":
-            pending = self.confirmation_queue.list_pending()
-            return [Action(type="PendingConfirmationsListed", payload={"items": pending})]
-
-        if event.type == "ConfirmAction":
-            plan_id = str(event.payload.get("plan_id", ""))
-            approved = self.confirmation_queue.approve(plan_id)
-            if approved is None:
-                return []
-            return [
-                Action(
-                    type="ActionConfirmed",
-                    payload={"plan_id": approved["id"], "plan": approved["plan"]},
-                )
-            ]
-
-        if event.type == "RejectAction":
-            plan_id = str(event.payload.get("plan_id", ""))
-            rejected = self.confirmation_queue.reject(plan_id)
-            if rejected is None:
-                return []
-            return [
-                Action(
-                    type="ActionRejected",
-                    payload={"plan_id": rejected["id"], "plan": rejected["plan"]},
-                )
-            ]
-
-
-        if event.type == "OpportunityDetected":
-            created = self.opportunity_store.add(
-                item_id=str(event.payload.get("id", "")).strip() or None,
-                source=str(event.payload.get("source", "unknown")),
-                title=str(event.payload.get("title", "")),
-                summary=str(event.payload.get("summary", event.payload.get("snippet", ""))),
-                opportunity=dict(event.payload.get("opportunity", {})),
-            )
-
-            if created.get("source") == "reddit_public" and self.has_active_proposal():
-                return []
-
-            alignment = self.alignment_engine.evaluate(
-                created,
-                {
-                    "recent_proposals": self.product_proposal_store.list()[:5],
-                },
-            )
-            if not alignment["aligned"]:
-                self.opportunity_store.set_status(created["id"], "strategically_filtered")
-                return []
-
-            proposal = self.product_engine.generate(created)
-            subreddit = str(event.payload.get("subreddit", "")).strip() or "unknown"
-            proposal["alignment_score"] = alignment["alignment_score"]
-            proposal["alignment_reason"] = alignment["reason"]
-            self.product_proposal_store.add(proposal)
-            self.subreddit_performance_store.record_proposal_generated(subreddit)
-            return [
-                Action(
-                    type="ProductProposalGenerated",
-                    payload={"proposal_id": proposal["id"], "proposal": proposal},
-                )
-            ]
-
-        if event.type == "ListProductProposals":
-            items = self.product_proposal_store.list()
-            return [Action(type="ProductProposalsListed", payload={"items": items})]
-
-        if event.type == "GetProductProposalById":
-            proposal_id = str(event.payload.get("id", ""))
-            item = self.product_proposal_store.get(proposal_id)
-            if item is None:
-                return []
-            return [Action(type="ProductProposalFetched", payload={"item": item})]
-
-        proposal_transitions = {
-            "ApproveProposal": "approved",
-            "RejectProposal": "rejected",
-            "StartBuildingProposal": "building",
-            "MarkReadyToLaunch": "ready_to_launch",
-            "MarkProposalLaunched": "launched",
-            "ArchiveProposal": "archived",
+        context = {
+            "Action": Action,
+            "control": self,
+            "stores": {
+                "confirmation_queue": self.confirmation_queue,
+                "opportunity_store": self.opportunity_store,
+                "product_proposal_store": self.product_proposal_store,
+                "product_plan_store": self.product_plan_store,
+                "product_launch_store": self.product_launch_store,
+                "revenue_attribution_store": self.revenue_attribution_store,
+                "subreddit_performance_store": self.subreddit_performance_store,
+            },
+            "engines": {
+                "action_planner": self.action_planner,
+                "alignment_engine": self.alignment_engine,
+                "decision_engine": self.decision_engine,
+                "execution_engine": self.execution_engine,
+                "gumroad_client": self.gumroad_client,
+                "product_builder": self.product_builder,
+                "product_engine": self.product_engine,
+                "strategy_decision_engine": self.strategy_decision_engine,
+            },
+            "dispatcher": self.bus,
+            "storage": getattr(self.decision_engine, "storage", None),
         }
-        if event.type in proposal_transitions:
-            proposal_id = str(event.payload.get("proposal_id", "")).strip()
-            if not proposal_id:
-                return []
-            next_status = proposal_transitions[event.type]
-            proposal = self.product_proposal_store.get(proposal_id)
-            if proposal is None:
-                return []
-            proposals = self.product_proposal_store.list()
-            self.domain_integrity_policy.validate_transition(proposal, next_status, proposals)
-            updated = self.product_proposal_store.transition_status(
-                proposal_id=proposal_id,
-                new_status=next_status,
-            )
-            self._validate_global()
-            if updated["status"] in EXECUTION_STATUSES:
-                self._refresh_execution_focus()
-                updated = self.product_proposal_store.get(updated["id"]) or updated
-            actions = [
-                Action(
-                    type="ProductProposalStatusChanged",
-                    payload={"proposal_id": updated["id"], "status": updated["status"], "proposal": updated},
-                )
-            ]
-            if event.type == "MarkProposalLaunched":
-                launch = self.product_launch_store.add_from_proposal(updated["id"])
-                launch = self.product_launch_store.mark_launched(launch["id"])
-                self._validate_global()
-                self._refresh_execution_focus()
-                launch = self.product_launch_store.get(launch["id"]) or launch
-                actions.append(
-                    Action(
-                        type="ProductLaunched",
-                        payload={
-                            "launch_id": launch["id"],
-                            "proposal_id": updated["id"],
-                        },
-                    )
-                )
-            return actions
 
-        if event.type == "ListProductLaunchesRequested":
-            items = self.product_launch_store.list()
-            return [Action(type="ProductLaunchesListed", payload={"items": items})]
+        handlers = {
+            "DailyBriefRequested": ScanHandler,
+            "OpportunityScanRequested": ScanHandler,
+            "RunInfoproductScan": ScanHandler,
+            "EmailTriageRequested": ScanHandler,
+            "GumroadStatsRequested": ScanHandler,
+            "ActionApproved": AutonomyHandler,
+            "ActionPlanGenerated": AutonomyHandler,
+            "ListPendingConfirmations": AutonomyHandler,
+            "ConfirmAction": AutonomyHandler,
+            "RejectAction": AutonomyHandler,
+            "OpportunityDetected": OpportunityHandler,
+            "ListProductProposals": OpportunityHandler,
+            "GetProductProposalById": OpportunityHandler,
+            "ApproveProposal": OpportunityHandler,
+            "RejectProposal": OpportunityHandler,
+            "StartBuildingProposal": OpportunityHandler,
+            "MarkReadyToLaunch": OpportunityHandler,
+            "MarkProposalLaunched": OpportunityHandler,
+            "ArchiveProposal": OpportunityHandler,
+            "ListProductLaunchesRequested": OpportunityHandler,
+            "GetProductLaunchRequested": OpportunityHandler,
+            "AddProductLaunchSale": OpportunityHandler,
+            "TransitionProductLaunchStatus": OpportunityHandler,
+            "BuildProductPlanRequested": OpportunityHandler,
+            "ListProductPlansRequested": OpportunityHandler,
+            "GetProductPlanRequested": OpportunityHandler,
+            "ExecuteProductPlanRequested": OpportunityHandler,
+            "ListOpportunities": OpportunityHandler,
+            "EvaluateOpportunityById": OpportunityHandler,
+            "OpportunityDismissed": OpportunityHandler,
+            "EvaluateOpportunity": StrategyHandler,
+            "RunStrategyDecision": StrategyHandler,
+        }
 
-        if event.type == "GetProductLaunchRequested":
-            launch_id = str(event.payload.get("launch_id", "")).strip()
-            launch = self.product_launch_store.get(launch_id)
-            if launch is None:
-                return []
-            return [Action(type="ProductLaunchReturned", payload={"launch": launch})]
-
-        if event.type == "AddProductLaunchSale":
-            launch_id = str(event.payload.get("launch_id", "")).strip()
-            amount = float(event.payload.get("amount", 0))
-            updated = self.product_launch_store.add_sale(launch_id, amount)
-            return [Action(type="ProductLaunchUpdated", payload={"launch": updated})]
-
-        if event.type == "TransitionProductLaunchStatus":
-            launch_id = str(event.payload.get("launch_id", "")).strip()
-            status = str(event.payload.get("status", "")).strip()
-            updated = self.product_launch_store.transition_status(launch_id, status)
-            self._validate_global()
-            return [Action(type="ProductLaunchUpdated", payload={"launch": updated})]
-
-        if event.type == "BuildProductPlanRequested":
-            proposal_id = str(event.payload.get("proposal_id", ""))
-            proposal = self.product_proposal_store.get(proposal_id)
-            if proposal is None:
-                return []
-
-            if str(proposal.get("status", "")).strip() == "draft" and str(proposal.get("source_opportunity_id", "")).strip():
-                proposals = self.product_proposal_store.list()
-                self.domain_integrity_policy.validate_transition(proposal, "approved", proposals)
-                proposal = self.product_proposal_store.transition_status(
-                    proposal_id=proposal_id,
-                    new_status="approved",
-                )
-                self._validate_global()
-
-            self.domain_integrity_policy.validate_plan_build_precondition(proposal)
-
-            existing = self.product_plan_store.get_by_proposal_id(proposal_id)
-            if existing is not None:
-                return [
-                    Action(
-                        type="ProductPlanBuilt",
-                        payload={
-                            "plan_id": existing["plan_id"],
-                            "proposal_id": proposal_id,
-                            "plan": existing,
-                        },
-                    )
-                ]
-
-            plan = self.product_builder.build(proposal)
-            stored = self.product_plan_store.add(plan)
-            self._validate_global()
-            return [
-                Action(
-                    type="ProductPlanBuilt",
-                    payload={
-                        "plan_id": stored["plan_id"],
-                        "proposal_id": stored["proposal_id"],
-                        "plan": stored,
-                    },
-                )
-            ]
-
-        if event.type == "ListProductPlansRequested":
-            items = self.product_plan_store.list()
-            return [Action(type="ProductPlansListed", payload={"items": items})]
-
-        if event.type == "GetProductPlanRequested":
-            plan_id = str(event.payload.get("plan_id", ""))
-            plan = self.product_plan_store.get(plan_id)
-            if plan is None:
-                return []
-            return [Action(type="ProductPlanReturned", payload={"plan": plan})]
-
-        if event.type == "ExecuteProductPlanRequested":
-            proposal_id = str(event.payload.get("proposal_id", ""))
-            proposal = self.product_proposal_store.get(proposal_id)
-            if proposal is None:
-                return []
-
-            execution_package = self.execution_engine.generate_execution_package(proposal)
-            tracking_id = f"treta-{proposal_id[:6]}-{int(datetime.utcnow().timestamp())}"
-            reddit_post = execution_package.get("reddit_post")
-            if isinstance(reddit_post, dict):
-                reddit_post["body"] = f"{str(reddit_post.get('body', '')).rstrip()}\n\nTracking: {tracking_id}"
-            execution_package["gumroad_description"] = (
-                f"{str(execution_package.get('gumroad_description', '')).rstrip()}\n\nTracking: {tracking_id}"
-            )
-            execution_package["short_pitch"] = (
-                f"{str(execution_package.get('short_pitch', '')).rstrip()} (Tracking: {tracking_id})"
-            )
-
-            source_opportunity_id = str(proposal.get("source_opportunity_id", "")).strip()
-            subreddit = None
-            if source_opportunity_id:
-                opportunity = self.opportunity_store.get(source_opportunity_id)
-                if opportunity is not None:
-                    subreddit = opportunity.get("subreddit") or opportunity.get("opportunity", {}).get("subreddit")
-
-            self.revenue_attribution_store.upsert_tracking(
-                tracking_id=tracking_id,
-                proposal_id=proposal_id,
-                product_id=proposal_id,
-                subreddit=str(subreddit).strip() if subreddit else None,
-                post_id=str(source_opportunity_id).strip() if source_opportunity_id else None,
-                price=proposal.get("price_suggestion"),
-                created_at=datetime.utcnow().isoformat() + "Z",
-            )
-            if subreddit:
-                self.subreddit_performance_store.record_plan_executed(str(subreddit).strip())
-            logger.info(f"[EXECUTION] proposal_id={proposal_id}")
-            actions = [
-                Action(
-                    type="ProductPlanExecuted",
-                    payload={
-                        "proposal_id": proposal_id,
-                        "execution_package": execution_package,
-                        "tracking_id": tracking_id,
-                    },
-                )
-            ]
-
-            proposals = self.product_proposal_store.list()
-            self.domain_integrity_policy.validate_transition(proposal, "ready_for_review", proposals)
-            updated = self.product_proposal_store.transition_status(
-                proposal_id=proposal_id,
-                new_status="ready_for_review",
-            )
-            self._validate_global()
-            actions.append(
-                Action(
-                    type="ProductProposalStatusChanged",
-                    payload={"proposal_id": updated["id"], "status": updated["status"], "proposal": updated},
-                )
-            )
-            return actions
-
-        if event.type == "ListOpportunities":
-            status = event.payload.get("status")
-            items = self.opportunity_store.list(status=str(status) if status else None)
-            return [Action(type="OpportunitiesListed", payload={"items": items})]
-
-        if event.type == "EvaluateOpportunityById":
-            item_id = str(event.payload.get("id", ""))
-            target = self.opportunity_store.get(item_id)
-            if target is None:
-                return []
-
-            result = self.evaluate_opportunity(
-                target["opportunity"],
-                request_id=event.request_id or str(event.payload.get("request_id", "") or ""),
-                trace_id=event.trace_id or str(event.payload.get("trace_id", "") or ""),
-                event_id=event.event_id,
-            )
-            updated = self.opportunity_store.set_decision(item_id, result)
-            if updated is None:
-                return []
-
-            return [
-                Action(
-                    type="OpportunityEvaluated",
-                    payload={"id": item_id, "decision": result, "item": updated},
-                )
-            ]
-
-        if event.type == "OpportunityDismissed":
-            item_id = str(event.payload.get("id", ""))
-            updated = self.opportunity_store.set_status(item_id, "dismissed")
-            if updated is None:
-                return []
+        handler = handlers.get(event.type)
+        if handler is None:
             return []
 
-        if event.type == "EvaluateOpportunity":
-            result = self.evaluate_opportunity(
-                event.payload,
-                request_id=event.request_id or str(event.payload.get("request_id", "") or ""),
-                trace_id=event.trace_id or str(event.payload.get("trace_id", "") or ""),
-                event_id=event.event_id,
-            )
-            logger.info(f"[DECISION] score={result['score']:.2f} decision={result['decision']}")
-            return [Action(type="OpportunityEvaluated", payload=result)]
-
-        if event.type == "RunStrategyDecision":
-            if self.strategy_decision_engine is None:
-                logger.warning("RunStrategyDecision received without strategy_decision_engine configured")
-                return []
-
-            result = self.strategy_decision_engine.decide(
-                request_id=event.request_id or str(event.payload.get("request_id", "") or ""),
-                trace_id=event.trace_id or str(event.payload.get("trace_id", "") or ""),
-                event_id=event.event_id,
-            )
-            return [Action(type="StrategyDecisionCompleted", payload=result)]
-
-        return []
+        try:
+            return handler.handle(event, context)
+        except Exception:
+            logger.exception("Control handler failure", extra={"event_type": event.type, "event_id": event.event_id})
+            raise
