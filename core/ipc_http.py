@@ -502,7 +502,32 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/strategy/decide":
             if self.strategy_decision_engine is None:
                 return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "strategy_decision_engine_unavailable", "strategy_decision_engine_unavailable")
-            return self._send(200, self.strategy_decision_engine.decide(request_id=self._ensure_request_id(), trace_id=self._ensure_trace_id(), event_id=self._ensure_event_id()))
+            request_id = self._ensure_request_id()
+            trace_id = self._ensure_trace_id()
+            event_id = self._ensure_event_id()
+            event_payload = {
+                "request_id": request_id,
+                "trace_id": trace_id,
+                "event_id": event_id,
+            }
+            self.bus.push(
+                Event(
+                    type="RunStrategyDecision",
+                    payload=event_payload,
+                    source="http",
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    event_id=event_id,
+                )
+            )
+            return self._send_success(
+                202,
+                {
+                    "status": "accepted",
+                    "message": "Strategy decision queued",
+                    "request_id": request_id,
+                },
+            )
 
         if parsed.path == "/debug/events/recent":
             if self.server.storage is None:

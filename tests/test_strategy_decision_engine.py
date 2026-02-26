@@ -281,16 +281,17 @@ class StrategyDecisionEngineTest(unittest.TestCase):
             try:
                 port = server.server_port
                 with urlopen(f"http://127.0.0.1:{port}/strategy/decide", timeout=2) as response:
-                    self.assertEqual(response.status, 200)
+                    self.assertEqual(response.status, 202)
                     payload = json.loads(response.read().decode("utf-8"))
             finally:
                 server.shutdown()
                 server.server_close()
 
             self.assertTrue(payload["ok"])
-            self.assertIn("actions", payload["data"])
-            self.assertGreaterEqual(payload["data"]["confidence"], 0)
-            self.assertLessEqual(payload["data"]["confidence"], 10)
+            self.assertEqual(payload["data"].get("status"), "accepted")
+            self.assertEqual(payload["data"].get("message"), "Strategy decision queued")
+            recent_events = self.bus.recent(limit=1)
+            self.assertEqual(recent_events[-1].type, "RunStrategyDecision")
 
 
 if __name__ == "__main__":
