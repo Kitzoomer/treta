@@ -6,8 +6,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 from core.bus import EventBus
+from core.context_controller import ContextController
 from core.daily_loop import DailyLoopEngine
 from core.events import Event
+from core.model_policy_engine import ModelPolicyEngine
 from core.memory_store import MemoryStore
 from core.state_machine import State, StateMachine
 
@@ -29,6 +31,8 @@ class ConversationCore:
         self.memory_store = memory_store
         self.gpt_client = gpt_client_optional
         self.daily_loop_engine = daily_loop_engine
+        self.context_controller = ContextController()
+        self.model_policy_engine = ModelPolicyEngine()
 
     def _system_prompt(self) -> str:
         return (
@@ -80,16 +84,28 @@ class ConversationCore:
         if self.gpt_client is None or not hasattr(self.gpt_client, "chat"):
             return "Treta GPT connection error. Check configuration."
 
-        messages = [
-            {
-                "role": "system",
-                "content": self._system_prompt(),
-            },
-            {"role": "user", "content": user_message},
-        ]
+        memory_snapshot = self.memory_store.snapshot()
+        memory_messages = memory_snapshot.get("chat_history", []) if isinstance(memory_snapshot, dict) else []
+        if memory_messages and memory_messages[-1].get("role") == "user" and memory_messages[-1].get("text") == user_message:
+            memory_messages = memory_messages[:-1]
 
+        messages = self.context_controller.build_messages(
+            system_prompt=self._system_prompt(),
+            user_message=user_message,
+            memory_messages=memory_messages,
+        )
+
+        task_type = "chat"
         try:
-            return str(self.gpt_client.chat(messages))
+            model_name = self.model_policy_engine.get_model(task_type)
+            return str(self.gpt_client.chat(messages, task_type=task_type, model=model_name))
+        except TypeError:
+            try:
+                return str(self.gpt_client.chat(messages, task_type=task_type))
+            except TypeError:
+                return str(self.gpt_client.chat(messages))
+            except Exception:
+                return "Treta GPT connection error. Check configuration."
         except Exception:
             return "Treta GPT connection error. Check configuration."
 
