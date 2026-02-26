@@ -116,6 +116,39 @@ class AdaptivePolicyEngineTest(unittest.TestCase):
 
         self.assertEqual(updated, original)
 
+    def test_refresh_strategy_weights_clamps_extremes_and_logs(self):
+        storage = Mock()
+        storage.get_strategy_performance.return_value = {
+            "scale": {
+                "total_decisions": 8,
+                "avg_revenue": 20.0,
+                "success_rate": 0.5,
+                "avg_predicted_risk": 1.0,
+                "score": 100.0,
+            },
+            "review": {
+                "total_decisions": 8,
+                "avg_revenue": -50.0,
+                "success_rate": 0.1,
+                "avg_predicted_risk": 1.0,
+                "score": -5000.0,
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            engine = AdaptivePolicyEngine(path=Path(tmp_dir) / "adaptive.json", storage=storage)
+            engine._state["strategy_weights"]["scale"] = 4.0
+            engine._state["strategy_weights"]["review"] = 0.0
+
+            with self.assertLogs("treta.adaptive_policy", level="INFO") as captured:
+                updated = engine.refresh_strategy_weights()
+
+        self.assertEqual(updated["scale"], engine.MAX_STRATEGY_WEIGHT)
+        self.assertEqual(updated["review"], engine.MIN_STRATEGY_WEIGHT)
+        clamp_logs = "\n".join(captured.output)
+        self.assertIn("adaptive_strategy_weight_clamped", clamp_logs)
+        self.assertIn("weight_clamped", clamp_logs)
+
 
 if __name__ == "__main__":
     unittest.main()
