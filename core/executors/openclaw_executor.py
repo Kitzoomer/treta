@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import importlib
 import os
+from types import SimpleNamespace
+import importlib as _stdlib_importlib
+
+
+importlib = SimpleNamespace(import_module=_stdlib_importlib.import_module)
 
 OPENCLAW_BASE_URL = None
 OPENCLAW_TIMEOUT_SECONDS = 5
@@ -15,16 +19,9 @@ class OpenClawExecutor:
         "external_publish",
         "external_price_update",
     ]
-    OPENCLAW_BASE_URL = None
-    OPENCLAW_TIMEOUT_SECONDS = 5
-
     def execute(self, action: dict, context: dict) -> dict:
-        class_base_url = self.OPENCLAW_BASE_URL
-        base_url = class_base_url if class_base_url is not None else OPENCLAW_BASE_URL
-        base_url = base_url or os.getenv("OPENCLAW_BASE_URL", "")
-
-        class_timeout = self.OPENCLAW_TIMEOUT_SECONDS
-        timeout_seconds = class_timeout if class_timeout is not None else OPENCLAW_TIMEOUT_SECONDS
+        base_url = OPENCLAW_BASE_URL or os.getenv("OPENCLAW_BASE_URL", "")
+        timeout_seconds = OPENCLAW_TIMEOUT_SECONDS
         timeout_from_env = os.getenv("OPENCLAW_TIMEOUT_SECONDS")
 
         if timeout_from_env is not None:
@@ -44,10 +41,7 @@ class OpenClawExecutor:
         }
 
         try:
-            try:
-                import requests
-            except Exception:
-                requests = importlib.import_module("requests")
+            requests = importlib.import_module("requests")
 
             response = requests.post(
                 f"{str(base_url).rstrip('/')}/tasks",
