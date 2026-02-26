@@ -1,18 +1,29 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 from typing import Any, Dict, List
 
 from core.performance_engine import PerformanceEngine
 from core.product_launch_store import ProductLaunchStore
+from core.strategic_executor_engine import StrategicExecutorEngine
+from core.strategic_planner_engine import StrategicPlannerEngine
 
 
 class StrategyEngine:
     """Deterministic strategy recommendations derived from launch performance."""
 
-    def __init__(self, product_launch_store: ProductLaunchStore):
+    def __init__(
+        self,
+        product_launch_store: ProductLaunchStore,
+        strategic_planner_engine: StrategicPlannerEngine | None = None,
+        strategic_executor_engine: StrategicExecutorEngine | None = None,
+    ):
         self._product_launch_store = product_launch_store
         self._performance_engine = PerformanceEngine(product_launch_store=product_launch_store)
+        self._strategic_planner_engine = strategic_planner_engine or StrategicPlannerEngine()
+        self._strategic_executor_engine = strategic_executor_engine or StrategicExecutorEngine()
+        self._logger = logging.getLogger("treta.strategy.engine")
 
     def _launches(self) -> List[Dict[str, Any]]:
         return self._product_launch_store.list()
@@ -106,4 +117,13 @@ class StrategyEngine:
             "global_summary": global_summary,
             "product_actions": product_actions,
             "category_actions": category_actions,
+        }
+
+    def run_strategic_plan(self, objective: str, state_snapshot: str) -> Dict[str, Any]:
+        self._logger.info("Starting strategic Plan→Execute", extra={"phase": "plan_execute", "objective": objective})
+        plan = self._strategic_planner_engine.create_plan(objective=objective, state_snapshot=state_snapshot)
+        result = self._strategic_executor_engine.execute_plan(plan=plan)
+        return {
+            "plan": plan,
+            "execution": result,
         }
