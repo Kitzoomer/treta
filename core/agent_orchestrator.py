@@ -1,60 +1,58 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 from core.agents.autonomy_agent import AutonomyAgent
-from core.agents.growth_agent import GrowthAgent
 from core.agents.planner_agent import PlannerAgent
 from core.agents.risk_agent import RiskAgent
 
 
 class AgentOrchestrator:
-    """Coordinates agent execution order and enforces explicit data flow boundaries."""
+    """Minimal orchestration pipeline: decide -> risk -> gate -> propose."""
 
     def __init__(
         self,
         planner_agent: PlannerAgent,
         risk_agent: RiskAgent,
-        growth_agent: GrowthAgent,
         autonomy_agent: AutonomyAgent,
     ):
         self._planner_agent = planner_agent
         self._risk_agent = risk_agent
-        self._growth_agent = growth_agent
         self._autonomy_agent = autonomy_agent
 
-    def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        objective = str(input_data.get("objective") or "").strip()
-        state_snapshot = str(input_data.get("state_snapshot") or "").strip()
-        actions = input_data.get("actions") or []
-        autonomy_mode = str(input_data.get("autonomy_mode") or "status").strip().lower()
-        request_id = str(input_data.get("request_id") or "").strip()
+    def run_cycle(self, state: dict[str, Any]) -> dict[str, Any]:
+        objective = str(state.get("objective") or "").strip()
+        state_snapshot = str(state.get("state_snapshot") or "").strip()
+        actions = state.get("actions") or []
 
-        planner_output = self._planner_agent.run(
+        decide_output = self._planner_agent.run(
             {
                 "objective": objective,
                 "state_snapshot": state_snapshot,
             }
         )
+        risk_output = self._risk_agent.run({"actions": actions})
+        gate_output = self._autonomy_agent.run({})
 
-        risk_output = self._risk_agent.run(
+        proposed_actions = [
             {
-                "actions": actions,
+                **action,
+                "status": "pending",
             }
-        )
-
-        growth_output = self._growth_agent.run({})
-
-        autonomy_output = self._autonomy_agent.run(
-            {
-                "mode": autonomy_mode,
-                "request_id": request_id,
-            }
-        )
+            for action in risk_output.get("evaluated_actions", [])
+            if isinstance(action, dict)
+        ]
 
         return {
-            "planner": planner_output,
+            "decide": decide_output,
             "risk": risk_output,
-            "growth": growth_output,
-            "autonomy": autonomy_output,
+            "gate": gate_output,
+            "propose": {
+                "actions": proposed_actions,
+                "execution": "pending",
+            },
         }
+
+    def run(self, input_data: dict[str, Any]) -> dict[str, Any]:
+        """Backward-compatible alias."""
+        return self.run_cycle(input_data)
