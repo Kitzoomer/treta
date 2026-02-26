@@ -19,6 +19,15 @@ from core.strategy_action_execution_layer import StrategyActionExecutionLayer
 from core.strategy_action_store import StrategyActionStore
 
 
+
+
+class EmptyOutputExecutor:
+    name = "empty_output"
+    supported_types = ["draft_asset"]
+
+    def execute(self, action, context):
+        return {}
+
 class CountingExecutor:
     name = "counting"
     supported_types = ["draft_asset"]
@@ -253,6 +262,120 @@ class StrategyExecutorFlowTest(unittest.TestCase):
                 statuses = [item["status"] for item in executions]
                 self.assertIn("failed_timeout", statuses)
                 self.assertEqual(executions[0]["status"], "success")
+
+
+    def test_high_risk_action_requires_approval(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch.dict("os.environ", {"TRETA_DATA_DIR": tmp_dir}, clear=False):
+                storage = Storage()
+                store = StrategyActionStore(path=Path(tmp_dir) / "strategy_actions.json")
+                exec_store = ActionExecutionStore(storage.conn)
+                registry = ActionExecutorRegistry()
+                executor = CountingExecutor()
+                registry.register(executor)
+
+                action = store.add(
+                    action_type="draft_asset",
+                    target_id="launch-risk",
+                    reasoning="accion riesgosa",
+                    status="pending_confirmation",
+                )
+                stored = store._find(action["id"])
+                stored["risk_level"] = "high"
+                store._persist(stored)
+
+                emitted = StrategyHandler._execute_strategy_action(
+                    Event(type="ExecuteStrategyAction", payload={"action_id": action["id"]}, source="test"),
+                    {
+                        "Action": Event,
+                        "strategy_action_execution_layer": type("Layer", (), {
+                            "_strategy_action_store": store,
+                            "_action_execution_store": exec_store,
+                            "_executor_registry": registry,
+                        })(),
+                        "storage": storage,
+                    },
+                )
+
+                self.assertEqual(executor.calls, 0)
+                self.assertEqual(emitted[0].type, "StrategyActionExecutionSkipped")
+                self.assertEqual(emitted[0].payload.get("reason"), "approval_required")
+
+    def test_post_verify_failure_marks_action_failed(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch.dict("os.environ", {"TRETA_DATA_DIR": tmp_dir}, clear=False):
+                storage = Storage()
+                store = StrategyActionStore(path=Path(tmp_dir) / "strategy_actions.json")
+                exec_store = ActionExecutionStore(storage.conn)
+                registry = ActionExecutorRegistry()
+                registry.register(EmptyOutputExecutor())
+
+                action = store.add(
+                    action_type="draft_asset",
+                    target_id="launch-empty",
+                    reasoning="sin salida",
+                    status="pending_confirmation",
+                )
+
+                emitted = StrategyHandler._execute_strategy_action(
+                    Event(type="ExecuteStrategyAction", payload={"action_id": action["id"]}, source="test"),
+                    {
+                        "Action": Event,
+                        "strategy_action_execution_layer": type("Layer", (), {
+                            "_strategy_action_store": store,
+                            "_action_execution_store": exec_store,
+                            "_executor_registry": registry,
+                        })(),
+                        "storage": storage,
+                    },
+                )
+
+                self.assertEqual(emitted[0].type, "StrategyActionFailed")
+                self.assertEqual(emitted[0].payload.get("error"), "post_verify_failed")
+                executions = exec_store.list_for_action(action["id"])
+                self.assertEqual(executions[0]["status"], "failed")
+                self.assertEqual(executions[0]["error"], "post_verify_failed")
+
+    def test_circuit_breaker_skips_after_recent_failures(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch.dict("os.environ", {"TRETA_DATA_DIR": tmp_dir}, clear=False):
+                storage = Storage()
+                store = StrategyActionStore(path=Path(tmp_dir) / "strategy_actions.json")
+                exec_store = ActionExecutionStore(storage.conn)
+                registry = ActionExecutorRegistry()
+                executor = CountingExecutor()
+                registry.register(executor)
+
+                action = store.add(
+                    action_type="draft_asset",
+                    target_id="launch-cb",
+                    reasoning="abrir circuito",
+                    status="pending_confirmation",
+                )
+
+                first = exec_store.create_queued(action_id=action["id"], action_type="draft_asset", executor="x", context={})
+                exec_store.mark_running(first)
+                exec_store.complete(first, status="failed", error="boom", output_payload={"status": "failed"})
+                second = exec_store.create_queued(action_id=action["id"], action_type="draft_asset", executor="x", context={})
+                exec_store.mark_running(second)
+                exec_store.complete(second, status="failed", error="boom", output_payload={"status": "failed"})
+
+                emitted = StrategyHandler._execute_strategy_action(
+                    Event(type="ExecuteStrategyAction", payload={"action_id": action["id"], "approved": True}, source="test"),
+                    {
+                        "Action": Event,
+                        "strategy_action_execution_layer": type("Layer", (), {
+                            "_strategy_action_store": store,
+                            "_action_execution_store": exec_store,
+                            "_executor_registry": registry,
+                        })(),
+                        "storage": storage,
+                    },
+                )
+
+                self.assertEqual(executor.calls, 0)
+                self.assertEqual(emitted[0].type, "StrategyActionExecutionSkipped")
+                self.assertEqual(emitted[0].payload.get("reason"), "circuit_breaker_open")
 
 
 if __name__ == "__main__":
