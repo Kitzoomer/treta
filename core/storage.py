@@ -11,6 +11,7 @@ from core.persistence.decision_logs import (
     create_decision_log,
     ensure_decision_logs_table,
     get_decision_logs_for_entity as query_decision_logs_for_entity,
+    get_latest_decision_log_by_type,
     list_recent_decision_logs,
     update_decision_log_status,
 )
@@ -279,6 +280,10 @@ class Storage:
     def list_recent_decision_logs(self, limit: int = 50, decision_type: str | None = None) -> list[dict]:
         with self._lock:
             return list_recent_decision_logs(self.conn, limit=limit, decision_type=decision_type)
+
+    def get_latest_decision_log_by_type(self, decision_type: str) -> dict | None:
+        with self._lock:
+            return get_latest_decision_log_by_type(self.conn, decision_type=decision_type)
 
     def get_decision_logs_for_entity(self, entity_type: str, entity_id: str, limit: int = 50) -> list[dict]:
         with self._lock:

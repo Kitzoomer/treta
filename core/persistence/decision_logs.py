@@ -170,6 +170,20 @@ def list_recent_decision_logs(conn: sqlite3.Connection, limit: int = 50, decisio
     return [_decode_item(row, columns) for row in rows]
 
 
+def get_latest_decision_log_by_type(conn: sqlite3.Connection, decision_type: str) -> dict[str, Any] | None:
+    columns = [
+        "id", "created_at", "decision_type", "entity_type", "entity_id", "action_type", "decision",
+        "risk_score", "autonomy_score", "policy_name", "policy_snapshot_json", "inputs_json",
+        "outputs_json", "reason", "correlation_id", "status", "error", "updated_at",
+    ]
+    row = conn.execute(
+        f"SELECT {', '.join(columns)} FROM decision_logs WHERE decision_type = ? ORDER BY created_at DESC LIMIT 1",
+        (decision_type,),
+    ).fetchone()
+    if row is None:
+        return None
+    return _decode_item(row, columns)
+
 def get_decision_logs_for_entity(
     conn: sqlite3.Connection,
     entity_type: str,

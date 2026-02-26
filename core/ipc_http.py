@@ -502,30 +502,39 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/strategy/decide":
             if self.strategy_decision_engine is None:
                 return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "strategy_decision_engine_unavailable", "strategy_decision_engine_unavailable")
+            if self.control is None:
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "control_unavailable", "control_unavailable")
             request_id = self._ensure_request_id()
             trace_id = self._ensure_trace_id()
             event_id = self._ensure_event_id()
-            event_payload = {
-                "request_id": request_id,
-                "trace_id": trace_id,
-                "event_id": event_id,
-            }
-            self.bus.push(
-                Event(
-                    type="RunStrategyDecision",
-                    payload=event_payload,
-                    source="http",
-                    request_id=request_id,
-                    trace_id=trace_id,
-                    event_id=event_id,
-                )
-            )
-            return self._send_success(
-                202,
-                {
-                    "status": "accepted",
-                    "message": "Strategy decision queued",
+            event = Event(
+                type="RunStrategyDecision",
+                payload={
                     "request_id": request_id,
+                    "trace_id": trace_id,
+                    "event_id": event_id,
+                },
+                source="http",
+                request_id=request_id,
+                trace_id=trace_id,
+                event_id=event_id,
+            )
+            actions = self.control.consume(event)
+            result = actions[0].payload if actions else {"status": "executed", "cooldown_active": False}
+            if result.get("status") == "skipped":
+                return self._send_success(
+                    200,
+                    {
+                        "status": "skipped",
+                        "reason": "cooldown_active",
+                        "cooldown_remaining_minutes": float(result.get("cooldown_remaining_minutes", 0.0) or 0.0),
+                    },
+                )
+            return self._send_success(
+                200,
+                {
+                    "status": "executed",
+                    "cooldown_active": False,
                 },
             )
 
