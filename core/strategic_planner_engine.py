@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 from core.model_policy_engine import ModelPolicyEngine
+from core.output_validator import OutputValidator
 
 
 class StrategicPlannerEngine:
@@ -13,6 +15,7 @@ class StrategicPlannerEngine:
     def __init__(self, gpt_client_optional: Any = None, model_policy_engine: ModelPolicyEngine | None = None):
         self._gpt_client = gpt_client_optional
         self._model_policy_engine = model_policy_engine or ModelPolicyEngine()
+        self._output_validator = OutputValidator()
         self._logger = logging.getLogger("treta.strategy.planner")
 
     def _fallback_plan(self, objective: str, state_snapshot: str) -> dict[str, Any]:
@@ -117,17 +120,31 @@ class StrategicPlannerEngine:
         ]
 
         model_name = self._model_policy_engine.get_model(task_type="planning")
+        started_at = time.perf_counter()
         self._logger.info(
             "Strategic planner creating plan",
             extra={"objective": normalized_objective, "model": model_name, "phase": "plan"},
         )
         try:
             raw = self._gpt_client.chat(messages=messages, task_type="planning", model=model_name)
-            parsed = json.loads(str(raw or "{}"))
+            parsed = self._output_validator.validate_json(str(raw or "{}"))
+            self._output_validator.validate_required_fields(parsed, ["objective", "steps"])
+            self._output_validator.validate_schema(parsed, {"objective": "string", "steps": []})
+            self._output_validator.validate_non_empty_strings(parsed)
             validated = self._validate_plan(parsed)
+            elapsed_ms = round((time.perf_counter() - started_at) * 1000, 2)
+            estimated_tokens = max(len(str(raw or "")) // 4, 1)
             self._logger.info(
                 "Strategic planner plan generated",
-                extra={"objective": normalized_objective, "model": model_name, "steps": len(validated.get("steps", [])), "phase": "plan"},
+                extra={
+                    "objective": normalized_objective,
+                    "model": model_name,
+                    "steps": len(validated.get("steps", [])),
+                    "phase": "plan",
+                    "task_type": "planning",
+                    "tokens_estimated": estimated_tokens,
+                    "response_time_ms": elapsed_ms,
+                },
             )
             return validated
         except Exception as exc:

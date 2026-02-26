@@ -6,6 +6,8 @@ from typing import Any, Dict, List
 
 from core.performance_engine import PerformanceEngine
 from core.product_launch_store import ProductLaunchStore
+from core.coherence_check_engine import CoherenceCheckEngine
+from core.output_validator import OutputValidator
 from core.strategic_executor_engine import StrategicExecutorEngine
 from core.strategic_planner_engine import StrategicPlannerEngine
 
@@ -18,11 +20,14 @@ class StrategyEngine:
         product_launch_store: ProductLaunchStore,
         strategic_planner_engine: StrategicPlannerEngine | None = None,
         strategic_executor_engine: StrategicExecutorEngine | None = None,
+        coherence_check_engine: CoherenceCheckEngine | None = None,
     ):
         self._product_launch_store = product_launch_store
         self._performance_engine = PerformanceEngine(product_launch_store=product_launch_store)
         self._strategic_planner_engine = strategic_planner_engine or StrategicPlannerEngine()
         self._strategic_executor_engine = strategic_executor_engine or StrategicExecutorEngine()
+        self._coherence_check_engine = coherence_check_engine or CoherenceCheckEngine()
+        self._output_validator = OutputValidator()
         self._logger = logging.getLogger("treta.strategy.engine")
 
     def _launches(self) -> List[Dict[str, Any]]:
@@ -120,10 +125,51 @@ class StrategyEngine:
         }
 
     def run_strategic_plan(self, objective: str, state_snapshot: str) -> Dict[str, Any]:
-        self._logger.info("Starting strategic Plan→Execute", extra={"phase": "plan_execute", "objective": objective})
+        self._logger.info(
+            "Starting strategic Plan→Execute",
+            extra={"phase": "plan_execute", "objective": objective, "task_type": "planning_cycle"},
+        )
         plan = self._strategic_planner_engine.create_plan(objective=objective, state_snapshot=state_snapshot)
+
+        self._output_validator.validate_required_fields(plan, ["objective", "steps"])
+        self._output_validator.validate_schema(plan, {"objective": "string", "steps": []})
+        self._output_validator.validate_non_empty_strings(plan)
+
+        coherence = self._coherence_check_engine.evaluate(plan=plan, snapshot=state_snapshot)
+        coherence_payload = {
+            "is_coherent": coherence.is_coherent,
+            "contradictions": coherence.contradictions,
+            "drastic_changes": coherence.drastic_changes,
+            "requires_human_review": coherence.requires_human_review,
+        }
+
+        if coherence.requires_human_review:
+            self._logger.warning(
+                "Strategic plan blocked due to coherence drift",
+                extra={
+                    "phase": "plan_execute",
+                    "task_type": "coherence_check",
+                    "objective": objective,
+                    "requires_human_review": True,
+                    "contradictions": len(coherence.contradictions),
+                    "drastic_changes": len(coherence.drastic_changes),
+                },
+            )
+            return {
+                "plan": plan,
+                "execution": {
+                    "objective": str(plan.get("objective") or ""),
+                    "status": "blocked_for_human_review",
+                    "total_steps": 0,
+                    "completed_steps": 0,
+                    "results": [],
+                },
+                "coherence": coherence_payload,
+            }
+
         result = self._strategic_executor_engine.execute_plan(plan=plan)
         return {
             "plan": plan,
             "execution": result,
+            "coherence": coherence_payload,
         }
