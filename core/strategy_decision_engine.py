@@ -112,6 +112,10 @@ class StrategyDecisionEngine:
             if "no_active_launches" not in risk_flags:
                 risk_flags.append("no_active_launches")
 
+
+        if self._autonomy_policy_engine is not None:
+            actions = self._autonomy_policy_engine.prioritize_strategy_actions(actions)
+
         primary_focus = "stabilize"
         if any(action["type"] == "scale" for action in actions):
             primary_focus = "growth"

@@ -1,26 +1,39 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, List
+
+from core.storage import Storage
 
 
 class AdaptivePolicyEngine:
     """Deterministic adaptive tuning for autonomy thresholds."""
 
     _DEFAULT_DATA_DIR = "./.treta_data"
+    _DEFAULT_STRATEGY_WEIGHTS = {
+        "scale": 1.0,
+        "review": 1.0,
+        "price_test": 1.0,
+        "new_product": 1.0,
+        "archive": 1.0,
+    }
 
     def __init__(
         self,
         path: Path | None = None,
         impact_threshold: int = 6,
         max_auto_executions_per_24h: int = 3,
+        storage: Storage | None = None,
     ):
         data_dir = Path(os.getenv("TRETA_DATA_DIR", self._DEFAULT_DATA_DIR))
         self._path = path or data_dir / "adaptive_policy_state.json"
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._storage = storage
+        self._logger = logging.getLogger("treta.adaptive_policy")
 
         self._state: Dict[str, Any] = {
             "total_auto_executed_actions": 0,
@@ -28,6 +41,7 @@ class AdaptivePolicyEngine:
             "revenue_delta_per_action": [],
             "impact_threshold": self._clamp(int(impact_threshold), 4, 8),
             "max_auto_executions_per_24h": self._clamp(int(max_auto_executions_per_24h), 1, 5),
+            "strategy_weights": dict(self._DEFAULT_STRATEGY_WEIGHTS),
         }
         loaded = self._load_state()
         if loaded is not None:
@@ -35,6 +49,17 @@ class AdaptivePolicyEngine:
 
     def _clamp(self, value: int, minimum: int, maximum: int) -> int:
         return min(max(value, minimum), maximum)
+
+    def _normalized_weights(self, raw: Any) -> Dict[str, float]:
+        merged = dict(self._DEFAULT_STRATEGY_WEIGHTS)
+        if not isinstance(raw, dict):
+            return merged
+        for strategy_type, weight in raw.items():
+            try:
+                merged[str(strategy_type)] = max(float(weight), 0.0)
+            except (TypeError, ValueError):
+                continue
+        return merged
 
     def _load_state(self) -> Dict[str, Any] | None:
         if not self._path.exists():
@@ -66,6 +91,7 @@ class AdaptivePolicyEngine:
                 1,
                 5,
             ),
+            "strategy_weights": self._normalized_weights(loaded.get("strategy_weights")),
         }
 
     def _save(self) -> None:
@@ -102,6 +128,60 @@ class AdaptivePolicyEngine:
             max_auto_exec -= 1
         self._state["max_auto_executions_per_24h"] = self._clamp(max_auto_exec, 1, 5)
 
+    def _normalize_scores(self, scores: Dict[str, float]) -> Dict[str, float]:
+        if not scores:
+            return {}
+        max_score = max(scores.values())
+        if max_score <= 0:
+            return {key: 0.0 for key in scores}
+        return {key: value / max_score for key, value in scores.items()}
+
+    def refresh_strategy_weights(self) -> Dict[str, float]:
+        if self._storage is None:
+            return dict(self._state["strategy_weights"])
+
+        performance = self._storage.get_strategy_performance()
+        if not performance:
+            return dict(self._state["strategy_weights"])
+
+        eligible = {
+            strategy_type: metrics
+            for strategy_type, metrics in performance.items()
+            if int(metrics.get("total_decisions", 0) or 0) >= 5
+        }
+        if not eligible:
+            return dict(self._state["strategy_weights"])
+
+        sorted_eligible = sorted(eligible.items(), key=lambda item: float(item[1].get("score", 0) or 0), reverse=True)
+        normalized_scores = self._normalize_scores({key: float(metrics.get("score", 0) or 0) for key, metrics in sorted_eligible})
+
+        weights = dict(self._state["strategy_weights"])
+        for strategy_type, metrics in sorted_eligible:
+            old_weight = float(weights.get(strategy_type, 1.0) or 1.0)
+            score = float(metrics.get("score", 0) or 0)
+            score_normalized = float(normalized_scores.get(strategy_type, 0.0) or 0.0)
+            new_weight = (old_weight * 0.7) + (score_normalized * 0.3)
+            weights[strategy_type] = new_weight
+            self._logger.info(
+                "adaptive_strategy_weight_updated",
+                extra={
+                    "strategy_type": strategy_type,
+                    "old_weight": old_weight,
+                    "new_weight": new_weight,
+                    "score": score,
+                },
+            )
+
+        self._state["strategy_weights"] = weights
+        self._save()
+        return dict(self._state["strategy_weights"])
+
+    def prioritized_strategy_types(self, strategy_types: List[str]) -> List[str]:
+        if not strategy_types:
+            return []
+        current_weights = self.refresh_strategy_weights()
+        return sorted(strategy_types, key=lambda item: float(current_weights.get(item, 1.0) or 1.0), reverse=True)
+
     def record_action_outcome(self, revenue_delta: float) -> Dict[str, Any]:
         delta = float(revenue_delta)
         self._state["total_auto_executed_actions"] += 1
@@ -118,6 +198,7 @@ class AdaptivePolicyEngine:
             "avg_revenue_delta": self._average_revenue_delta(),
             "impact_threshold": int(self._state["impact_threshold"]),
             "max_auto_executions_per_24h": int(self._state["max_auto_executions_per_24h"]),
+            "strategy_weights": dict(self._state["strategy_weights"]),
         }
 
     def tracked_metrics(self) -> Dict[str, Any]:
