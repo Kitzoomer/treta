@@ -2,17 +2,28 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from core.action_execution_store import ActionExecutionStore
 from core.bus import EventBus
 from core.events import Event
+from core.executors.registry import ActionExecutorRegistry
 from core.strategy_action_store import StrategyActionStore
 from core.storage import Storage
 
 
 class StrategyActionExecutionLayer:
-    def __init__(self, strategy_action_store: StrategyActionStore, bus: EventBus, storage: Storage | None = None):
+    def __init__(
+        self,
+        strategy_action_store: StrategyActionStore,
+        bus: EventBus,
+        storage: Storage | None = None,
+        action_execution_store: ActionExecutionStore | None = None,
+        executor_registry: ActionExecutorRegistry | None = None,
+    ):
         self._strategy_action_store = strategy_action_store
         self._bus = bus
         self._storage = storage
+        self._action_execution_store = action_execution_store
+        self._executor_registry = executor_registry
 
     def register_pending_actions(
         self,
@@ -57,13 +68,30 @@ class StrategyActionExecutionLayer:
     def list_pending_actions(self) -> List[Dict[str, Any]]:
         return self._strategy_action_store.list(status="pending_confirmation")
 
-    def execute_action(self, action_id: str, status: str = "executed") -> Dict[str, Any]:
+    def execute_action(self, action_id: str, status: str = "executed", request_id: str | None = None, trace_id: str | None = None) -> Dict[str, Any]:
         updated = self._strategy_action_store.set_status(action_id, status)
         self._bus.push(
             Event(
                 type="StrategyActionExecuted",
                 payload={"action": updated},
                 source="strategy_action_execution_layer",
+                request_id=request_id or "",
+                trace_id=trace_id or "",
+            )
+        )
+        self._bus.push(
+            Event(
+                type="ExecuteStrategyAction",
+                payload={
+                    "action_id": action_id,
+                    "request_id": request_id or str(updated.get("event_id") or ""),
+                    "trace_id": trace_id or str(updated.get("trace_id") or ""),
+                    "correlation_id": str(updated.get("decision_id") or ""),
+                    "strategy_status": status,
+                },
+                source="strategy_action_execution_layer",
+                request_id=request_id or "",
+                trace_id=trace_id or "",
             )
         )
         if self._storage is not None:

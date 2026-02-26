@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 import logging
 
+from core.action_execution_store import ActionExecutionStore
 from core.autonomy_policy_engine import AutonomyPolicyEngine
 from core.bus import EventBus
 from core.config import get_autonomy_mode
@@ -24,6 +25,8 @@ from core.product_proposal_store import ProductProposalStore
 from core.scheduler import DailyScheduler
 from core.state_machine import State, StateMachine
 from core.storage import Storage
+from core.executors.draft_asset_executor import DraftAssetExecutor
+from core.executors.registry import ActionExecutorRegistry
 from core.strategy_action_execution_layer import StrategyActionExecutionLayer
 from core.strategy_action_store import StrategyActionStore
 from core.strategy_decision_engine import StrategyDecisionEngine
@@ -54,6 +57,9 @@ class TretaApp:
         self.performance_engine = PerformanceEngine(product_launch_store=self.product_launch_store)
         self.strategy_engine = StrategyEngine(product_launch_store=self.product_launch_store)
         self.strategy_action_store = StrategyActionStore()
+        self.action_execution_store = ActionExecutionStore(self.storage.conn)
+        self.executor_registry = ActionExecutorRegistry()
+        self.executor_registry.register(DraftAssetExecutor())
         self.daily_loop_engine = DailyLoopEngine(
             opportunity_store=self.opportunity_store,
             proposal_store=self.product_proposal_store,
@@ -64,6 +70,8 @@ class TretaApp:
             strategy_action_store=self.strategy_action_store,
             bus=self.bus,
             storage=self.storage,
+            action_execution_store=self.action_execution_store,
+            executor_registry=self.executor_registry,
         )
         self.autonomy_policy_engine = AutonomyPolicyEngine(
             strategy_action_store=self.strategy_action_store,
@@ -88,6 +96,7 @@ class TretaApp:
             revenue_attribution_store=self.revenue_attribution_store,
             subreddit_performance_store=self.subreddit_performance_store,
             strategy_decision_engine=self.strategy_decision_engine,
+            strategy_action_execution_layer=self.strategy_action_execution_layer,
             bus=self.bus,
             decision_engine=self.decision_engine,
         )
@@ -136,6 +145,8 @@ class TretaApp:
             revenue_attribution_store=self.revenue_attribution_store,
             subreddit_performance_store=self.subreddit_performance_store,
             storage=self.storage,
+            action_execution_store=self.action_execution_store,
+            executor_registry=self.executor_registry,
         )
         return self.http_server
 

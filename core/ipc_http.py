@@ -628,6 +628,25 @@ class Handler(BaseHTTPRequestHandler):
             items = self.server.storage.get_decision_logs_for_entity(entity_type=entity_type, entity_id=entity_id, limit=limit)
             return self._send_success(200, items)
 
+        if parsed.path == "/action-executions":
+            if self.strategy_action_execution_layer is None or self.strategy_action_execution_layer._action_execution_store is None:
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "action_execution_store_unavailable", "action_execution_store_unavailable")
+            query = parse_qs(parsed.query)
+            limit_raw = query.get("limit", ["50"])[0]
+            try:
+                limit = int(limit_raw)
+            except (TypeError, ValueError):
+                return self._send_error(400, ErrorType.CLIENT_ERROR, "invalid_limit", "invalid_limit")
+            items = self.strategy_action_execution_layer._action_execution_store.list_recent(limit=limit)
+            return self._send_success(200, {"items": items})
+
+        if parsed.path.startswith("/action-executions/"):
+            if self.strategy_action_execution_layer is None or self.strategy_action_execution_layer._action_execution_store is None:
+                return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "action_execution_store_unavailable", "action_execution_store_unavailable")
+            action_id = parsed.path.rsplit("/", 1)[-1]
+            items = self.strategy_action_execution_layer._action_execution_store.list_for_action(action_id=action_id, limit=50)
+            return self._send_success(200, {"items": items})
+
         if parsed.path == "/strategy/pending_actions":
             if self.strategy_action_execution_layer is None:
                 return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "strategy_action_execution_layer_unavailable", "strategy_action_execution_layer_unavailable")

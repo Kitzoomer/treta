@@ -71,6 +71,7 @@ class Control:
         revenue_attribution_store: RevenueAttributionStore | None = None,
         subreddit_performance_store: SubredditPerformanceStore | None = None,
         strategy_decision_engine: StrategyDecisionEngine | None = None,
+        strategy_action_execution_layer = None,
         bus: EventBus | None = None,
     ):
         self.decision_engine = decision_engine or DecisionEngine(storage=Storage())
@@ -117,6 +118,7 @@ class Control:
             path=(inferred_dir / "subreddit_performance.json") if inferred_dir is not None else None,
         )
         self.strategy_decision_engine = strategy_decision_engine
+        self.strategy_action_execution_layer = strategy_action_execution_layer
         self.gumroad_sales_sync_service = (
             GumroadSyncService(
                 self.product_launch_store,
@@ -576,6 +578,7 @@ class Control:
             },
             "dispatcher": self.bus,
             "storage": getattr(self.decision_engine, "storage", None) or getattr(self.decision_engine, "_storage", None),
+            "strategy_action_execution_layer": self.strategy_action_execution_layer,
         }
 
         handlers = {
@@ -611,6 +614,7 @@ class Control:
             "OpportunityDismissed": OpportunityHandler,
             "EvaluateOpportunity": StrategyHandler,
             "RunStrategyDecision": StrategyHandler,
+            "ExecuteStrategyAction": StrategyHandler,
         }
 
         handler = handlers.get(event.type)
