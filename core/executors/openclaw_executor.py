@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import importlib
+import os
 
-from core.config import OPENCLAW_BASE_URL, OPENCLAW_TIMEOUT_SECONDS
+OPENCLAW_BASE_URL = None
+OPENCLAW_TIMEOUT_SECONDS = 5
 
 
 class OpenClawExecutor:
@@ -15,6 +17,15 @@ class OpenClawExecutor:
     ]
 
     def execute(self, action: dict, context: dict) -> dict:
+        base_url = OPENCLAW_BASE_URL or os.getenv("OPENCLAW_BASE_URL", "")
+        timeout_seconds = OPENCLAW_TIMEOUT_SECONDS
+        timeout_from_env = os.getenv("OPENCLAW_TIMEOUT_SECONDS")
+        if timeout_from_env is not None:
+            try:
+                timeout_seconds = int(timeout_from_env)
+            except ValueError:
+                timeout_seconds = OPENCLAW_TIMEOUT_SECONDS
+
         now_iso = datetime.now(timezone.utc).isoformat()
         payload = {
             "task_type": str(action.get("type") or ""),
@@ -27,9 +38,9 @@ class OpenClawExecutor:
         try:
             requests = importlib.import_module("requests")
             response = requests.post(
-                f"{OPENCLAW_BASE_URL.rstrip('/')}/tasks",
+                f"{str(base_url).rstrip('/')}/tasks",
                 json=payload,
-                timeout=OPENCLAW_TIMEOUT_SECONDS,
+                timeout=timeout_seconds,
             )
             if 200 <= response.status_code < 300:
                 data = response.json() if response.content else {}
