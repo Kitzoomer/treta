@@ -3,10 +3,12 @@ from __future__ import annotations
 import time
 import logging
 
+import core.config as config
+
 from core.action_execution_store import ActionExecutionStore
 from core.autonomy_policy_engine import AutonomyPolicyEngine
 from core.bus import EventBus
-from core.config import OPENCLAW_BASE_URL, get_autonomy_mode
+from core.config import get_autonomy_mode
 from core.control import Control
 from core.conversation_core import ConversationCore
 from core.daily_loop import DailyLoopEngine
@@ -35,10 +37,10 @@ from core.revenue_attribution.store import RevenueAttributionStore
 from core.subreddit_performance_store import SubredditPerformanceStore
 
 
-def bootstrap_executors(registry: ActionExecutorRegistry) -> None:
+def bootstrap_executors(registry: ActionExecutorRegistry, app_config=config) -> None:
     registry.register(DraftAssetExecutor())
 
-    if OPENCLAW_BASE_URL:
+    if str(app_config.OPENCLAW_BASE_URL or "").strip():
         from core.executors.openclaw_executor import OpenClawExecutor
 
         registry.register(OpenClawExecutor())
@@ -71,7 +73,7 @@ class TretaApp:
         self.strategy_action_store = StrategyActionStore()
         self.action_execution_store = ActionExecutionStore(self.storage.conn)
         self.executor_registry = ActionExecutorRegistry()
-        bootstrap_executors(self.executor_registry)
+        bootstrap_executors(self.executor_registry, config)
         self.daily_loop_engine = DailyLoopEngine(
             opportunity_store=self.opportunity_store,
             proposal_store=self.product_proposal_store,
