@@ -138,6 +138,35 @@ class StrategyDecisionEngineTest(unittest.TestCase):
             self.assertEqual(pending[0]["expected_impact_score"], 8)
             self.assertTrue(pending[0]["auto_executable"])
 
+
+    def test_decide_propagates_explicit_event_id_without_request_id_parsing(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            proposals, launches = self._stores(root)
+            action_store = StrategyActionStore(path=root / "strategy_actions.json")
+            action_execution_layer = StrategyActionExecutionLayer(strategy_action_store=action_store, bus=self.bus)
+
+            proposals.add({"id": "proposal-1", "product_name": "Growth Kit"})
+            launch = launches.add_from_proposal("proposal-1")
+            launches.transition_status(launch["id"], "active")
+            for _ in range(5):
+                launches.add_sale(launch["id"], 10)
+
+            engine = StrategyDecisionEngine(
+                product_launch_store=launches,
+                strategy_action_execution_layer=action_execution_layer,
+                storage=Storage(),
+            )
+
+            weird_request = "req-without-event-fragment"
+            result = engine.decide(request_id=weird_request, trace_id="trace-xyz", event_id="event-xyz")
+            self.assertIn("actions", result)
+
+            pending = action_execution_layer.list_pending_actions()
+            self.assertGreaterEqual(len(pending), 1)
+            self.assertEqual(pending[0].get("event_id"), "event-xyz")
+            self.assertEqual(pending[0].get("trace_id"), "trace-xyz")
+
     def test_strategy_action_endpoints(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)

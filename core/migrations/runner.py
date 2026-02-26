@@ -12,6 +12,10 @@ from core.migrations import (
     migration_007_creator_demand_validations,
     migration_008_creator_launch_tracking,
     migration_009_decision_logs_traceability,
+    migration_010_runtime_overrides,
+    migration_011_processed_events,
+    migration_012_strategy_actions_sqlite,
+    migration_013_decision_outcomes,
 )
 
 
@@ -38,6 +42,10 @@ MIGRATIONS: list[tuple[int, callable]] = [
     (7, migration_007_creator_demand_validations.upgrade),
     (8, migration_008_creator_launch_tracking.upgrade),
     (9, migration_009_decision_logs_traceability.upgrade),
+    (10, migration_010_runtime_overrides.upgrade),
+    (11, migration_011_processed_events.upgrade),
+    (12, migration_012_strategy_actions_sqlite.upgrade),
+    (13, migration_013_decision_outcomes.upgrade),
 ]
 
 

@@ -14,7 +14,13 @@ class StrategyActionExecutionLayer:
         self._bus = bus
         self._storage = storage
 
-    def register_pending_actions(self, actions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def register_pending_actions(
+        self,
+        actions: List[Dict[str, Any]],
+        decision_id: str | None = None,
+        event_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> List[Dict[str, Any]]:
         created: List[Dict[str, Any]] = []
 
         for action in actions:
@@ -40,6 +46,9 @@ class StrategyActionExecutionLayer:
                     reasoning=reasoning,
                     status="pending_confirmation",
                     sales=sales,
+                    decision_id=decision_id,
+                    event_id=event_id,
+                    trace_id=trace_id,
                 )
             )
 

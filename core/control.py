@@ -514,10 +514,35 @@ class Control:
             raise ValueError("Missing Gumroad access token. Set GUMROAD_ACCESS_TOKEN.")
         return self.gumroad_sales_sync_service.sync_sales()
 
-    def evaluate_opportunity(self, opportunity: Dict[str, object], request_id: str | None = None) -> Dict[str, object]:
-        return self.decision_engine.evaluate(opportunity, request_id=request_id)
+    def _correlation_id_from_event(self, event: Event) -> str:
+        request_id = str(event.request_id or event.payload.get("request_id", "") if isinstance(event.payload, dict) else "").strip()
+        trace_id = str(event.trace_id or event.payload.get("trace_id", "") if isinstance(event.payload, dict) else "").strip()
+        event_id = str(event.event_id).strip()
+        parts = []
+        if request_id:
+            parts.append(f"request:{request_id}")
+        if trace_id:
+            parts.append(f"trace:{trace_id}")
+        if event_id:
+            parts.append(f"event:{event_id}")
+        return "|".join(parts)
+
+    def evaluate_opportunity(
+        self,
+        opportunity: Dict[str, object],
+        request_id: str | None = None,
+        trace_id: str | None = None,
+        event_id: str | None = None,
+    ) -> Dict[str, object]:
+        return self.decision_engine.evaluate(
+            opportunity,
+            request_id=request_id,
+            trace_id=trace_id,
+            event_id=event_id,
+        )
 
     def consume(self, event: Event) -> List[Action]:
+        logger.info("Control consume", extra={"event_type": event.type, "request_id": event.request_id, "trace_id": event.trace_id, "event_id": event.event_id, "decision_id": str(event.payload.get("decision_id", "")) if isinstance(event.payload, dict) else ""})
         if event.type == "DailyBriefRequested":
             logger.info("[CONTROL] DailyBriefRequested -> would build daily brief summary (stub)")
             return [Action(type="BuildDailyBrief", payload={"dry_run": True})]
@@ -849,7 +874,12 @@ class Control:
             if target is None:
                 return []
 
-            result = self.evaluate_opportunity(target["opportunity"], request_id=event.request_id or str(event.payload.get("request_id", "") or ""))
+            result = self.evaluate_opportunity(
+                target["opportunity"],
+                request_id=event.request_id or str(event.payload.get("request_id", "") or ""),
+                trace_id=event.trace_id or str(event.payload.get("trace_id", "") or ""),
+                event_id=event.event_id,
+            )
             updated = self.opportunity_store.set_decision(item_id, result)
             if updated is None:
                 return []
@@ -869,7 +899,12 @@ class Control:
             return []
 
         if event.type == "EvaluateOpportunity":
-            result = self.evaluate_opportunity(event.payload, request_id=event.request_id or str(event.payload.get("request_id", "") or ""))
+            result = self.evaluate_opportunity(
+                event.payload,
+                request_id=event.request_id or str(event.payload.get("request_id", "") or ""),
+                trace_id=event.trace_id or str(event.payload.get("trace_id", "") or ""),
+                event_id=event.event_id,
+            )
             logger.info(f"[DECISION] score={result['score']:.2f} decision={result['decision']}")
             return [Action(type="OpportunityEvaluated", payload=result)]
 

@@ -38,6 +38,8 @@ class TretaApp:
         conn = self.storage.conn
         run_migrations(conn)
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        wal_mode = str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+        logging.getLogger("treta.storage").info("SQLite startup mode", extra={"journal_mode": wal_mode})
 
         self.bus = EventBus()
 
@@ -106,6 +108,7 @@ class TretaApp:
             memory_store=self.memory_store,
             conversation_core=self.conversation_core,
             bus=self.bus,
+            storage=self.storage,
         )
         self.scheduler = DailyScheduler(bus=self.bus)
         self.http_server = None

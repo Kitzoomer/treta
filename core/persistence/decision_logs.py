@@ -51,6 +51,7 @@ def ensure_decision_logs_table(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_decision_logs_created_at ON decision_logs(created_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_decision_logs_entity ON decision_logs(entity_type, entity_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_decision_logs_correlation ON decision_logs(correlation_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_decision_logs_type ON decision_logs(decision_type)")
 
 
 def _json_dump(value: Any) -> str | None:

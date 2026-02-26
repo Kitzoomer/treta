@@ -48,8 +48,12 @@ class StrategyDecisionEngine:
         delta = self._utcnow() - created_at_dt.astimezone(timezone.utc)
         return max(int(delta.total_seconds() // 86400), 0)
 
-    def decide(self, request_id: str | None = None) -> Dict[str, Any]:
+    def decide(self, request_id: str | None = None, trace_id: str | None = None, event_id: str | None = None) -> Dict[str, Any]:
         launches = self._product_launch_store.list()
+
+        request_ref = str(request_id or "").strip() or None
+        trace_ref = str(trace_id or "").strip() or None
+        event_ref = str(event_id or "").strip() or None
 
         actions: List[Dict[str, str]] = []
         risk_flags: List[str] = []
@@ -124,11 +128,46 @@ class StrategyDecisionEngine:
         elif actions:
             priority_level = "medium"
 
+        decision_log_id: str | None = None
+        try:
+            decision_log_id = str(
+                self._storage.create_decision_log(
+                    {
+                        "decision_type": "strategy_action",
+                        "entity_type": "portfolio",
+                        "entity_id": "global",
+                        "action_type": "recommend",
+                        "decision": "RECOMMEND",
+                        "risk_score": float(10 if actions else 8),
+                        "policy_name": "StrategyDecisionEngine",
+                        "policy_snapshot_json": {
+                            "rules": ["sales_scale_threshold", "stalled_launch_rule", "portfolio_activity_rule"],
+                            "priority_level": priority_level,
+                        },
+                        "inputs_json": {"launch_count": len(launches)},
+                        "outputs_json": {"actions": actions, "risk_flags": risk_flags},
+                        "reason": f"Primary focus resolved to {primary_focus}.",
+                        "correlation_id": request_ref,
+                        "request_id": request_ref,
+                        "trace_id": trace_ref,
+                        "event_id": event_ref,
+                        "status": "recorded",
+                    }
+                )
+            )
+        except Exception as exc:
+            self._logger.exception("Failed to persist strategy decision log", extra={"request_id": request_ref, "trace_id": trace_ref, "event_id": event_ref, "error": str(exc)})
+
         if self._strategy_action_execution_layer is not None:
-            self._strategy_action_execution_layer.register_pending_actions(actions)
+            self._strategy_action_execution_layer.register_pending_actions(
+                actions,
+                decision_id=decision_log_id,
+                event_id=event_ref,
+                trace_id=trace_ref,
+            )
 
         if self._autonomy_policy_engine is not None:
-            self._autonomy_policy_engine.apply(request_id=request_id)
+            self._autonomy_policy_engine.apply(request_id=request_ref)
 
         confidence = 10 if actions else 8
 
@@ -143,27 +182,4 @@ class StrategyDecisionEngine:
                 "total_revenue": self._performance_engine.total_revenue(),
             },
         }
-        try:
-            self._storage.create_decision_log(
-                {
-                    "decision_type": "strategy_action",
-                    "entity_type": "portfolio",
-                    "entity_id": "global",
-                    "action_type": "recommend",
-                    "decision": "RECOMMEND",
-                    "risk_score": float(confidence),
-                    "policy_name": "StrategyDecisionEngine",
-                    "policy_snapshot_json": {
-                        "rules": ["sales_scale_threshold", "stalled_launch_rule", "portfolio_activity_rule"],
-                        "priority_level": priority_level,
-                    },
-                    "inputs_json": {"launch_count": len(launches)},
-                    "outputs_json": {"actions": actions, "risk_flags": risk_flags},
-                    "reason": f"Primary focus resolved to {primary_focus}.",
-                    "correlation_id": request_id,
-                    "status": "recorded",
-                }
-            )
-        except Exception as exc:
-            self._logger.exception("Failed to persist strategy decision log", extra={"request_id": request_id, "error": str(exc)})
         return result

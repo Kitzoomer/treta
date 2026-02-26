@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from core.bus import EventBus
 from core.events import Event
+from core.logging_config import set_request_id
 from core.scheduler_state import load_scheduler_state, save_scheduler_state
 
 
@@ -76,6 +77,7 @@ class DailyScheduler:
 
         if now >= self._scheduled_for_day(now):
             request_id = str(uuid.uuid4())
+            set_request_id(request_id)
             logger.info("Running daily scan", extra={"event_type": "scheduler_scan", "request_id": request_id})
             self._bus.push(Event(type="RunInfoproductScan", payload={"request_id": request_id}, source="scheduler", request_id=request_id))
             self._last_run_date = now.date()

@@ -42,6 +42,22 @@ migration_009_decision_logs_traceability = _load_migration(
     "009_decision_logs_traceability.py", "core.migrations.migration_009_decision_logs_traceability"
 )
 
+migration_010_runtime_overrides = _load_migration(
+    "010_runtime_overrides.py", "core.migrations.migration_010_runtime_overrides"
+)
+
+migration_011_processed_events = _load_migration(
+    "011_processed_events.py", "core.migrations.migration_011_processed_events"
+)
+
+migration_012_strategy_actions_sqlite = _load_migration(
+    "012_strategy_actions_sqlite.py", "core.migrations.migration_012_strategy_actions_sqlite"
+)
+
+migration_013_decision_outcomes = _load_migration(
+    "013_decision_outcomes.py", "core.migrations.migration_013_decision_outcomes"
+)
+
 __all__ = [
     "migration_001_base_schema",
     "migration_003_unify_reddit_db",
@@ -51,4 +67,8 @@ __all__ = [
     "migration_007_creator_demand_validations",
     "migration_008_creator_launch_tracking",
     "migration_009_decision_logs_traceability",
+    "migration_010_runtime_overrides",
+    "migration_011_processed_events",
+    "migration_012_strategy_actions_sqlite",
+    "migration_013_decision_outcomes",
 ]
