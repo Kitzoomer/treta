@@ -117,6 +117,21 @@ class JsonPersistenceSmokeTest(unittest.TestCase):
                 self.assertFalse(path.exists())
                 self.assertEqual(len(list(root.glob(f"{path.name}*.corrupt"))), 1)
 
+    def test_memory_store_search_chat_history_orders_by_score_and_recency(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            memory_store = MemoryStore(path=Path(tmp_dir) / "memory_store.json")
+            memory_store.append_message("user", "Necesito mejorar pricing para gumroad")
+            memory_store.append_message("assistant", "Vale, revisemos pricing por segmento")
+            memory_store.append_message("user", "Quiero ideas de contenido")
+            memory_store.append_message("assistant", "Podemos validar pricing y oferta")
+
+            results = memory_store.search_chat_history("pricing", limit=3)
+
+            self.assertEqual(len(results), 3)
+            self.assertEqual(results[0]["content"], "Podemos validar pricing y oferta")
+            self.assertEqual(results[1]["content"], "Vale, revisemos pricing por segmento")
+            self.assertEqual(results[2]["content"], "Necesito mejorar pricing para gumroad")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import os
 from pathlib import Path
+import re
 import sqlite3
 from typing import Any, Dict, List
 
@@ -113,3 +114,39 @@ class MemoryStore:
         if row is None:
             return ""
         return str(row[0] or "")
+
+    def search_chat_history(self, query: str, limit: int = 6) -> list[dict]:
+        normalized_query = str(query or "").strip().lower()
+        capped_limit = max(int(limit), 0)
+        if not normalized_query or capped_limit == 0:
+            return []
+
+        terms = [token for token in re.split(r"\s+", normalized_query) if token]
+        if not terms:
+            terms = [normalized_query]
+
+        history = self._state.get("chat_history", [])
+        if not isinstance(history, list):
+            return []
+
+        ranked: list[tuple[int, int, dict]] = []
+        total = len(history)
+        for index, item in enumerate(history):
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role", "")).strip()
+            content = str(item.get("text", item.get("content", ""))).strip()
+            if not role or not content:
+                continue
+
+            haystack = content.lower()
+            occurrences = sum(haystack.count(term) for term in terms)
+            if normalized_query not in haystack and occurrences == 0:
+                continue
+
+            score = occurrences + (1 if normalized_query in haystack else 0)
+            recency = index - total
+            ranked.append((score, recency, {"role": role, "content": content}))
+
+        ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return [payload for _, _, payload in ranked[:capped_limit]]

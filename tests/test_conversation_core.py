@@ -124,6 +124,44 @@ class ConversationCoreTest(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
 
+    def test_reply_builds_context_with_relevant_then_recent_without_duplicates(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            memory_store = MemoryStore(path=Path(tmp_dir) / "memory_store.json")
+            memory_store.append_message("user", "hola")
+            memory_store.append_message("assistant", "prioridad: pricing")
+            memory_store.append_message("user", "quiero mejorar pricing")
+            memory_store.append_message("assistant", "testing ideas")
+            mock_gpt = _MockGPTClient(response="ok")
+            conversation_core = ConversationCore(
+                bus=self.bus,
+                state_machine=StateMachine(),
+                memory_store=memory_store,
+                gpt_client_optional=mock_gpt,
+            )
+
+            conversation_core.reply("pricing")
+
+            self.assertIsNotNone(mock_gpt.messages)
+            message_payload = mock_gpt.messages
+            self.assertEqual(message_payload[0]["role"], "system")
+            self.assertEqual(message_payload[-1], {"role": "user", "content": "pricing"})
+
+            context_contents = [
+                item["content"]
+                for item in message_payload[1:-1]
+                if item["role"] != "system"
+            ]
+            self.assertEqual(
+                context_contents,
+                [
+                    "quiero mejorar pricing",
+                    "prioridad: pricing",
+                    "hola",
+                    "testing ideas",
+                ],
+            )
+            self.assertEqual(len(context_contents), len(set(context_contents)))
+
 
 if __name__ == "__main__":
     unittest.main()

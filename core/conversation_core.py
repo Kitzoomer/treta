@@ -85,14 +85,43 @@ class ConversationCore:
             return "Treta GPT connection error. Check configuration."
 
         memory_snapshot = self.memory_store.snapshot()
-        memory_messages = memory_snapshot.get("chat_history", []) if isinstance(memory_snapshot, dict) else []
-        if memory_messages and memory_messages[-1].get("role") == "user" and memory_messages[-1].get("text") == user_message:
-            memory_messages = memory_messages[:-1]
+        all_memory_messages = memory_snapshot.get("chat_history", []) if isinstance(memory_snapshot, dict) else []
+        if all_memory_messages and all_memory_messages[-1].get("role") == "user" and all_memory_messages[-1].get("text") == user_message:
+            all_memory_messages = all_memory_messages[:-1]
+
+        recent_limit = 10
+        recent_messages = [
+            {
+                "role": str(item.get("role", "")).strip(),
+                "content": str(item.get("text", item.get("content", ""))),
+            }
+            for item in all_memory_messages[-recent_limit:]
+            if isinstance(item, dict)
+        ]
+        recent_messages = [item for item in recent_messages if item["role"] and item["content"].strip()]
+
+        relevant_messages = self.memory_store.search_chat_history(user_message, limit=6) if user_message.strip() else []
+
+        deduped_messages: list[dict] = []
+        seen: set[tuple[str, str]] = set()
+        for item in [*relevant_messages, *recent_messages]:
+            role = str(item.get("role", "")).strip()
+            content = str(item.get("content", item.get("text", ""))).strip()
+            if not role or not content:
+                continue
+            if role == "user" and content == user_message:
+                continue
+            key = (role, content)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped_messages.append({"role": role, "content": content})
 
         messages = self.context_controller.build_messages(
             system_prompt=self._system_prompt(),
             user_message=user_message,
-            memory_messages=memory_messages,
+            memory_messages=deduped_messages,
+            max_messages=max(len(deduped_messages), recent_limit),
             strategic_snapshot=self.memory_store.get_latest_snapshot(),
         )
 
