@@ -9,7 +9,7 @@ from core.model_policy_engine import ModelPolicyEngine
 from core.product_launch_store import ProductLaunchStore
 from core.product_proposal_store import ProductProposalStore
 from core.strategic_executor_engine import StrategicExecutorEngine
-from core.strategic_planner_engine import StrategicPlannerEngine
+from core.strategic_planner_engine import StrategicPlannerEngine, StrategicPlannerError
 from core.strategy_engine import StrategyEngine
 
 
@@ -53,6 +53,36 @@ class _FakeExecutorGPT:
     def chat(self, messages, task_type="chat", model=None):
         self.calls.append({"task_type": task_type, "model": model, "messages": messages})
         return "LLM execution completed"
+
+
+class _RetryPlannerGPT:
+    def __init__(self):
+        self.calls = 0
+
+    def chat(self, messages, task_type="chat", model=None, response_format=None):
+        del messages, task_type, model, response_format
+        self.calls += 1
+        if self.calls == 1:
+            return "{invalid json"
+        return json.dumps(
+            {
+                "objective": "Grow monthly recurring revenue",
+                "steps": [
+                    {
+                        "id": "p-1",
+                        "description": "Analyze current launch funnel",
+                        "type": "analysis",
+                        "requires_llm": False,
+                    }
+                ],
+            }
+        )
+
+
+class _AlwaysInvalidPlannerGPT:
+    def chat(self, messages, task_type="chat", model=None, response_format=None):
+        del messages, task_type, model, response_format
+        return "not json"
 
 
 def _seed_store(root: Path) -> ProductLaunchStore:
@@ -137,3 +167,24 @@ def test_strategy_engine_integrates_planner_then_executor():
         assert output["execution"]["status"] == "completed"
         assert planner_gpt.calls[0]["task_type"] == "planning"
         assert executor_gpt.calls[0]["task_type"] == "execution"
+
+
+def test_strategic_planner_engine_repairs_invalid_first_attempt():
+    planner = StrategicPlannerEngine(gpt_client_optional=_RetryPlannerGPT(), model_policy_engine=ModelPolicyEngine())
+
+    plan = planner.create_plan(objective="Grow monthly recurring revenue", state_snapshot="baseline stable")
+
+    assert plan["objective"] == "Grow monthly recurring revenue"
+    assert len(plan["steps"]) == 1
+
+
+def test_strategic_planner_engine_raises_structured_error_after_retries():
+    planner = StrategicPlannerEngine(gpt_client_optional=_AlwaysInvalidPlannerGPT(), model_policy_engine=ModelPolicyEngine())
+
+    try:
+        planner.create_plan(objective="Grow monthly recurring revenue", state_snapshot="baseline stable")
+        raise AssertionError("Expected StrategicPlannerError")
+    except StrategicPlannerError as exc:
+        assert exc.payload["code"] == "STRATEGIC_PLANNER_JSON_FAILURE"
+        assert exc.payload["trace"]["model"] == "gpt-4o"
+        assert len(exc.payload["trace"]["attempts"]) == 2
