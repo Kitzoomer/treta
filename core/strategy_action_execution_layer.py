@@ -69,8 +69,12 @@ class StrategyActionExecutionLayer:
         return self._strategy_action_store.list(status="pending_confirmation")
 
     def execute_action(self, action_id: str, status: str = "executed", request_id: str | None = None, trace_id: str | None = None) -> Dict[str, Any]:
-        updated = self._strategy_action_store.set_status(action_id, status)
+        action = self._strategy_action_store.get(action_id)
+        if action is None:
+            raise ValueError(f"strategy action not found: {action_id}")
+
         if self._action_execution_store is None or self._executor_registry is None:
+            updated = self._strategy_action_store.set_status(action_id, status)
             self._bus.push(
                 Event(
                     type="StrategyActionExecuted",
@@ -81,6 +85,7 @@ class StrategyActionExecutionLayer:
                 )
             )
         else:
+            updated = action
             self._bus.push(
                 Event(
                     type="ExecuteStrategyAction",
@@ -89,7 +94,7 @@ class StrategyActionExecutionLayer:
                         "request_id": request_id or str(updated.get("event_id") or ""),
                         "trace_id": trace_id or str(updated.get("trace_id") or ""),
                         "correlation_id": str(updated.get("decision_id") or ""),
-                        "strategy_status": status,
+                        "strategy_status": "auto_executed" if status == "auto_executed" else "",
                     },
                     source="strategy_action_execution_layer",
                     request_id=request_id or "",
@@ -106,8 +111,8 @@ class StrategyActionExecutionLayer:
                     "decision": "ALLOW",
                     "inputs_json": {"action_id": action_id, "requested_status": status},
                     "outputs_json": {"action": updated},
-                    "reason": "Strategy action status transitioned to executed state.",
-                    "status": "executed" if status in {"executed", "auto_executed"} else "recorded",
+                    "reason": "Strategy action execution requested.",
+                    "status": "executed" if self._action_execution_store is None or self._executor_registry is None else "recorded",
                 }
             )
         return updated
