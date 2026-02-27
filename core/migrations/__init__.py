@@ -62,6 +62,10 @@ migration_014_action_executions = _load_migration(
     "014_action_executions.py", "core.migrations.migration_014_action_executions"
 )
 
+migration_015_adaptive_policy_state = _load_migration(
+    "015_adaptive_policy_state.py", "core.migrations.migration_015_adaptive_policy_state"
+)
+
 __all__ = [
     "migration_001_base_schema",
     "migration_003_unify_reddit_db",
@@ -76,4 +80,5 @@ __all__ = [
     "migration_012_strategy_actions_sqlite",
     "migration_013_decision_outcomes",
     "migration_014_action_executions",
+    "migration_015_adaptive_policy_state",
 ]

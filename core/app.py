@@ -6,6 +6,7 @@ import logging
 import core.config as config
 
 from core.action_execution_store import ActionExecutionStore
+from core.adaptive_policy_engine import AdaptivePolicyEngine
 from core.autonomy_policy_engine import AutonomyPolicyEngine
 from core.bus import EventBus
 from core.config import get_autonomy_mode
@@ -27,6 +28,7 @@ from core.product_proposal_store import ProductProposalStore
 from core.scheduler import DailyScheduler
 from core.state_machine import State, StateMachine
 from core.storage import Storage
+from core.stores import AdaptivePolicyStore
 from core.executors.draft_asset_executor import DraftAssetExecutor
 from core.executors.registry import ActionExecutorRegistry
 from core.strategy_action_execution_layer import StrategyActionExecutionLayer
@@ -87,10 +89,16 @@ class TretaApp:
             action_execution_store=self.action_execution_store,
             executor_registry=self.executor_registry,
         )
+        self.adaptive_policy_store = AdaptivePolicyStore(self.storage.conn)
+        self.adaptive_policy_engine = AdaptivePolicyEngine(
+            storage=self.storage,
+            store=self.adaptive_policy_store,
+        )
         self.autonomy_policy_engine = AutonomyPolicyEngine(
             strategy_action_store=self.strategy_action_store,
             strategy_action_execution_layer=self.strategy_action_execution_layer,
             mode=get_autonomy_mode(),
+            adaptive_policy_engine=self.adaptive_policy_engine,
             bus=self.bus,
             storage=self.storage,
         )
