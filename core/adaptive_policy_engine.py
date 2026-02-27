@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import os
 from copy import deepcopy
@@ -8,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from core.storage import Storage
+from core.stores import AdaptivePolicyStore
 
 
 class AdaptivePolicyEngine:
@@ -30,11 +30,14 @@ class AdaptivePolicyEngine:
         impact_threshold: int = 6,
         max_auto_executions_per_24h: int = 3,
         storage: Storage | None = None,
+        store: AdaptivePolicyStore | None = None,
+        scope: str = "global",
     ):
         data_dir = Path(os.getenv("TRETA_DATA_DIR", self._DEFAULT_DATA_DIR))
-        self._path = path or data_dir / "adaptive_policy_state.json"
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._json_path = path or data_dir / "adaptive_policy_state.json"
         self._storage = storage
+        self._store = store
+        self._scope = scope
         self._logger = logging.getLogger("treta.adaptive_policy")
 
         self._state: Dict[str, Any] = {
@@ -45,6 +48,7 @@ class AdaptivePolicyEngine:
             "max_auto_executions_per_24h": self._clamp(int(max_auto_executions_per_24h), 1, 5),
             "strategy_weights": dict(self._DEFAULT_STRATEGY_WEIGHTS),
         }
+
         loaded = self._load_state()
         if loaded is not None:
             self._state = loaded
@@ -63,14 +67,7 @@ class AdaptivePolicyEngine:
                 continue
         return merged
 
-    def _load_state(self) -> Dict[str, Any] | None:
-        if not self._path.exists():
-            return None
-
-        loaded = json.loads(self._path.read_text(encoding="utf-8"))
-        if not isinstance(loaded, dict):
-            return None
-
+    def _normalize_state(self, loaded: dict[str, Any]) -> Dict[str, Any]:
         deltas = loaded.get("revenue_delta_per_action", [])
         normalized_deltas: List[float] = []
         if isinstance(deltas, list):
@@ -96,9 +93,20 @@ class AdaptivePolicyEngine:
             "strategy_weights": self._normalized_weights(loaded.get("strategy_weights")),
         }
 
+    def _load_state(self) -> Dict[str, Any] | None:
+        if self._store is None:
+            return None
+
+        self._store.ensure_import_from_json_once(str(self._json_path), scope=self._scope)
+        loaded = self._store.load(scope=self._scope)
+        if not isinstance(loaded, dict):
+            return None
+        return self._normalize_state(loaded)
+
     def _save(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(self._state, indent=2), encoding="utf-8")
+        if self._store is None:
+            return
+        self._store.save(self._state, scope=self._scope)
 
     def _success_rate(self) -> float:
         total = int(self._state["total_auto_executed_actions"])

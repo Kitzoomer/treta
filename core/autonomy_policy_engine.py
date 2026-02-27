@@ -10,6 +10,7 @@ from core.events import Event
 from core.strategy_action_execution_layer import StrategyActionExecutionLayer
 from core.strategy_action_store import StrategyActionStore
 from core.storage import Storage
+from core.stores import AdaptivePolicyStore
 
 
 class AutonomyPolicyEngine:
@@ -32,6 +33,7 @@ class AutonomyPolicyEngine:
             impact_threshold=6,
             max_auto_executions_per_24h=max_auto_executions_per_24h,
             storage=storage,
+            store=AdaptivePolicyStore(storage.conn),
         )
         self._bus = bus or EventBus()
         self._storage = storage

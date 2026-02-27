@@ -17,6 +17,7 @@ from core.migrations import (
     migration_012_strategy_actions_sqlite,
     migration_013_decision_outcomes,
     migration_014_action_executions,
+    migration_015_adaptive_policy_state,
 )
 
 
@@ -48,6 +49,7 @@ MIGRATIONS: list[tuple[int, callable]] = [
     (12, migration_012_strategy_actions_sqlite.upgrade),
     (13, migration_013_decision_outcomes.upgrade),
     (14, migration_014_action_executions.upgrade),
+    (15, migration_015_adaptive_policy_state.upgrade),
 ]
 
 
