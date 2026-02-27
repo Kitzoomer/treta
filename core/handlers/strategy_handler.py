@@ -46,10 +46,10 @@ class StrategyHandler:
         if payload_flag is not None:
             return bool(payload_flag)
         strategy_status = str(event_payload.get("strategy_status") or "").strip().lower()
-        if strategy_status in {"executed", "auto_executed"}:
+        if strategy_status == "auto_executed":
             return True
         status = str(action.get("status") or "").strip().lower()
-        if status in {"executed", "auto_executed", "approved"}:
+        if status in {"auto_executed", "approved"}:
             return True
         return str(action.get("approved_by") or "").strip() != ""
 
@@ -147,6 +147,31 @@ class StrategyHandler:
 
         decision_id = str(action.get("decision_id") or "")
 
+        def _log_failed_strategy_action(updated_action: dict, reason: str, error_text: str) -> None:
+            if storage is None:
+                return
+            storage.create_decision_log(
+                {
+                    "decision_type": "strategy_action",
+                    "entity_type": "action",
+                    "entity_id": str(updated_action.get("id") or action_id),
+                    "action_type": "execute",
+                    "decision": "ALLOW",
+                    "inputs_json": {
+                        "action_id": action_id,
+                        "requested_status": str(event.payload.get("strategy_status") or "executed"),
+                    },
+                    "outputs_json": {"action": updated_action},
+                    "reason": reason,
+                    "status": "failed",
+                    "error": error_text,
+                    "correlation_id": str(ctx.get("correlation_id") or ""),
+                    "request_id": str(ctx.get("request_id") or ""),
+                    "trace_id": str(ctx.get("trace_id") or ""),
+                    "event_id": event.event_id,
+                }
+            )
+
         if not StrategyHandler._has_minimum_action_payload(action):
             logger.warning("Strategy action execution skipped: invalid payload", extra={"action_id": action_id, "decision_id": decision_id})
             return [Action(type="StrategyActionExecutionSkipped", payload={"action_id": action_id, "reason": "invalid_payload"})]
@@ -217,6 +242,11 @@ class StrategyHandler:
                 execution_store.complete(execution_id, status="failed", error=error_text, output_payload=output)
                 updated = action_store.set_status(action_id, "failed")
                 StrategyHandler._log_execution_result(action, executor_name, started_at, "failed")
+                _log_failed_strategy_action(
+                    updated_action=updated,
+                    reason="Strategy action execution failed.",
+                    error_text=error_text,
+                )
                 if storage is not None:
                     storage.conn.execute(
                         """
@@ -257,6 +287,11 @@ class StrategyHandler:
                 execution_store.complete(execution_id, status="failed", error="post_verify_failed", output_payload=output)
                 updated = action_store.set_status(action_id, "failed")
                 StrategyHandler._log_execution_result(action, executor_name, started_at, "post_verify_failed")
+                _log_failed_strategy_action(
+                    updated_action=updated,
+                    reason="Strategy action execution failed post verification.",
+                    error_text="post_verify_failed",
+                )
                 return [
                     Action(
                         type="StrategyActionFailed",
@@ -315,6 +350,11 @@ class StrategyHandler:
             execution_store.complete(execution_id, status="failed", error=str(exc), output_payload={})
             updated = action_store.set_status(action_id, "failed")
             StrategyHandler._log_execution_result(action, executor_name, started_at, "failed_exception")
+            _log_failed_strategy_action(
+                updated_action=updated,
+                reason="Strategy action execution failed with exception.",
+                error_text=str(exc),
+            )
             if storage is not None:
                 storage.conn.execute(
                     """
