@@ -30,6 +30,7 @@ from core.services.gumroad_sync_service import GumroadSyncService
 from core.revenue_attribution.store import RevenueAttributionStore
 from core.subreddit_performance_store import SubredditPerformanceStore
 from core.system_integrity import compute_system_integrity
+from core.strategic_loop_engine import StrategicLoopEngine
 from core.reddit_intelligence.router import RedditIntelligenceRouter
 from core.reddit_public.config import get_config, update_config
 from core.http_response import error, ok
@@ -119,6 +120,28 @@ class TretaHTTPServer(ThreadingHTTPServer):
             "integrity_cache_hit": 0,
             "last_mutation_at": None,
         }
+        self.strategic_loop_engine = None
+        strategy_loop_enabled = str(os.getenv("STRATEGY_LOOP_ENABLED", "")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if strategy_loop_enabled and self.control is not None:
+            interval_seconds = float(os.getenv("STRATEGY_LOOP_INTERVAL_SECONDS", "30"))
+            max_pending = int(os.getenv("STRATEGY_LOOP_MAX_PENDING", "10"))
+            self.strategic_loop_engine = StrategicLoopEngine(
+                control=self.control,
+                interval_seconds=interval_seconds,
+                max_pending=max_pending,
+                logger=logging.getLogger("treta.strategic_loop"),
+            )
+            self.strategic_loop_engine.start()
+
+    def shutdown(self):
+        if self.strategic_loop_engine is not None:
+            self.strategic_loop_engine.stop()
+        super().shutdown()
 
     def update_metrics(self, **updates):
         with self.metrics_lock:
