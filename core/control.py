@@ -31,6 +31,7 @@ from core.reddit_public.config import get_config
 from core.reddit_public.pain_scoring import compute_pain_score
 from core.storage import Storage
 from core.strategy_decision_engine import StrategyDecisionEngine
+from core.services.strategy_decision_orchestrator import StrategyDecisionOrchestrator
 from core.handlers.strategy_handler import StrategyHandler
 from core.handlers.opportunity_handler import OpportunityHandler
 from core.handlers.scan_handler import ScanHandler
@@ -71,6 +72,7 @@ class Control:
         revenue_attribution_store: RevenueAttributionStore | None = None,
         subreddit_performance_store: SubredditPerformanceStore | None = None,
         strategy_decision_engine: StrategyDecisionEngine | None = None,
+        strategy_decision_orchestrator: StrategyDecisionOrchestrator | None = None,
         strategy_action_execution_layer = None,
         bus: EventBus | None = None,
     ):
@@ -118,6 +120,7 @@ class Control:
             path=(inferred_dir / "subreddit_performance.json") if inferred_dir is not None else None,
         )
         self.strategy_decision_engine = strategy_decision_engine
+        self.strategy_decision_orchestrator = strategy_decision_orchestrator
         self.strategy_action_execution_layer = strategy_action_execution_layer
         self.gumroad_sales_sync_service = (
             GumroadSyncService(
@@ -575,6 +578,7 @@ class Control:
                 "product_builder": self.product_builder,
                 "product_engine": self.product_engine,
                 "strategy_decision_engine": self.strategy_decision_engine,
+                "strategy_decision_orchestrator": self.strategy_decision_orchestrator,
             },
             "dispatcher": self.bus,
             "storage": getattr(self.decision_engine, "storage", None) or getattr(self.decision_engine, "_storage", None),

@@ -32,6 +32,7 @@ class Storage:
         ensure_decision_logs_table(self.conn)
         self._ensure_runtime_overrides_table()
         self._ensure_processed_events_table()
+        self._ensure_processed_decisions_table()
         self._ensure_decision_outcomes_table()
         self._ensure_action_executions_table()
         self._lock = threading.Lock()
@@ -55,6 +56,19 @@ class Storage:
                 event_id TEXT PRIMARY KEY,
                 event_type TEXT,
                 processed_at TEXT
+            )
+            """
+        )
+
+    def _ensure_processed_decisions_table(self) -> None:
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS processed_decisions (
+                decision_id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                status TEXT NOT NULL
             )
             """
         )
@@ -205,6 +219,25 @@ class Storage:
                 VALUES (?, ?, ?)
                 """,
                 (event_id, event_type, now),
+            )
+
+    def is_decision_processed(self, decision_id: str) -> bool:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT 1 FROM processed_decisions WHERE decision_id = ?",
+                (decision_id,),
+            ).fetchone()
+        return row is not None
+
+    def mark_decision_processed(self, decision_id: str, kind: str, payload_json: str, status: str = "processed") -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO processed_decisions (decision_id, created_at, kind, payload_json, status)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (decision_id, now, kind, payload_json, status),
             )
 
     def list_recent_processed_events(self, limit: int = 50) -> list[dict]:

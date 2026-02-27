@@ -102,6 +102,7 @@ class TretaHTTPServer(ThreadingHTTPServer):
         self.control = dependencies.get("control")
         self.strategy_engine = dependencies.get("strategy_engine")
         self.strategy_decision_engine = dependencies.get("strategy_decision_engine")
+        self.strategy_decision_orchestrator = dependencies.get("strategy_decision_orchestrator")
         self.strategy_action_execution_layer = dependencies.get("strategy_action_execution_layer")
         self.autonomy_policy_engine = dependencies.get("autonomy_policy_engine")
         self.daily_loop_engine = dependencies.get("daily_loop_engine")
@@ -1514,6 +1515,7 @@ def start_http_server(
     control=None,
     strategy_engine=None,
     strategy_decision_engine=None,
+    strategy_decision_orchestrator=None,
     strategy_action_execution_layer=None,
     autonomy_policy_engine=None,
     daily_loop_engine=None,
@@ -1539,6 +1541,7 @@ def start_http_server(
         control=control,
         strategy_engine=strategy_engine,
         strategy_decision_engine=strategy_decision_engine,
+        strategy_decision_orchestrator=strategy_decision_orchestrator,
         strategy_action_execution_layer=strategy_action_execution_layer,
         autonomy_policy_engine=autonomy_policy_engine,
         daily_loop_engine=daily_loop_engine,

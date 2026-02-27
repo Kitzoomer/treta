@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import logging
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List
 
+from core.domain.strategy_plan import StrategyPlan
 from core.performance_engine import PerformanceEngine
 from core.product_launch_store import ProductLaunchStore
-from core.autonomy_policy_engine import AutonomyPolicyEngine
-from core.strategy_action_execution_layer import StrategyActionExecutionLayer
-from core.storage import Storage
 
 
 class StrategyDecisionEngine:
@@ -17,16 +14,11 @@ class StrategyDecisionEngine:
     def __init__(
         self,
         product_launch_store: ProductLaunchStore,
-        storage: Storage,
-        strategy_action_execution_layer: StrategyActionExecutionLayer | None = None,
-        autonomy_policy_engine: AutonomyPolicyEngine | None = None,
+        decision_id_factory: Callable[[], str] | None = None,
     ):
         self._product_launch_store = product_launch_store
         self._performance_engine = PerformanceEngine(product_launch_store=product_launch_store)
-        self._strategy_action_execution_layer = strategy_action_execution_layer
-        self._autonomy_policy_engine = autonomy_policy_engine
-        self._storage = storage
-        self._logger = logging.getLogger("treta.strategy.decision")
+        self._decision_id_factory = decision_id_factory
 
     def _utcnow(self) -> datetime:
         return datetime.now(timezone.utc)
@@ -48,14 +40,10 @@ class StrategyDecisionEngine:
         delta = self._utcnow() - created_at_dt.astimezone(timezone.utc)
         return max(int(delta.total_seconds() // 86400), 0)
 
-    def decide(self, request_id: str | None = None, trace_id: str | None = None, event_id: str | None = None) -> Dict[str, Any]:
+    def decide(self, request_id: str | None = None, trace_id: str | None = None, event_id: str | None = None) -> StrategyPlan:
         launches = self._product_launch_store.list()
 
-        request_ref = str(request_id or "").strip() or None
-        trace_ref = str(trace_id or "").strip() or None
-        event_ref = str(event_id or "").strip() or None
-
-        actions: List[Dict[str, str]] = []
+        actions: List[Dict[str, Any]] = []
         risk_flags: List[str] = []
 
         for launch in sorted(launches, key=lambda item: str(item.get("id", ""))):
@@ -126,15 +114,9 @@ class StrategyDecisionEngine:
             if "no_active_launches" not in risk_flags:
                 risk_flags.append("no_active_launches")
 
-
-        if self._autonomy_policy_engine is not None:
-            actions = self._autonomy_policy_engine.prioritize_strategy_actions(actions)
-
         primary_focus = "stabilize"
         if any(action["type"] == "scale" for action in actions):
             primary_focus = "growth"
-        elif any(action["type"] == "review" for action in actions):
-            primary_focus = "stabilize"
         elif any(action["type"] == "price_test" for action in actions):
             primary_focus = "optimization"
         elif any(action["type"] == "new_product" for action in actions):
@@ -146,58 +128,31 @@ class StrategyDecisionEngine:
         elif actions:
             priority_level = "medium"
 
-        decision_log_id: str | None = None
-        try:
-            decision_log_id = str(
-                self._storage.create_decision_log(
-                    {
-                        "decision_type": "strategy_action",
-                        "entity_type": "portfolio",
-                        "entity_id": "global",
-                        "action_type": "recommend",
-                        "decision": "RECOMMEND",
-                        "risk_score": float(10 if actions else 8),
-                        "policy_name": "StrategyDecisionEngine",
-                        "policy_snapshot_json": {
-                            "rules": ["sales_scale_threshold", "stalled_launch_rule", "portfolio_activity_rule"],
-                            "priority_level": priority_level,
-                        },
-                        "inputs_json": {"launch_count": len(launches)},
-                        "outputs_json": {"actions": actions, "risk_flags": risk_flags},
-                        "reason": f"Primary focus resolved to {primary_focus}.",
-                        "correlation_id": request_ref,
-                        "request_id": request_ref,
-                        "trace_id": trace_ref,
-                        "event_id": event_ref,
-                        "status": "recorded",
-                    }
-                )
-            )
-        except Exception as exc:
-            self._logger.exception("Failed to persist strategy decision log", extra={"request_id": request_ref, "trace_id": trace_ref, "event_id": event_ref, "error": str(exc)})
-
-        if self._strategy_action_execution_layer is not None:
-            self._strategy_action_execution_layer.register_pending_actions(
-                actions,
-                decision_id=decision_log_id,
-                event_id=event_ref,
-                trace_id=trace_ref,
-            )
-
-        if self._autonomy_policy_engine is not None:
-            self._autonomy_policy_engine.apply(request_id=request_ref)
-
         confidence = 10 if actions else 8
-
-        result = {
+        context_snapshot: Dict[str, Any] = {
+            "request_id": str(request_id or "").strip() or None,
+            "trace_id": str(trace_id or "").strip() or None,
+            "event_id": str(event_id or "").strip() or None,
+            "launch_count": len(launches),
+            "total_sales": self._performance_engine.total_sales(),
+            "total_revenue": self._performance_engine.total_revenue(),
             "priority_level": priority_level,
             "primary_focus": primary_focus,
-            "actions": actions,
             "risk_flags": risk_flags,
             "confidence": confidence,
-            "context": {
-                "total_sales": self._performance_engine.total_sales(),
-                "total_revenue": self._performance_engine.total_revenue(),
-            },
         }
-        return result
+
+        return StrategyPlan.create(
+            decision_id=self._decision_id_factory() if self._decision_id_factory is not None else None,
+            context_snapshot=context_snapshot,
+            recommended_actions=actions,
+            autonomy_intent={
+                "should_execute": bool(actions),
+                "reason": "actions_available" if actions else "no_actions",
+                "metadata": {
+                    "priority_level": priority_level,
+                    "primary_focus": primary_focus,
+                    "risk_flags": risk_flags,
+                },
+            },
+        )

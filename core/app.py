@@ -34,6 +34,7 @@ from core.executors.registry import ActionExecutorRegistry
 from core.strategy_action_execution_layer import StrategyActionExecutionLayer
 from core.strategy_action_store import StrategyActionStore
 from core.strategy_decision_engine import StrategyDecisionEngine
+from core.services.strategy_decision_orchestrator import StrategyDecisionOrchestrator
 from core.strategy_engine import StrategyEngine
 from core.revenue_attribution.store import RevenueAttributionStore
 from core.subreddit_performance_store import SubredditPerformanceStore
@@ -104,9 +105,12 @@ class TretaApp:
         )
         self.strategy_decision_engine = StrategyDecisionEngine(
             product_launch_store=self.product_launch_store,
+        )
+        self.strategy_decision_orchestrator = StrategyDecisionOrchestrator(
+            engine=self.strategy_decision_engine,
+            storage=self.storage,
             strategy_action_execution_layer=self.strategy_action_execution_layer,
             autonomy_policy_engine=self.autonomy_policy_engine,
-            storage=self.storage,
         )
         self.decision_engine = DecisionEngine(storage=self.storage)
         self.memory_store = MemoryStore()
@@ -118,6 +122,7 @@ class TretaApp:
             revenue_attribution_store=self.revenue_attribution_store,
             subreddit_performance_store=self.subreddit_performance_store,
             strategy_decision_engine=self.strategy_decision_engine,
+            strategy_decision_orchestrator=self.strategy_decision_orchestrator,
             strategy_action_execution_layer=self.strategy_action_execution_layer,
             bus=self.bus,
             decision_engine=self.decision_engine,
@@ -159,6 +164,7 @@ class TretaApp:
             control=self.control,
             strategy_engine=self.strategy_engine,
             strategy_decision_engine=self.strategy_decision_engine,
+            strategy_decision_orchestrator=self.strategy_decision_orchestrator,
             strategy_action_execution_layer=self.strategy_action_execution_layer,
             autonomy_policy_engine=self.autonomy_policy_engine,
             daily_loop_engine=self.daily_loop_engine,

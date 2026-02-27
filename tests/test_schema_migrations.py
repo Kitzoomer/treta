@@ -16,7 +16,7 @@ class SchemaMigrationsTest(unittest.TestCase):
             with sqlite3.connect(db_path) as conn:
                 run_migrations(conn)
                 version = get_current_version(conn)
-                self.assertGreaterEqual(version, 14)
+                self.assertGreaterEqual(version, 16)
 
                 tables = {
                     row[0]
@@ -40,6 +40,7 @@ class SchemaMigrationsTest(unittest.TestCase):
             self.assertIn("strategy_actions", tables)
             self.assertIn("decision_outcomes", tables)
             self.assertIn("action_executions", tables)
+            self.assertIn("processed_decisions", tables)
 
             indexes = {
                 row[0]
