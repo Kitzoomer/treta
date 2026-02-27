@@ -80,6 +80,52 @@ class ActionExecutionStore:
             )
             self._conn.commit()
 
+    def try_start_execution(
+        self,
+        *,
+        action_id: str,
+        decision_id: str,
+        executor_name: str,
+        action_type: str = "",
+        context: dict[str, Any] | None = None,
+    ) -> bool:
+        payload = dict(context or {})
+        if not payload.get("correlation_id"):
+            payload["correlation_id"] = decision_id
+        now = self._now()
+        with self._lock:
+            latest = self._conn.execute(
+                "SELECT status FROM action_executions WHERE action_id = ? ORDER BY id DESC LIMIT 1",
+                (action_id,),
+            ).fetchone()
+            if latest is not None and str(latest[0] or "").strip().lower() in {"queued", "running"}:
+                return False
+            cur = self._conn.execute(
+                """
+                INSERT INTO action_executions (
+                    action_id, action_type, status, executor,
+                    started_at, request_id, trace_id, correlation_id, input_payload_json
+                ) VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    action_id,
+                    action_type,
+                    executor_name,
+                    now,
+                    str(payload.get("request_id", "") or ""),
+                    str(payload.get("trace_id", "") or ""),
+                    str(payload.get("correlation_id", "") or ""),
+                    self._compact_json(payload),
+                ),
+            )
+            execution_id = int(cur.lastrowid)
+            self._conn.execute(
+                "UPDATE action_executions SET status = 'running', started_at = ? WHERE id = ?",
+                (self._now(), execution_id),
+            )
+            self._conn.commit()
+            return True
+
     def complete(self, execution_id: int, *, status: str, output_payload: Any = None, error: str | None = None) -> None:
         if status not in self._TERMINAL_STATUSES:
             raise ValueError(f"invalid terminal status: {status}")

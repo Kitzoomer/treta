@@ -208,7 +208,7 @@ class StrategyExecutorFlowTest(unittest.TestCase):
                 self.assertEqual(executor.calls, 0)
                 self.assertEqual(len(emitted), 1)
                 self.assertEqual(emitted[0].type, "StrategyActionExecutionSkipped")
-                self.assertEqual(emitted[0].payload.get("reason"), "execution_already_in_progress")
+                self.assertEqual(emitted[0].payload.get("reason"), "already_running")
 
     def test_running_execution_timeout_allows_recovery(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
