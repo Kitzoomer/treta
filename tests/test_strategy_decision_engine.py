@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -372,6 +373,80 @@ class StrategyDecisionEngineTest(unittest.TestCase):
             self.assertGreaterEqual(len(skipped), 1)
             self.assertEqual(skipped[0].get("reason"), "cooldown_active")
             self.assertEqual(skipped[0].get("status"), "skipped")
+
+    def test_strategy_decide_endpoint_skips_when_cycle_lock_is_active(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            proposals, launches = self._stores(root)
+            proposals.add({"id": "proposal-1", "product_name": "Growth Kit"})
+            launch = launches.add_from_proposal("proposal-1")
+            launches.transition_status(launch["id"], "active")
+            for _ in range(5):
+                launches.add_sale(launch["id"], 10)
+
+            os.environ["TRETA_DATA_DIR"] = str(root / ".treta_data")
+            storage = Storage()
+            engine = StrategyDecisionEngine(product_launch_store=launches, storage=storage)
+            control = Control(
+                opportunity_store=None,
+                product_proposal_store=proposals,
+                product_plan_store=None,
+                product_launch_store=launches,
+                strategy_decision_engine=engine,
+                bus=self.bus,
+                decision_engine=DecisionEngine(storage=storage),
+            )
+
+            original_consume = control.consume
+            first_started = threading.Event()
+            release_first = threading.Event()
+            first_call_lock = threading.Lock()
+            first_call_seen = {"value": False}
+
+            def blocking_consume(event):
+                with first_call_lock:
+                    is_first = not first_call_seen["value"]
+                    if is_first:
+                        first_call_seen["value"] = True
+                if is_first:
+                    first_started.set()
+                    release_first.wait(timeout=2)
+                return original_consume(event)
+
+            control.consume = blocking_consume
+
+            server = start_http_server(host="127.0.0.1", port=0, strategy_decision_engine=engine, control=control, storage=storage, bus=self.bus)
+            try:
+                port = server.server_port
+                first_response_payload = {}
+
+                def first_request():
+                    with urlopen(f"http://127.0.0.1:{port}/strategy/decide", timeout=3) as response:
+                        first_response_payload["payload"] = json.loads(response.read().decode("utf-8"))
+
+                first_thread = threading.Thread(target=first_request)
+                first_thread.start()
+                self.assertTrue(first_started.wait(timeout=1.5))
+
+                with urlopen(f"http://127.0.0.1:{port}/strategy/decide", timeout=3) as second_response:
+                    second_payload = json.loads(second_response.read().decode("utf-8"))
+
+                release_first.set()
+                first_thread.join(timeout=2)
+                self.assertFalse(first_thread.is_alive())
+            finally:
+                server.shutdown()
+                server.server_close()
+
+            self.assertEqual(first_response_payload["payload"]["data"]["status"], "executed")
+            self.assertEqual(second_payload["data"]["status"], "skipped")
+            self.assertEqual(second_payload["data"]["reason"], "cycle_lock_active")
+
+            skipped = storage.list_recent_decision_logs(limit=10, decision_type="strategy_action_skipped")
+            cycle_skipped = [item for item in skipped if item.get("reason") == "cycle_lock_active"]
+            self.assertGreaterEqual(len(cycle_skipped), 1)
+            self.assertEqual(cycle_skipped[0].get("status"), "skipped")
+
 
 
 if __name__ == "__main__":

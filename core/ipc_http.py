@@ -103,6 +103,8 @@ class TretaHTTPServer(ThreadingHTTPServer):
         self.conversation_core = dependencies.get("conversation_core")
         self.reddit_router = dependencies.get("reddit_router") or RedditIntelligenceRouter()
         self.mutation_lock = threading.Lock()
+        self._strategy_cycle_lock = threading.Lock()
+        self._strategy_cycle_lock_acquired_at: float | None = None
         self.revenue_attribution_store = dependencies.get("revenue_attribution_store")
         self.subreddit_performance_store = dependencies.get("subreddit_performance_store")
         self.storage = dependencies.get("storage")
@@ -557,6 +559,34 @@ class Handler(BaseHTTPRequestHandler):
             request_id = self._ensure_request_id()
             trace_id = self._ensure_trace_id()
             event_id = self._ensure_event_id()
+            if not self.server._strategy_cycle_lock.acquire(blocking=False):
+                if self.server.storage is not None:
+                    self.server.storage.create_decision_log(
+                        {
+                            "decision_type": "strategy_action_skipped",
+                            "entity_type": "portfolio",
+                            "entity_id": "global",
+                            "action_type": "recommend",
+                            "decision": "SKIPPED",
+                            "policy_name": "StrategyCycleLock",
+                            "reason": "cycle_lock_active",
+                            "correlation_id": request_id,
+                            "request_id": request_id,
+                            "trace_id": trace_id,
+                            "event_id": event_id,
+                            "status": "skipped",
+                            "outputs_json": {"reason": "cycle_lock_active"},
+                        }
+                    )
+                return self._send_success(
+                    200,
+                    {
+                        "status": "skipped",
+                        "reason": "cycle_lock_active",
+                    },
+                )
+
+            self.server._strategy_cycle_lock_acquired_at = time.time()
             event = Event(
                 type="RunStrategyDecision",
                 payload={
@@ -569,24 +599,30 @@ class Handler(BaseHTTPRequestHandler):
                 trace_id=trace_id,
                 event_id=event_id,
             )
-            actions = self.control.consume(event)
-            result = actions[0].payload if actions else {"status": "executed", "cooldown_active": False}
-            if result.get("status") == "skipped":
+            try:
+                actions = self.control.consume(event)
+                result = actions[0].payload if actions else {"status": "executed", "cooldown_active": False}
+                if result.get("status") == "skipped":
+                    reason = str(result.get("reason", "cooldown_active") or "cooldown_active")
+                    response_payload = {
+                        "status": "skipped",
+                        "reason": reason,
+                    }
+                    if reason == "cooldown_active":
+                        response_payload["cooldown_remaining_minutes"] = float(
+                            result.get("cooldown_remaining_minutes", 0.0) or 0.0
+                        )
+                    return self._send_success(200, response_payload)
                 return self._send_success(
                     200,
                     {
-                        "status": "skipped",
-                        "reason": "cooldown_active",
-                        "cooldown_remaining_minutes": float(result.get("cooldown_remaining_minutes", 0.0) or 0.0),
+                        "status": "executed",
+                        "cooldown_active": False,
                     },
                 )
-            return self._send_success(
-                200,
-                {
-                    "status": "executed",
-                    "cooldown_active": False,
-                },
-            )
+            finally:
+                self.server._strategy_cycle_lock_acquired_at = None
+                self.server._strategy_cycle_lock.release()
 
         if parsed.path == "/debug/events/recent":
             if self.server.storage is None:
