@@ -36,7 +36,12 @@ from core.reddit_public.config import get_config, update_config
 from core.http_response import error, ok
 from core.logging_config import set_request_id, set_trace_id
 from core.version import VERSION
-from core.config import API_TOKEN
+from core.config import (
+    API_TOKEN,
+    STRATEGY_LOOP_ENABLED,
+    STRATEGY_LOOP_INTERVAL_SECONDS,
+    STRATEGY_LOOP_MAX_PENDING,
+)
 
 UI_DIR = Path(__file__).parent.parent / "ui"
 logger = logging.getLogger("treta.http")
@@ -121,22 +126,20 @@ class TretaHTTPServer(ThreadingHTTPServer):
             "last_mutation_at": None,
         }
         self.strategic_loop_engine = None
-        strategy_loop_enabled = str(os.getenv("STRATEGY_LOOP_ENABLED", "")).strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
-        if strategy_loop_enabled and self.control is not None:
-            interval_seconds = float(os.getenv("STRATEGY_LOOP_INTERVAL_SECONDS", "30"))
-            max_pending = int(os.getenv("STRATEGY_LOOP_MAX_PENDING", "10"))
+        if STRATEGY_LOOP_ENABLED and self.control is not None:
             self.strategic_loop_engine = StrategicLoopEngine(
                 control=self.control,
-                interval_seconds=interval_seconds,
-                max_pending=max_pending,
+                interval_seconds=STRATEGY_LOOP_INTERVAL_SECONDS,
+                max_pending=STRATEGY_LOOP_MAX_PENDING,
                 logger=logging.getLogger("treta.strategic_loop"),
+                cycle_lock=self._strategy_cycle_lock,
             )
             self.strategic_loop_engine.start()
+            logger.info(
+                "StrategicLoopEngine started (interval=%ss, max_pending=%s)",
+                self.strategic_loop_engine.interval_seconds,
+                self.strategic_loop_engine.max_pending,
+            )
 
     def shutdown(self):
         if self.strategic_loop_engine is not None:

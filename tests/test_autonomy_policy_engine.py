@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -37,6 +38,16 @@ class _StubExecutionLayer:
 class AutonomyPolicyEngineTest(unittest.TestCase):
     def setUp(self):
         self.bus = EventBus()
+        self._data_dir_ctx = tempfile.TemporaryDirectory()
+        self._prev_treta_data_dir = os.environ.get("TRETA_DATA_DIR")
+        os.environ["TRETA_DATA_DIR"] = self._data_dir_ctx.name
+
+    def tearDown(self):
+        if self._prev_treta_data_dir is None:
+            os.environ.pop("TRETA_DATA_DIR", None)
+        else:
+            os.environ["TRETA_DATA_DIR"] = self._prev_treta_data_dir
+        self._data_dir_ctx.cleanup()
 
     def test_only_low_risk_high_impact_pending_actions_are_auto_executed(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
