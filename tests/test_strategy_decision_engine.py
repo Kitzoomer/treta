@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 from core.bus import EventBus
 from core.control import Control
 from core.decision_engine import DecisionEngine
+import core.ipc_http as ipc_http
 from core.ipc_http import start_http_server
 from core.product_launch_store import ProductLaunchStore
 from core.product_proposal_store import ProductProposalStore
@@ -22,6 +23,17 @@ from core.storage import Storage
 class StrategyDecisionEngineTest(unittest.TestCase):
     def setUp(self):
         self.bus = EventBus()
+        self._prev_strategy_loop_enabled_env = os.environ.get("STRATEGY_LOOP_ENABLED")
+        os.environ["STRATEGY_LOOP_ENABLED"] = "false"
+        self._prev_strategy_loop_enabled_flag = ipc_http.STRATEGY_LOOP_ENABLED
+        ipc_http.STRATEGY_LOOP_ENABLED = False
+
+    def tearDown(self):
+        if self._prev_strategy_loop_enabled_env is None:
+            os.environ.pop("STRATEGY_LOOP_ENABLED", None)
+        else:
+            os.environ["STRATEGY_LOOP_ENABLED"] = self._prev_strategy_loop_enabled_env
+        ipc_http.STRATEGY_LOOP_ENABLED = self._prev_strategy_loop_enabled_flag
 
     def _stores(self, root: Path):
         proposals = ProductProposalStore(path=root / "product_proposals.json")

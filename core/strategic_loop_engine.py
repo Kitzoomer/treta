@@ -8,11 +8,12 @@ from core.events import Event
 
 
 class StrategicLoopEngine:
-    def __init__(self, control, interval_seconds: float, max_pending: int, logger=None):
+    def __init__(self, control, interval_seconds: float, max_pending: int, logger=None, cycle_lock=None):
         self.control = control
         self.interval_seconds = max(0.01, float(interval_seconds))
         self.max_pending = max(0, int(max_pending))
         self.logger = logger or logging.getLogger("treta.strategic_loop")
+        self.cycle_lock = cycle_lock
         self._running = False
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -52,7 +53,18 @@ class StrategicLoopEngine:
                         },
                     )
                 else:
-                    self.control.consume(Event(type="RunStrategyDecision", payload={}))
+                    lock_acquired = False
+                    if self.cycle_lock is not None:
+                        lock_acquired = self.cycle_lock.acquire(blocking=False)
+                        if not lock_acquired:
+                            self.logger.info("skip: cycle_lock_active")
+                        else:
+                            try:
+                                self.control.consume(Event(type="RunStrategyDecision", payload={}))
+                            finally:
+                                self.cycle_lock.release()
+                    else:
+                        self.control.consume(Event(type="RunStrategyDecision", payload={}))
             except Exception:
                 self.logger.exception("strategic loop iteration failed")
 

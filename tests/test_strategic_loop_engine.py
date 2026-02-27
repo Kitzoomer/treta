@@ -1,3 +1,4 @@
+import threading
 import time
 import unittest
 
@@ -38,7 +39,43 @@ class _CooldownAwareControl:
         return [{"status": "executed"}]
 
 
+
+
+class _CountingLock:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.max_concurrent = 0
+        self._current = 0
+
+    def acquire(self, blocking=True):
+        acquired = self._lock.acquire(blocking=blocking)
+        if acquired:
+            self._current += 1
+            self.max_concurrent = max(self.max_concurrent, self._current)
+        return acquired
+
+    def release(self):
+        self._current -= 1
+        self._lock.release()
+
+
 class StrategicLoopEngineTest(unittest.TestCase):
+
+    def test_two_quick_cycles_respect_cooldown_without_breaking_cycle_lock(self):
+        control = _CooldownAwareControl()
+        cycle_lock = _CountingLock()
+        engine = StrategicLoopEngine(control=control, interval_seconds=0.02, max_pending=99, cycle_lock=cycle_lock)
+        engine.start()
+        try:
+            time.sleep(0.09)
+        finally:
+            engine.stop()
+
+        self.assertGreaterEqual(len(control.calls), 2)
+        self.assertGreaterEqual(control.cooldown_skips, 1)
+        self.assertEqual(control.executed_count, 1)
+        self.assertEqual(cycle_lock.max_concurrent, 1)
+
     def test_runs_two_quick_cycles_without_breaking_cooldown(self):
         control = _CooldownAwareControl()
         engine = StrategicLoopEngine(control=control, interval_seconds=0.02, max_pending=99)
