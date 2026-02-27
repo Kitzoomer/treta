@@ -199,13 +199,7 @@ class StrategyHandler:
             if latest_status == "running":
                 started_at = StrategyHandler._parse_iso_datetime(latest_execution.get("started_at"))
                 now = datetime.now(timezone.utc)
-                if started_at is not None and (now - started_at).total_seconds() < ACTION_EXECUTION_TIMEOUT_SECONDS:
-                    logger.warning(
-                        "Strategy action execution already in progress",
-                        extra={"action_id": action_id, "decision_id": decision_id, "execution_id": latest_execution_id},
-                    )
-                    return [Action(type="StrategyActionExecutionSkipped", payload={"action_id": action_id, "reason": "execution_already_in_progress"})]
-                if latest_execution_id is not None:
+                if started_at is not None and (now - started_at).total_seconds() >= ACTION_EXECUTION_TIMEOUT_SECONDS and latest_execution_id is not None:
                     execution_store.mark_failed_timeout(
                         int(latest_execution_id),
                         error="execution timeout exceeded before completion",
@@ -221,13 +215,21 @@ class StrategyHandler:
 
         executor = registry.get_executor_for(str(action.get("type") or ""))
         executor_name = executor.name if executor is not None else "none"
-        execution_id = execution_store.create_queued(
+        started = execution_store.try_start_execution(
             action_id=action_id,
+            decision_id=decision_id,
+            executor_name=executor_name,
             action_type=str(action.get("type") or ""),
-            executor=executor_name,
             context=ctx,
         )
-        execution_store.mark_running(execution_id)
+        if not started:
+            logger.warning("Strategy action execution skipped: already running", extra={"action_id": action_id, "decision_id": decision_id})
+            return [Action(type="StrategyActionExecutionSkipped", payload={"action_id": action_id, "reason": "already_running"})]
+        started_execution = execution_store.latest_for_action(action_id)
+        execution_id = int((started_execution or {}).get("id") or 0)
+        if execution_id <= 0:
+            logger.error("Strategy action execution start failed: missing execution id", extra={"action_id": action_id, "decision_id": decision_id})
+            return [Action(type="StrategyActionExecutionSkipped", payload={"action_id": action_id, "reason": "execution_start_failed"})]
         started_at = datetime.now(timezone.utc)
 
         if executor is None:
