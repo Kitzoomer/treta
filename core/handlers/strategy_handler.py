@@ -395,7 +395,8 @@ class StrategyHandler:
     def handle(event, context):
         Action = context["Action"]
         control = context["control"]
-        strategy_decision_engine = context["engines"]["strategy_decision_engine"]
+        strategy_decision_engine = context["engines"].get("strategy_decision_engine")
+        strategy_decision_orchestrator = context["engines"].get("strategy_decision_orchestrator")
         storage = context.get("storage")
 
         if event.type == "EvaluateOpportunity":
@@ -412,8 +413,8 @@ class StrategyHandler:
             return StrategyHandler._execute_strategy_action(event, context)
 
         if event.type == "RunStrategyDecision":
-            if strategy_decision_engine is None:
-                logger.warning("RunStrategyDecision received without strategy_decision_engine configured")
+            if strategy_decision_orchestrator is None and strategy_decision_engine is None:
+                logger.warning("RunStrategyDecision received without strategy dependencies configured")
                 return []
 
             request_id = event.request_id or str(event.payload.get("request_id", "") or "")
@@ -463,11 +464,21 @@ class StrategyHandler:
                     )
                 ]
 
-            result = strategy_decision_engine.decide(
-                request_id=request_id,
-                trace_id=trace_id,
-                event_id=event.event_id,
-            )
+            if strategy_decision_orchestrator is not None:
+                result = strategy_decision_orchestrator.run_decision_cycle(
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    event_id=event.event_id,
+                )
+            elif strategy_decision_engine is not None:
+                plan = strategy_decision_engine.decide(
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    event_id=event.event_id,
+                )
+                result = {"status": "executed", "plan": plan.to_dict()}
+            else:
+                return []
             payload = dict(result)
             payload["status"] = "executed"
             payload["cooldown_active"] = False

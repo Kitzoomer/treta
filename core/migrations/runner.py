@@ -18,6 +18,7 @@ from core.migrations import (
     migration_013_decision_outcomes,
     migration_014_action_executions,
     migration_015_adaptive_policy_state,
+    migration_016_processed_decisions,
 )
 
 
@@ -50,6 +51,7 @@ MIGRATIONS: list[tuple[int, callable]] = [
     (13, migration_013_decision_outcomes.upgrade),
     (14, migration_014_action_executions.upgrade),
     (15, migration_015_adaptive_policy_state.upgrade),
+    (16, migration_016_processed_decisions.upgrade),
 ]
 
 
