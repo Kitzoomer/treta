@@ -102,11 +102,11 @@ _auth_mode_warned = False
 
 
 def _is_auth_required() -> bool:
-    return TRETA_REQUIRE_TOKEN
+    return TRETA_REQUIRE_TOKEN and bool(API_TOKEN)
 
 
 def _is_auth_degraded() -> bool:
-    return TRETA_REQUIRE_TOKEN and not API_TOKEN
+    return TRETA_REQUIRE_TOKEN and not API_TOKEN and not TRETA_DEV_MODE
 
 
 def _auth_state() -> str:
