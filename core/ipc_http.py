@@ -38,10 +38,55 @@ from core.logging_config import set_request_id, set_trace_id
 from core.version import VERSION
 from core.config import (
     API_TOKEN,
+    MAX_REQUEST_BODY_BYTES,
     STRATEGY_LOOP_ENABLED,
     STRATEGY_LOOP_INTERVAL_SECONDS,
     STRATEGY_LOOP_MAX_PENDING,
 )
+
+
+_ALLOWED_EVENT_TYPES = {
+    "WakeWordDetected",
+    "TranscriptReady",
+    "LLMResponseReady",
+    "TTSFinished",
+    "ErrorOccurred",
+    "UserMessageSubmitted",
+    "AssistantMessageGenerated",
+    "DailyBriefRequested",
+    "OpportunityScanRequested",
+    "RunInfoproductScan",
+    "EmailTriageRequested",
+    "EvaluateOpportunity",
+    "OpportunityDetected",
+    "ListOpportunities",
+    "EvaluateOpportunityById",
+    "OpportunityDismissed",
+    "ListProductProposals",
+    "GetProductProposalById",
+    "BuildProductPlanRequested",
+    "ListProductPlansRequested",
+    "GetProductPlanRequested",
+    "ListProductLaunchesRequested",
+    "GetProductLaunchRequested",
+    "AddProductLaunchSale",
+    "TransitionProductLaunchStatus",
+    "ExecuteProductPlanRequested",
+    "ApproveProposal",
+    "RejectProposal",
+    "StartBuildingProposal",
+    "MarkReadyToLaunch",
+    "MarkProposalLaunched",
+    "ArchiveProposal",
+    "GumroadStatsRequested",
+    "ActionApproved",
+    "ActionPlanGenerated",
+    "ConfirmAction",
+    "RejectAction",
+    "ListPendingConfirmations",
+    "RunStrategyDecision",
+    "ExecuteStrategyAction",
+}
 
 UI_DIR = Path(__file__).parent.parent / "ui"
 logger = logging.getLogger("treta.http")
@@ -74,7 +119,7 @@ def require_auth(headers) -> bool:
 
 
 def _is_protected_endpoint(method: str, path: str) -> bool:
-    if method in {"PUT", "DELETE"}:
+    if method in {"PUT", "DELETE", "PATCH"}:
         return True
     if method != "POST":
         return False
@@ -428,6 +473,28 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Request-Id", self._ensure_request_id())
         self.end_headers()
         self.wfile.write(file_path.read_bytes())
+
+    def _read_json_body(self) -> tuple[dict | None, tuple[int, str, str, str] | None]:
+        header_value = self.headers.get("Content-Length", "0")
+        try:
+            length = int(header_value)
+        except (TypeError, ValueError):
+            return None, (400, ErrorType.CLIENT_ERROR, "invalid_content_length", "invalid_content_length")
+
+        if length < 0:
+            return None, (400, ErrorType.CLIENT_ERROR, "invalid_content_length", "invalid_content_length")
+        if length > MAX_REQUEST_BODY_BYTES:
+            return None, (413, ErrorType.CLIENT_ERROR, "payload_too_large", "payload_too_large")
+
+        raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
+        try:
+            data = json.loads(raw)
+        except Exception as exc:
+            return None, (400, ErrorType.CLIENT_ERROR, "invalid_json", str(exc))
+
+        if not isinstance(data, dict):
+            return None, (400, ErrorType.CLIENT_ERROR, "invalid_json", "json_payload_must_be_object")
+        return data, None
 
     def do_GET(self):
         try:
@@ -1083,12 +1150,12 @@ class Handler(BaseHTTPRequestHandler):
         if not self._check_auth_or_401("POST", self.path):
             return
 
-        length = int(self.headers.get("Content-Length", "0"))
-        raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
+        data, body_error = self._read_json_body()
+        if body_error is not None:
+            status_code, error_type, code, message = body_error
+            return self._send_error(status_code, error_type, code, message)
 
         try:
-            data = json.loads(raw)
-
             with self.server.mutation_lock:
                 self.server.update_metrics(last_mutation_at=time.time())
                 reddit_post_response = self.reddit_router.handle_post(self.path, data)
@@ -1125,6 +1192,8 @@ class Handler(BaseHTTPRequestHandler):
 
                     if not ev_type:
                         return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_type", "missing_type")
+                    if str(ev_type) not in _ALLOWED_EVENT_TYPES:
+                        return self._send_error(400, ErrorType.CLIENT_ERROR, "unsupported_event_type", "unsupported_event_type")
 
                     self.bus.push(Event(type=ev_type, payload={**payload, "request_id": self._ensure_request_id(), "trace_id": self._ensure_trace_id()}, source=source, request_id=self._ensure_request_id(), trace_id=self._ensure_trace_id()))
                     return self._send_success(200, {"status": "ok"})
@@ -1482,13 +1551,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_PATCH(self):
         try:
             self._ensure_request_id()
-            length = int(self.headers.get("Content-Length", "0"))
-            raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
+            if not self._check_auth_or_401("PATCH", self.path):
+                return
 
-            try:
-                data = json.loads(raw)
-            except Exception as e:
-                return self._send_error(400, ErrorType.CLIENT_ERROR, "invalid_json", str(e))
+            data, body_error = self._read_json_body()
+            if body_error is not None:
+                status_code, error_type, code, message = body_error
+                return self._send_error(status_code, error_type, code, message)
 
             with self.server.mutation_lock:
                 self.server.update_metrics(last_mutation_at=time.time())

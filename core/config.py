@@ -17,6 +17,7 @@ STRATEGY_LOOP_ENABLED = str(os.getenv("STRATEGY_LOOP_ENABLED", "true")).strip().
 }
 STRATEGY_LOOP_INTERVAL_SECONDS = float(os.getenv("STRATEGY_LOOP_INTERVAL_SECONDS", "900"))
 STRATEGY_LOOP_MAX_PENDING = int(os.getenv("STRATEGY_LOOP_MAX_PENDING", "5"))
+MAX_REQUEST_BODY_BYTES = int(os.getenv("TRETA_MAX_REQUEST_BODY_BYTES", str(1024 * 1024)))
 
 
 def get_autonomy_mode() -> str:
