@@ -1,6 +1,6 @@
 import logging
 from core.state_machine import StateMachine, State
-from core.events import Event
+from core.events import Event, make_event
 from core.control import Control
 from core.bus import EventBus
 from core.memory_store import MemoryStore
@@ -8,6 +8,7 @@ from core.conversation_core import ConversationCore
 from core.storage import Storage
 from core.strategic_snapshot_engine import StrategicSnapshotEngine
 from core.logging_config import set_decision_id, set_event_id, set_request_id, set_trace_id
+from core.event_catalog import event_type_is_known, validate_event_payload
 
 
 logger = logging.getLogger("treta.dispatcher")
@@ -117,6 +118,22 @@ class Dispatcher:
         if snapshot_text:
             self.memory_store.save_snapshot(snapshot_text)
 
+    def _validate_event_catalog(self, event: Event) -> bool:
+        if not event_type_is_known(event.type):
+            logger.warning("Unknown event type not in catalog", extra={"event_type": event.type, "trace_id": event.trace_id, "event_id": event.event_id})
+
+        is_valid, missing_keys = validate_event_payload(event.type, event.payload if isinstance(event.payload, dict) else {})
+        if is_valid:
+            return True
+
+        event.invalid = True
+        event.invalid_reason = f"missing required keys: {', '.join(missing_keys)}"
+        logger.warning(
+            "Invalid event payload for catalog schema",
+            extra={"event_type": event.type, "trace_id": event.trace_id, "event_id": event.event_id, "missing_keys": missing_keys},
+        )
+        return False
+
     def handle(self, event: Event):
         if isinstance(event.payload, dict):
             event.request_id = event.request_id or str(event.payload.get("request_id", "") or "")
@@ -134,6 +151,10 @@ class Dispatcher:
         set_event_id(str(ids.get("event_id", "")))
         set_decision_id(str(ids.get("decision_id", "")))
         logger.info("Dispatching event", extra={"event_type": event.type, "source": event.source, **ids})
+
+        if not self._validate_event_catalog(event):
+            self.storage.mark_event_processed(event.event_id, event.type)
+            return
 
         if self.storage.is_event_processed(event.event_id):
             logger.info("Skipping duplicate event", extra={"event_type": event.type, **ids})
@@ -205,6 +226,6 @@ class Dispatcher:
                     action_payload.setdefault("request_id", event.request_id)
                     action_payload.setdefault("trace_id", event.trace_id)
                     action_payload.setdefault("parent_event_id", event.event_id)
-                    self.bus.push(Event(type=action.type, payload=action_payload, source="control", request_id=event.request_id, trace_id=event.trace_id))
+                    self.bus.push(make_event(action.type, action_payload, source="control", request_id=event.request_id, trace_id=event.trace_id))
 
         self.storage.mark_event_processed(event.event_id, event.type)

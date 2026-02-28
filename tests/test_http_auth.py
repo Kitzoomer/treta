@@ -150,5 +150,23 @@ class HttpAuthTest(unittest.TestCase):
                 server.server_close()
 
 
+    def test_ci_bootstrap_sets_dev_mode_when_unset(self):
+        with patch.dict("os.environ", {"CI": "true"}, clear=False):
+            import os
+            os.environ.pop("TRETA_DEV_MODE", None)
+            os.environ.pop("TRETA_REQUIRE_TOKEN", None)
+            ipc_http._bootstrap_ci_auth_defaults()
+            self.assertEqual(os.getenv("TRETA_DEV_MODE"), "1")
+            self.assertEqual(os.getenv("TRETA_REQUIRE_TOKEN"), "0")
+
+    def test_ci_bootstrap_respects_explicit_require_token(self):
+        with patch.dict("os.environ", {"CI": "true", "TRETA_REQUIRE_TOKEN": "1"}, clear=False):
+            import os
+            os.environ.pop("TRETA_DEV_MODE", None)
+            ipc_http._bootstrap_ci_auth_defaults()
+            self.assertIsNone(os.getenv("TRETA_DEV_MODE"))
+            self.assertEqual(os.getenv("TRETA_REQUIRE_TOKEN"), "1")
+
+
 if __name__ == "__main__":
     unittest.main()
