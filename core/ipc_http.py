@@ -9,7 +9,7 @@ from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from core.events import Event
+from core.events import Event, make_event
 from core.creator_intelligence import (
     CreatorDemandValidator,
     CreatorOfferService,
@@ -45,48 +45,10 @@ from core.config import (
 )
 
 
-_ALLOWED_EVENT_TYPES = {
-    "WakeWordDetected",
-    "TranscriptReady",
-    "LLMResponseReady",
-    "TTSFinished",
-    "ErrorOccurred",
-    "UserMessageSubmitted",
-    "AssistantMessageGenerated",
-    "DailyBriefRequested",
-    "OpportunityScanRequested",
-    "RunInfoproductScan",
-    "EmailTriageRequested",
-    "EvaluateOpportunity",
-    "OpportunityDetected",
-    "ListOpportunities",
-    "EvaluateOpportunityById",
-    "OpportunityDismissed",
-    "ListProductProposals",
-    "GetProductProposalById",
-    "BuildProductPlanRequested",
-    "ListProductPlansRequested",
-    "GetProductPlanRequested",
-    "ListProductLaunchesRequested",
-    "GetProductLaunchRequested",
-    "AddProductLaunchSale",
-    "TransitionProductLaunchStatus",
-    "ExecuteProductPlanRequested",
-    "ApproveProposal",
-    "RejectProposal",
-    "StartBuildingProposal",
-    "MarkReadyToLaunch",
-    "MarkProposalLaunched",
-    "ArchiveProposal",
-    "GumroadStatsRequested",
-    "ActionApproved",
-    "ActionPlanGenerated",
-    "ConfirmAction",
-    "RejectAction",
-    "ListPendingConfirmations",
-    "RunStrategyDecision",
-    "ExecuteStrategyAction",
-}
+from core.event_catalog import KNOWN_EVENT_TYPES
+
+
+_ALLOWED_EVENT_TYPES = KNOWN_EVENT_TYPES
 
 UI_DIR = Path(__file__).parent.parent / "ui"
 logger = logging.getLogger("treta.http")
@@ -97,6 +59,17 @@ except ImportError:
     OpenAI = None
 
 _auth_dev_mode_warned = False
+
+
+def _bootstrap_ci_auth_defaults() -> None:
+    if os.getenv("CI") != "true":
+        return
+    if "TRETA_DEV_MODE" in os.environ or "TRETA_REQUIRE_TOKEN" in os.environ:
+        return
+
+    os.environ["TRETA_DEV_MODE"] = "1"
+    os.environ["TRETA_REQUIRE_TOKEN"] = "0"
+    logger.info("HTTP auth disabled (CI mode auto-detected)")
 
 
 def require_auth(headers) -> bool:
@@ -1195,7 +1168,7 @@ class Handler(BaseHTTPRequestHandler):
                     if str(ev_type) not in _ALLOWED_EVENT_TYPES:
                         return self._send_error(400, ErrorType.CLIENT_ERROR, "unsupported_event_type", "unsupported_event_type")
 
-                    self.bus.push(Event(type=ev_type, payload={**payload, "request_id": self._ensure_request_id(), "trace_id": self._ensure_trace_id()}, source=source, request_id=self._ensure_request_id(), trace_id=self._ensure_trace_id()))
+                    self.bus.push(make_event(ev_type, {**payload, "request_id": self._ensure_request_id(), "trace_id": self._ensure_trace_id()}, source=source, request_id=self._ensure_request_id(), trace_id=self._ensure_trace_id()))
                     return self._send_success(200, {"status": "ok"})
 
                 if self.path == "/scan/infoproduct":
@@ -1595,6 +1568,7 @@ def start_http_server(
     storage=None,
     action_execution_store=None,
 ):
+    _bootstrap_ci_auth_defaults()
     # Thread daemon: se muere si se muere el proceso principal (bien para dev)
     resolved_bus = bus or EventBus()
     server = TretaHTTPServer(

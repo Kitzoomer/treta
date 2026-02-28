@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Dict, List
 
-from core.events import Event
+from core.events import Event, make_event
 from core.decision_engine import DecisionEngine
 from core.integrations.gumroad_client import GumroadClient
 from core.action_planner import ActionPlanner
@@ -36,6 +36,7 @@ from core.handlers.strategy_handler import StrategyHandler
 from core.handlers.opportunity_handler import OpportunityHandler
 from core.handlers.scan_handler import ScanHandler
 from core.handlers.autonomy_handler import AutonomyHandler
+from core.event_catalog import EventType
 
 from core.openclaw_agent import (
     OpenClawRedditScanner,
@@ -515,7 +516,7 @@ class Control:
             "summary": "\n".join(summary_lines),
         }
         RedditDailyPlanStore.save(plan)
-        self.bus.push(Event(type="RedditDailyPlanGenerated", payload=plan, source="control"))
+        self.bus.push(make_event(EventType.REDDIT_DAILY_PLAN_GENERATED, plan, source="control"))
 
     def link_launch_gumroad(self, launch_id: str, gumroad_product_id: str) -> Dict[str, object]:
         updated = self.product_launch_store.link_gumroad_product(launch_id, gumroad_product_id)

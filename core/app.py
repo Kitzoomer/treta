@@ -16,7 +16,7 @@ from core.daily_loop import DailyLoopEngine
 from core.gpt_client import GPTClient, GPTClientConfigurationError
 from core.dispatcher import Dispatcher
 from core.decision_engine import DecisionEngine
-from core.events import Event
+from core.events import Event, make_event
 from core.ipc_http import start_http_server
 from core.memory_store import MemoryStore
 from core.migrations.runner import run_migrations
@@ -38,6 +38,7 @@ from core.services.strategy_decision_orchestrator import StrategyDecisionOrchest
 from core.strategy_engine import StrategyEngine
 from core.revenue_attribution.store import RevenueAttributionStore
 from core.subreddit_performance_store import SubredditPerformanceStore
+from core.event_catalog import EventType
 
 
 def bootstrap_executors(registry: ActionExecutorRegistry, app_config=config) -> None:
@@ -188,9 +189,9 @@ class TretaApp:
                     continue
 
                 time.sleep(5)
-                heartbeat = Event(
-                    type="Heartbeat",
-                    payload={"state": self.state_machine.state},
+                heartbeat = make_event(
+                    EventType.HEARTBEAT,
+                    {"state": self.state_machine.state},
                     source="core",
                 )
                 logging.getLogger("treta.event").info(
