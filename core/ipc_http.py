@@ -108,7 +108,7 @@ def _is_auth_required() -> bool:
 
 
 def _is_auth_degraded() -> bool:
-    return _is_auth_required() and not API_TOKEN
+    return TRETA_REQUIRE_TOKEN and not API_TOKEN and not TRETA_DEV_MODE
 
 
 def _auth_state() -> str:
