@@ -1,15 +1,17 @@
 import os
 
 
-def _apply_test_auth_defaults() -> bool:
-    if os.getenv("PYTEST_CURRENT_TEST") is None:
+def _apply_ci_auth_defaults() -> bool:
+    if os.getenv("CI") != "true":
         return False
-    os.environ.setdefault("TRETA_DEV_MODE", "1")
-    os.environ.setdefault("TRETA_REQUIRE_TOKEN", "0")
+    if "TRETA_DEV_MODE" in os.environ or "TRETA_REQUIRE_TOKEN" in os.environ:
+        return False
+    os.environ["TRETA_DEV_MODE"] = "1"
+    os.environ["TRETA_REQUIRE_TOKEN"] = "0"
     return True
 
 
-TEST_MODE_DETECTED = _apply_test_auth_defaults()
+CI_AUTH_AUTO_DETECTED = _apply_ci_auth_defaults()
 
 
 STRATEGY_DECISION_COOLDOWN_MINUTES = int(os.getenv("STRATEGY_DECISION_COOLDOWN_MINUTES", "10"))
