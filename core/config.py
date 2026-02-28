@@ -10,7 +10,7 @@ OPENCLAW_BASE_URL = os.getenv("OPENCLAW_BASE_URL", "").strip()
 OPENCLAW_TIMEOUT_SECONDS = int(os.getenv("OPENCLAW_TIMEOUT_SECONDS", "5"))
 API_TOKEN = os.getenv("TRETA_API_TOKEN")
 TRETA_DEV_MODE = str(os.getenv("TRETA_DEV_MODE", "0")).strip() == "1"
-TRETA_REQUIRE_TOKEN = str(os.getenv("TRETA_REQUIRE_TOKEN", "1")).strip().lower() in {
+TRETA_REQUIRE_TOKEN = str(os.getenv("TRETA_REQUIRE_TOKEN", "0")).strip().lower() in {
     "1",
     "true",
     "yes",
