@@ -1,8 +1,10 @@
 import json
 import unittest
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import urlopen
 
+import core.ipc_http as ipc_http
 from core.ipc_http import start_http_server
 
 
@@ -42,24 +44,25 @@ class HealthEndpointsTest(unittest.TestCase):
 
     def test_ready_endpoint_is_200_when_dependencies_wired(self):
         store = _Store()
-        server = start_http_server(
-            host="127.0.0.1",
-            port=0,
-            product_proposal_store=store,
-            product_plan_store=store,
-            product_launch_store=store,
-            control=object(),
-        )
-        try:
-            with urlopen(f"http://127.0.0.1:{server.server_port}/health/ready", timeout=2) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-            self.assertEqual(response.status, 200)
-            self.assertTrue(payload["ok"])
-            self.assertEqual(payload["data"]["status"], "ready")
-            self.assertIn("metrics", payload["data"])
-        finally:
-            server.shutdown()
-            server.server_close()
+        with patch.object(ipc_http, "TRETA_REQUIRE_TOKEN", False), patch.object(ipc_http, "TRETA_DEV_MODE", False):
+            server = start_http_server(
+                host="127.0.0.1",
+                port=0,
+                product_proposal_store=store,
+                product_plan_store=store,
+                product_launch_store=store,
+                control=object(),
+            )
+            try:
+                with urlopen(f"http://127.0.0.1:{server.server_port}/health/ready", timeout=2) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                self.assertEqual(response.status, 200)
+                self.assertTrue(payload["ok"])
+                self.assertEqual(payload["data"]["status"], "ready")
+                self.assertIn("metrics", payload["data"])
+            finally:
+                server.shutdown()
+                server.server_close()
 
 
 if __name__ == "__main__":

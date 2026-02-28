@@ -57,7 +57,7 @@ class HttpAuthTest(unittest.TestCase):
             return exc.code, body
 
     def test_protected_endpoint_requires_token_when_configured(self):
-        with patch.object(ipc_http, "API_TOKEN", "test123"), patch.object(ipc_http, "_auth_dev_mode_warned", False):
+        with patch.object(ipc_http, "API_TOKEN", "test123"), patch.object(ipc_http, "_auth_mode_warned", False):
             server = start_http_server(host="127.0.0.1", port=0)
             try:
                 status_no_header, body_no_header = self._post(server, "/opportunities/evaluate", {"id": "opp-1"})
@@ -84,19 +84,24 @@ class HttpAuthTest(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
 
-    def test_dev_permissive_mode_does_not_block_protected_endpoint(self):
-        with patch.object(ipc_http, "API_TOKEN", None), patch.object(ipc_http, "_auth_dev_mode_warned", False):
+    def test_dev_mode_allows_protected_endpoint_without_token(self):
+        with (
+            patch.object(ipc_http, "API_TOKEN", None),
+            patch.object(ipc_http, "TRETA_DEV_MODE", True),
+            patch.object(ipc_http, "TRETA_REQUIRE_TOKEN", True),
+            patch.object(ipc_http, "_auth_mode_warned", False),
+        ):
             server = start_http_server(host="127.0.0.1", port=0)
             try:
-                status, _ = self._get(server, "/strategy/decide")
-                self.assertNotEqual(status, 401)
+                status, _ = self._post(server, "/opportunities/evaluate", {"id": "opp-1"})
+                self.assertEqual(status, 200)
             finally:
                 server.shutdown()
                 server.server_close()
 
 
     def test_patch_endpoint_requires_token_when_configured(self):
-        with patch.object(ipc_http, "API_TOKEN", "test123"), patch.object(ipc_http, "_auth_dev_mode_warned", False):
+        with patch.object(ipc_http, "API_TOKEN", "test123"), patch.object(ipc_http, "_auth_mode_warned", False):
             server = start_http_server(host="127.0.0.1", port=0)
             try:
                 status_no_header, body_no_header = self._patch(
@@ -119,8 +124,43 @@ class HttpAuthTest(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
 
+    def test_degraded_mode_blocks_mutating_endpoints_without_token(self):
+        with (
+            patch.object(ipc_http, "API_TOKEN", None),
+            patch.object(ipc_http, "TRETA_DEV_MODE", False),
+            patch.object(ipc_http, "TRETA_REQUIRE_TOKEN", True),
+            patch.object(ipc_http, "_auth_mode_warned", False),
+        ):
+            server = start_http_server(host="127.0.0.1", port=0)
+            try:
+                status, body = self._post(server, "/opportunities/evaluate", {"id": "opp-1"})
+                self.assertEqual(status, 503)
+                self.assertEqual(body.get("error", {}).get("code"), "auth_degraded")
+
+                health_status, health_body = self._get(server, "/health")
+                self.assertEqual(health_status, 200)
+                self.assertEqual(health_body.get("data", {}).get("status"), "degraded")
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_require_token_disabled_allows_requests_without_token(self):
+        with (
+            patch.object(ipc_http, "API_TOKEN", None),
+            patch.object(ipc_http, "TRETA_DEV_MODE", False),
+            patch.object(ipc_http, "TRETA_REQUIRE_TOKEN", False),
+            patch.object(ipc_http, "_auth_mode_warned", False),
+        ):
+            server = start_http_server(host="127.0.0.1", port=0)
+            try:
+                status, _ = self._post(server, "/opportunities/evaluate", {"id": "opp-1"})
+                self.assertEqual(status, 200)
+            finally:
+                server.shutdown()
+                server.server_close()
+
     def test_payload_too_large_is_rejected(self):
-        with patch.object(ipc_http, "API_TOKEN", None), patch.object(ipc_http, "MAX_REQUEST_BODY_BYTES", 64), patch.object(ipc_http, "_auth_dev_mode_warned", False):
+        with patch.object(ipc_http, "API_TOKEN", None), patch.object(ipc_http, "MAX_REQUEST_BODY_BYTES", 64), patch.object(ipc_http, "_auth_mode_warned", False):
             server = start_http_server(host="127.0.0.1", port=0)
             try:
                 status, body = self._post(
@@ -135,7 +175,7 @@ class HttpAuthTest(unittest.TestCase):
                 server.server_close()
 
     def test_event_endpoint_rejects_unsupported_event_type(self):
-        with patch.object(ipc_http, "API_TOKEN", None), patch.object(ipc_http, "_auth_dev_mode_warned", False):
+        with patch.object(ipc_http, "API_TOKEN", None), patch.object(ipc_http, "_auth_mode_warned", False):
             server = start_http_server(host="127.0.0.1", port=0)
             try:
                 status, body = self._post(
