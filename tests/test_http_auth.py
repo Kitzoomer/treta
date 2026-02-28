@@ -26,6 +26,23 @@ class HttpAuthTest(unittest.TestCase):
             body = json.loads(exc.read().decode("utf-8"))
             return exc.code, body
 
+    def _patch(self, server, path: str, payload: dict, headers: dict | None = None):
+        req_headers = {"Content-Type": "application/json"}
+        if headers:
+            req_headers.update(headers)
+        req = Request(
+            f"http://127.0.0.1:{server.server_port}{path}",
+            data=json.dumps(payload).encode("utf-8"),
+            method="PATCH",
+            headers=req_headers,
+        )
+        try:
+            with urlopen(req, timeout=2) as response:
+                return response.status, json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            body = json.loads(exc.read().decode("utf-8"))
+            return exc.code, body
+
     def _get(self, server, path: str, headers: dict | None = None):
         req = Request(
             f"http://127.0.0.1:{server.server_port}{path}",
@@ -73,6 +90,61 @@ class HttpAuthTest(unittest.TestCase):
             try:
                 status, _ = self._get(server, "/strategy/decide")
                 self.assertNotEqual(status, 401)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+
+    def test_patch_endpoint_requires_token_when_configured(self):
+        with patch.object(ipc_http, "API_TOKEN", "test123"), patch.object(ipc_http, "_auth_dev_mode_warned", False):
+            server = start_http_server(host="127.0.0.1", port=0)
+            try:
+                status_no_header, body_no_header = self._patch(
+                    server,
+                    "/reddit/signals/signal-1/status",
+                    {"status": "approved"},
+                )
+                self.assertEqual(status_no_header, 401)
+                self.assertEqual(body_no_header.get("error", {}).get("code"), "unauthorized")
+
+                status_ok, body_ok = self._patch(
+                    server,
+                    "/reddit/signals/signal-1/status",
+                    {"status": "approved"},
+                    headers={"Authorization": "Bearer test123"},
+                )
+                self.assertIn(status_ok, {200, 404})
+                self.assertNotEqual(body_ok.get("error", {}).get("code"), "unauthorized")
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_payload_too_large_is_rejected(self):
+        with patch.object(ipc_http, "API_TOKEN", None), patch.object(ipc_http, "MAX_REQUEST_BODY_BYTES", 64), patch.object(ipc_http, "_auth_dev_mode_warned", False):
+            server = start_http_server(host="127.0.0.1", port=0)
+            try:
+                status, body = self._post(
+                    server,
+                    "/event",
+                    {"type": "RunInfoproductScan", "payload": {"blob": "x" * 512}},
+                )
+                self.assertEqual(status, 413)
+                self.assertEqual(body.get("error", {}).get("code"), "payload_too_large")
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_event_endpoint_rejects_unsupported_event_type(self):
+        with patch.object(ipc_http, "API_TOKEN", None), patch.object(ipc_http, "_auth_dev_mode_warned", False):
+            server = start_http_server(host="127.0.0.1", port=0)
+            try:
+                status, body = self._post(
+                    server,
+                    "/event",
+                    {"type": "DeleteEverything", "payload": {}},
+                )
+                self.assertEqual(status, 400)
+                self.assertEqual(body.get("error", {}).get("code"), "unsupported_event_type")
             finally:
                 server.shutdown()
                 server.server_close()
