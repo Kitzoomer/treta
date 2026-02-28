@@ -42,6 +42,8 @@ from core.config import (
     STRATEGY_LOOP_ENABLED,
     STRATEGY_LOOP_INTERVAL_SECONDS,
     STRATEGY_LOOP_MAX_PENDING,
+    TRETA_DEV_MODE,
+    TRETA_REQUIRE_TOKEN,
 )
 
 
@@ -58,7 +60,37 @@ try:
 except ImportError:
     OpenAI = None
 
-_auth_dev_mode_warned = False
+_auth_mode_warned = False
+
+
+def _is_auth_required() -> bool:
+    return TRETA_REQUIRE_TOKEN and bool(API_TOKEN)
+
+
+def _is_auth_degraded() -> bool:
+    return TRETA_REQUIRE_TOKEN and not API_TOKEN and not TRETA_DEV_MODE
+
+
+def _auth_state() -> str:
+    if _is_auth_degraded():
+        return "degraded"
+    if _is_auth_required():
+        return "enforced"
+    return "disabled"
+
+
+def _log_auth_mode_once():
+    global _auth_mode_warned
+    if _auth_mode_warned:
+        return
+    state = _auth_state()
+    if state == "disabled":
+        logger.warning("HTTP auth disabled (dev mode/permissive): protected endpoints accept requests without token")
+    elif state == "degraded":
+        logger.error("HTTP auth degraded: TRETA_REQUIRE_TOKEN=1 but TRETA_API_TOKEN is empty; mutating endpoints are blocked")
+    else:
+        logger.info("HTTP auth enforced for protected endpoints")
+    _auth_mode_warned = True
 
 
 def _bootstrap_ci_auth_defaults() -> None:
@@ -73,12 +105,11 @@ def _bootstrap_ci_auth_defaults() -> None:
 
 
 def require_auth(headers) -> bool:
-    global _auth_dev_mode_warned
-    if API_TOKEN is None:
-        if not _auth_dev_mode_warned:
-            logger.warning("TRETA running in dev permissive mode (no API token set)")
-            _auth_dev_mode_warned = True
+    _log_auth_mode_once()
+    if not _is_auth_required():
         return True
+    if not API_TOKEN:
+        return False
 
     auth_header = headers.get("Authorization")
     if not auth_header:
@@ -89,6 +120,10 @@ def require_auth(headers) -> bool:
 
     token = auth_header.split(" ", 1)[1]
     return token == API_TOKEN
+
+
+def _is_mutating_method(method: str) -> bool:
+    return method in {"POST", "PUT", "DELETE", "PATCH"}
 
 
 def _is_protected_endpoint(method: str, path: str) -> bool:
@@ -111,6 +146,7 @@ class TretaHTTPServer(ThreadingHTTPServer):
     def __init__(self, server_address, RequestHandlerClass, *, bus: EventBus, **dependencies):
         super().__init__(server_address, RequestHandlerClass)
         self.bus = bus
+        _log_auth_mode_once()
         self.state_machine = dependencies.get("state_machine")
         self.opportunity_store = dependencies.get("opportunity_store")
         self.product_proposal_store = dependencies.get("product_proposal_store")
@@ -378,6 +414,19 @@ class Handler(BaseHTTPRequestHandler):
     def _check_auth_or_401(self, method: str, path: str) -> bool:
         if not _is_protected_endpoint(method, path):
             return True
+        if _is_auth_degraded() and _is_mutating_method(method):
+            logger.warning(
+                "request_id=%s blocked endpoint=%s reason=auth_degraded",
+                self._ensure_request_id(),
+                path,
+            )
+            self._send_error(
+                503,
+                ErrorType.DEPENDENCY_ERROR,
+                "auth_degraded",
+                "auth_degraded: TRETA_REQUIRE_TOKEN=1 but TRETA_API_TOKEN is empty; mutating endpoints are disabled",
+            )
+            return False
         if require_auth(self.headers):
             return True
         logger.warning("request_id=%s unauthorized endpoint=%s", self._ensure_request_id(), path)
@@ -778,12 +827,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_success(200, {"status": "live"})
 
         if parsed.path == "/health":
+            status = "degraded" if _is_auth_degraded() else "ok"
             return self._send_success(
                 200,
                 {
-                    "status": "ok",
+                    "status": status,
                     "timestamp": time.time(),
                     "version": VERSION,
+                    "auth": {
+                        "state": _auth_state(),
+                        "token_configured": bool(API_TOKEN),
+                        "require_token": _is_auth_required(),
+                        "dev_mode": TRETA_DEV_MODE,
+                    },
                 },
             )
 
@@ -796,6 +852,7 @@ class Handler(BaseHTTPRequestHandler):
                 ]),
                 "control_wired": self.control is not None,
                 "bus_present": self.bus is not None,
+                "auth_not_degraded": not _is_auth_degraded(),
             }
             if all(checks.values()):
                 return self._send_success(200, {"status": "ready", "checks": checks, "metrics": self.server.snapshot_metrics()})
@@ -808,6 +865,14 @@ class Handler(BaseHTTPRequestHandler):
             )
 
         if parsed.path == "/ready":
+            if _is_auth_degraded():
+                return self._send_error(
+                    503,
+                    ErrorType.DEPENDENCY_ERROR,
+                    "auth_degraded",
+                    "auth_degraded",
+                    details={"message": "TRETA_REQUIRE_TOKEN=1 but TRETA_API_TOKEN is empty"},
+                )
             if self.server.storage is None:
                 return self._send_error(503, ErrorType.DEPENDENCY_ERROR, "storage_unavailable", "storage_unavailable")
             try:
