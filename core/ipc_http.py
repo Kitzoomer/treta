@@ -44,6 +44,7 @@ from core.config import (
     STRATEGY_LOOP_MAX_PENDING,
     TRETA_DEV_MODE,
     TRETA_REQUIRE_TOKEN,
+    TEST_MODE_DETECTED,
 )
 
 
@@ -125,7 +126,10 @@ def _log_auth_mode_once():
         return
     state = _auth_state()
     if state == "disabled":
-        logger.warning("HTTP auth disabled (dev mode/permissive): protected endpoints accept requests without token")
+        if TEST_MODE_DETECTED:
+            logger.warning("HTTP auth disabled (test mode detected)")
+        else:
+            logger.warning("HTTP auth disabled (dev mode/permissive): protected endpoints accept requests without token")
     elif state == "degraded":
         logger.error("HTTP auth degraded: TRETA_REQUIRE_TOKEN=1 but TRETA_API_TOKEN is empty; mutating endpoints are blocked")
     else:

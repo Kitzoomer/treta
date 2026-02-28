@@ -1,6 +1,17 @@
 import os
 
 
+def _apply_test_auth_defaults() -> bool:
+    if os.getenv("PYTEST_CURRENT_TEST") is None:
+        return False
+    os.environ.setdefault("TRETA_DEV_MODE", "1")
+    os.environ.setdefault("TRETA_REQUIRE_TOKEN", "0")
+    return True
+
+
+TEST_MODE_DETECTED = _apply_test_auth_defaults()
+
+
 STRATEGY_DECISION_COOLDOWN_MINUTES = int(os.getenv("STRATEGY_DECISION_COOLDOWN_MINUTES", "10"))
 ACTION_EXECUTION_TIMEOUT_SECONDS = int(os.getenv("ACTION_EXECUTION_TIMEOUT_SECONDS", "300"))
 ACTION_APPROVAL_MIN_RISK_LEVEL = str(os.getenv("ACTION_APPROVAL_MIN_RISK_LEVEL", "high")).strip().lower()
