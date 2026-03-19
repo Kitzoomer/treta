@@ -1,5 +1,5 @@
 const CONFIG = {
-  routes: ["home", "dashboard", "work", "profile", "game", "strategy", "reddit-ops", "decision-intelligence", "autonomy-telemetry", "settings"],
+  routes: ["home", "dashboard", "work", "ideas", "profile", "game", "strategy", "reddit-ops", "decision-intelligence", "autonomy-telemetry", "settings"],
   defaultRoute: "home",
   defaultRefreshMs: 3000,
   maxEventStream: 20,
@@ -150,6 +150,11 @@ const state = {
     expandedStrategicAnalyses: {},
     strategyPendingActionsLoading: false,
     strategyPendingActionsLoaded: false,
+  },
+  ideasView: {
+    selectedProposalId: "",
+    actionLoading: false,
+    error: "",
   },
   redditOpsView: {
     selectedProposalId: "",
@@ -910,6 +915,7 @@ const router = {
     if (state.currentRoute === "home") return views.loadHome();
     if (state.currentRoute === "dashboard") return views.loadDashboard();
     if (state.currentRoute === "work") return views.loadWork();
+    if (state.currentRoute === "ideas") return views.loadIdeas();
     if (state.currentRoute === "profile") return views.loadProfile();
     if (state.currentRoute === "game") return views.loadGame();
     if (state.currentRoute === "strategy") return views.loadStrategy();
@@ -1616,6 +1622,263 @@ const views = {
     bindWorkActions();
   },
 
+  loadIdeas() {
+    const allProposals = Array.isArray(state.proposals) ? state.proposals : [];
+    const opportunitiesById = new Map((Array.isArray(state.opportunities) ? state.opportunities : [])
+      .map((item) => [String(item?.id || ""), item]));
+    const redditSignalsByPostId = new Map((Array.isArray(state.redditSignals) ? state.redditSignals : [])
+      .map((item) => [String(item?.post_id || ""), item]));
+
+    const toConfidencePercent = (value) => {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) return null;
+      if (parsed <= 1) return Math.round(parsed * 100);
+      if (parsed <= 10) return Math.round(parsed * 10);
+      return Math.max(0, Math.min(100, Math.round(parsed)));
+    };
+
+    const normalizeIdea = (proposal) => {
+      const sourceOpportunityId = String(proposal?.source_opportunity_id || "");
+      const sourceOpportunity = opportunitiesById.get(sourceOpportunityId) || null;
+      const linkedSignal = redditSignalsByPostId.get(sourceOpportunityId) || null;
+      const sourceType = String(
+        sourceOpportunity?.source
+        || linkedSignal?.source
+        || proposal?.source
+        || "unknown"
+      ).toLowerCase();
+      const sourceSubreddit = String(
+        linkedSignal?.subreddit
+        || sourceOpportunity?.subreddit
+        || sourceOpportunity?.opportunity?.context?.subreddit
+        || ""
+      ).trim();
+      const sourceUrl = String(
+        linkedSignal?.post_url
+        || sourceOpportunity?.url
+        || sourceOpportunity?.opportunity?.context?.url
+        || ""
+      ).trim();
+      const tags = []
+        .concat(Array.isArray(sourceOpportunity?.opportunity?.context?.tags) ? sourceOpportunity.opportunity.context.tags : [])
+        .concat(Array.isArray(sourceOpportunity?.opportunity?.context?.pains) ? sourceOpportunity.opportunity.context.pains : [])
+        .concat(Array.isArray(proposal?.tags) ? proposal.tags : [])
+        .map((item) => String(item || "").trim())
+        .filter(Boolean);
+
+      return {
+        proposal,
+        sourceOpportunity,
+        linkedSignal,
+        title: helpers.t(proposal?.product_name || proposal?.title, proposal?.id || "Idea"),
+        status: helpers.normalizeStatus(proposal?.status),
+        confidencePercent: toConfidencePercent(proposal?.confidence),
+        reason: helpers.t(proposal?.reasoning, ""),
+        summary: helpers.t(proposal?.core_problem || sourceOpportunity?.summary, ""),
+        sourceType,
+        sourceLabel: sourceSubreddit ? `r/${sourceSubreddit.replace(/^r\//i, "")}` : helpers.t(sourceOpportunity?.source, "-"),
+        sourceUrl,
+        tags: [...new Set(tags)],
+        createdAt: proposal?.created_at || sourceOpportunity?.created_at || null,
+      };
+    };
+
+    const ideaItems = allProposals.map(normalizeIdea);
+    const sortByPriority = (left, right) => {
+      const confidenceDelta = Number(right.confidencePercent || -1) - Number(left.confidencePercent || -1);
+      if (confidenceDelta !== 0) return confidenceDelta;
+      return String(right.createdAt || "").localeCompare(String(left.createdAt || ""));
+    };
+
+    const topIdeas = ideaItems
+      .filter((item) => item.status === "draft")
+      .sort(sortByPriority);
+    const approvedIdeas = ideaItems
+      .filter((item) => ["approved", "building", "ready_to_launch", "ready_for_review", "launched"].includes(item.status))
+      .sort(sortByPriority);
+    const deniedIdeas = ideaItems
+      .filter((item) => item.status === "rejected")
+      .sort(sortByPriority);
+
+    const pickRecommended = (items) => {
+      if (!items.length) return null;
+      return [...items].sort(sortByPriority)[0] || null;
+    };
+
+    const recommendedIdea = pickRecommended(topIdeas.length ? topIdeas : ideaItems);
+
+    const ensureSelected = () => {
+      const selectedId = String(state.ideasView.selectedProposalId || "").trim();
+      const selectedExists = ideaItems.some((item) => String(item.proposal?.id || "") === selectedId);
+      if (selectedExists) return selectedId;
+      const fallback = recommendedIdea?.proposal?.id
+        || topIdeas[0]?.proposal?.id
+        || approvedIdeas[0]?.proposal?.id
+        || deniedIdeas[0]?.proposal?.id
+        || "";
+      state.ideasView.selectedProposalId = String(fallback || "");
+      return state.ideasView.selectedProposalId;
+    };
+
+    const selectedId = ensureSelected();
+    const selectedIdea = ideaItems.find((item) => String(item.proposal?.id || "") === selectedId) || null;
+
+    const renderIdeaList = (items, emptyMessage) => {
+      if (!items.length) return `<p class="empty">${helpers.escape(emptyMessage)}</p>`;
+      return `
+        <div class="ideas-list">
+          ${items.map((item) => {
+            const proposalId = helpers.t(item.proposal?.id, "");
+            const isActive = proposalId === selectedId;
+            return `
+              <button class="ideas-list-item ${isActive ? "active" : ""}" data-action="ideas-select" data-id="${helpers.escape(proposalId)}">
+                <strong>${helpers.escape(item.title)}</strong>
+                <span class="ideas-list-meta">
+                  <span class="badge ${helpers.badgeClass(item.status)}">${helpers.escape(helpers.statusLabel(item.status))}</span>
+                  <span>${item.confidencePercent === null ? "Confidence: -" : `Confidence: ${item.confidencePercent}%`}</span>
+                </span>
+              </button>
+            `;
+          }).join("")}
+        </div>
+      `;
+    };
+
+    const rightContext = (() => {
+      if (!selectedIdea) {
+        return '<p class="empty">Selecciona una idea para revisar señales, pains y metadatos.</p>';
+      }
+      const signalPayload = selectedIdea.linkedSignal?.payload && typeof selectedIdea.linkedSignal.payload === "object"
+        ? selectedIdea.linkedSignal.payload
+        : {};
+      const signals = [
+        selectedIdea.linkedSignal?.detected_pain_type ? `Pain detectado: ${selectedIdea.linkedSignal.detected_pain_type}` : "",
+        selectedIdea.linkedSignal?.suggested_action ? `Acción sugerida: ${selectedIdea.linkedSignal.suggested_action}` : "",
+        selectedIdea.linkedSignal?.score ? `Score señal: ${selectedIdea.linkedSignal.score}` : "",
+      ].filter(Boolean);
+      const pains = []
+        .concat(Array.isArray(signalPayload?.pains) ? signalPayload.pains : [])
+        .concat(Array.isArray(selectedIdea.sourceOpportunity?.opportunity?.context?.pains) ? selectedIdea.sourceOpportunity.opportunity.context.pains : [])
+        .map((item) => String(item || "").trim())
+        .filter(Boolean);
+      const contextRows = [
+        { label: "Fuente", value: selectedIdea.sourceLabel || selectedIdea.sourceType || "-" },
+        { label: "Tipo", value: selectedIdea.sourceType || "-" },
+        { label: "Fecha", value: helpers.formatTimestamp(selectedIdea.createdAt) },
+      ];
+      return `
+        <div class="stack">
+          <section class="card">
+            <h3>Contexto</h3>
+            ${contextRows.map((row) => `<p><strong>${helpers.escape(row.label)}:</strong> ${helpers.escape(row.value)}</p>`).join("")}
+          </section>
+          <section class="card">
+            <h3>Señales relacionadas</h3>
+            ${signals.length ? `<ul>${signals.map((item) => `<li>${helpers.escape(item)}</li>`).join("")}</ul>` : '<p class="empty">Sin señales adicionales para esta idea.</p>'}
+          </section>
+          <section class="card">
+            <h3>Pains / tags</h3>
+            ${(pains.length || selectedIdea.tags.length)
+              ? `<div class="ideas-tags">${[...new Set([...pains, ...selectedIdea.tags])].map((item) => `<span class="badge info">${helpers.escape(item)}</span>`).join("")}</div>`
+              : '<p class="empty">No hay pains o tags detectados todavía.</p>'}
+          </section>
+        </div>
+      `;
+    })();
+
+    const centerContent = (() => {
+      const recommendedCard = (() => {
+        if (!recommendedIdea) {
+          return `
+            <article class="card ideas-recommended-card">
+              <h3>🔥 Idea recomendada hoy</h3>
+              <p class="empty">No hay ideas disponibles.</p>
+            </article>
+          `;
+        }
+        const recommendationId = helpers.t(recommendedIdea.proposal?.id, "");
+        const shouldShowViewDetail = recommendationId !== selectedId;
+        const shortSummary = recommendedIdea.reason || recommendedIdea.summary || "Sin resumen disponible.";
+        return `
+          <article class="card ideas-recommended-card">
+            <p class="ideas-recommended-label">🔥 Idea recomendada hoy</p>
+            <h3>${helpers.escape(recommendedIdea.title)}</h3>
+            <p>
+              <span class="badge ${helpers.badgeClass(recommendedIdea.status)}">${helpers.escape(helpers.statusLabel(recommendedIdea.status))}</span>
+              <span>${recommendedIdea.confidencePercent === null ? "Confianza: -" : `Confianza: ${recommendedIdea.confidencePercent}%`}</span>
+            </p>
+            <p>${helpers.escape(shortSummary)}</p>
+            <p><strong>Fuente:</strong> ${helpers.escape(recommendedIdea.sourceLabel || recommendedIdea.sourceType || "-")}</p>
+            <div class="card-actions wrap">
+              <button data-action="ideas-focus-recommended" data-id="${helpers.escape(recommendationId)}">Trabajar en esta idea</button>
+              ${shouldShowViewDetail ? `<button class="secondary-btn" data-action="ideas-focus-recommended" data-id="${helpers.escape(recommendationId)}">Ver detalle</button>` : ""}
+            </div>
+          </article>
+        `;
+      })();
+
+      if (!selectedIdea) {
+        return `
+          ${recommendedCard}
+          <article class="card">
+            <h3>Ideas de infoproducto</h3>
+            <p class="empty">No hay ideas disponibles por ahora. Ejecuta un scan para generar nuevas propuestas.</p>
+          </article>
+        `;
+      }
+      const proposalId = helpers.t(selectedIdea.proposal?.id, "");
+      const canReview = selectedIdea.status === "draft";
+      return `
+        ${recommendedCard}
+        <article class="card ideas-main-card">
+          <h3>${helpers.escape(selectedIdea.title)}</h3>
+          <p>
+            <span class="badge ${helpers.badgeClass(selectedIdea.status)}">${helpers.escape(helpers.statusLabel(selectedIdea.status))}</span>
+            <span>${selectedIdea.confidencePercent === null ? "Confianza: -" : `Confianza: ${selectedIdea.confidencePercent}%`}</span>
+          </p>
+          <p><strong>Explicación:</strong> ${helpers.escape(selectedIdea.reason || "Sin explicación adicional.")}</p>
+          <p><strong>Resumen:</strong> ${helpers.escape(selectedIdea.summary || "Sin resumen disponible.")}</p>
+          <p><strong>Fuente:</strong> ${helpers.escape(selectedIdea.sourceLabel || "-")} (${helpers.escape(selectedIdea.sourceType || "unknown")})</p>
+          ${selectedIdea.sourceUrl
+            ? `<p><a href="${helpers.escape(selectedIdea.sourceUrl)}" target="_blank" rel="noopener noreferrer">Abrir referencia en Reddit</a></p>`
+            : '<p class="empty">No hay enlace de Reddit disponible para esta idea.</p>'}
+          <div class="card-actions wrap">
+            <button data-action="ideas-approve" data-id="${helpers.escape(proposalId)}" ${(!canReview || state.ideasView.actionLoading) ? "disabled" : ""}>Aprobar</button>
+            <button class="secondary-btn" data-action="ideas-reject" data-id="${helpers.escape(proposalId)}" ${(!canReview || state.ideasView.actionLoading) ? "disabled" : ""}>Denegar</button>
+          </div>
+          ${state.ideasView.actionLoading ? '<p class="muted-note">Actualizando estado…</p>' : ""}
+          ${state.ideasView.error ? `<p class="error">${helpers.escape(state.ideasView.error)}</p>` : ""}
+        </article>
+      `;
+    })();
+
+    this.shell("Ideas de infoproducto", "Revisión operativa de propuestas para aprobar o denegar.", `
+      <section class="ideas-layout">
+        <aside class="ideas-column-left">
+          <article class="card">
+            <h3>Top ideas</h3>
+            ${renderIdeaList(topIdeas, "No hay ideas pendientes.")}
+          </article>
+          <article class="card">
+            <h3>Aprobadas</h3>
+            ${renderIdeaList(approvedIdeas, "No hay ideas aprobadas.")}
+          </article>
+          <article class="card">
+            <h3>Denegadas</h3>
+            ${renderIdeaList(deniedIdeas, "No hay ideas denegadas.")}
+          </article>
+        </aside>
+        <section class="ideas-column-center">
+          ${centerContent}
+        </section>
+        <aside class="ideas-column-right">
+          ${rightContext}
+        </aside>
+      </section>
+    `);
+    bindIdeasActions();
+  },
+
 
   loadProfile() {
     const derivedRevenuePerProduct = state.launches.length
@@ -2121,6 +2384,7 @@ function renderNavigation() {
   const primaryNav = [
     { route: "home", label: "Home" },
     { route: "work", label: "Opportunities" },
+    { route: "ideas", label: "Ideas" },
     { route: "reddit-ops", label: "Offers" },
     { route: "dashboard", label: "Revenue" },
     { route: "strategy", label: "System" },
@@ -2541,6 +2805,7 @@ function commandNeedsConfirmation(rawText, chatMode, confidence) {
 
 function mapNavigationRoute(command) {
   const normalized = command.toLowerCase();
+  if (normalized.includes("ideas")) return "ideas";
   if (normalized.includes("dashboard")) return "dashboard";
   if (normalized.includes("work")) return "work";
   if (normalized.includes("strategy")) return "strategy";
@@ -2574,7 +2839,7 @@ function computeChatIntentDecision(rawText, stateSnapshot, settings) {
   const executeMatch = lower.match(/(?:execute strategy|ejecuta accion)\s+([a-z0-9_-]+)/i);
   const rejectMatch = lower.match(/(?:reject strategy|rechaza accion)\s+([a-z0-9_-]+)/i);
   const isHelp = /\b(help|ayuda|comandos)\b/.test(lower);
-  const isNavigate = /\b(go|ir|navigate)\b/.test(lower) && /(home|dashboard|work|strategy|settings|profile|game)/.test(lower);
+  const isNavigate = /\b(go|ir|navigate)\b/.test(lower) && /(home|dashboard|work|ideas|strategy|settings|profile|game)/.test(lower);
   const isScan = /(opportunity scan|scan|escanea|buscar oportunidades)/.test(lower);
   const isSyncSales = /(sync gumroad|sync sales|sincroniza ventas)/.test(lower);
   const isStatus = /\b(status|estado|como vamos)\b/.test(lower);
@@ -3300,6 +3565,54 @@ function bindWorkActions() {
       const actionId = helpers.t(button.dataset.id, "");
       state.workView.expandedStrategicAnalyses[actionId] = !state.workView.expandedStrategicAnalyses[actionId];
       router.render();
+    });
+  });
+}
+
+function bindIdeasActions() {
+  ui.pageContent.querySelectorAll("button[data-action='ideas-select']").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.ideasView.selectedProposalId = helpers.t(button.dataset.id, "");
+      state.ideasView.error = "";
+      router.render();
+    });
+  });
+
+  const runIdeaTransition = async (proposalId, transition) => {
+    if (!proposalId || state.ideasView.actionLoading) return;
+    state.ideasView.actionLoading = true;
+    state.ideasView.error = "";
+    router.render();
+    try {
+      await api.fetchJson(`/product_proposals/${proposalId}/${transition}`, { method: "POST", body: JSON.stringify({}) });
+      await refreshLoop();
+    } catch (error) {
+      state.ideasView.error = `No se pudo actualizar la idea: ${error.message}`;
+      state.ideasView.actionLoading = false;
+      router.render();
+    } finally {
+      state.ideasView.actionLoading = false;
+      if (state.currentRoute === "ideas") router.render();
+    }
+  };
+
+  ui.pageContent.querySelectorAll("button[data-action='ideas-approve']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await runIdeaTransition(helpers.t(button.dataset.id, ""), "approve");
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='ideas-reject']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await runIdeaTransition(helpers.t(button.dataset.id, ""), "reject");
+    });
+  });
+
+  ui.pageContent.querySelectorAll("button[data-action='ideas-focus-recommended']").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.ideasView.selectedProposalId = helpers.t(button.dataset.id, "");
+      state.ideasView.error = "";
+      if (state.currentRoute === "ideas") router.render();
     });
   });
 }
