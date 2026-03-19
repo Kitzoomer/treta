@@ -1,81 +1,104 @@
-# Treta Architecture (v1.0.0 Freeze)
+# TRETA Architecture
 
-This document freezes Treta's architecture and domain contracts for `v1.0.0`.
+Documento operativo para entender y modificar TRETA **sin romper el core**.
 
-## System layers
+## 1) Visión general
 
-Treta is organized into these high-level layers:
+TRETA corre como un sistema event-driven con un runtime único que integra:
 
-1. **UI (SPA)**
-   - Browser-based single-page interface (`ui/`) consuming HTTP endpoints.
-2. **HTTP routing layer**
-   - Request/response boundary (`core/ipc_http.py`) that validates availability and maps routes to control/domain operations.
-3. **Control layer**
-   - Application orchestration (`core/control.py`) handling events and coordinating stores and engines.
-4. **Domain policy layer**
-   - Explicit lifecycle rules and integrity policy (`core/domain/integrity.py`).
-5. **Stores (JSON persistence)**
-   - File-backed JSON stores for proposals/plans/launches and related entities.
-6. **Event bus**
-   - In-process event queue (`core/bus.py`) for decoupled event production/consumption.
+1. **HTTP/API + UI estática** (`core/ipc_http.py`, `ui/`)
+2. **Orquestación** (`core/app.py`, `core/dispatcher.py`, `core/control.py`)
+3. **Motores de decisión/estrategia** (`core/*engine*.py`, `core/services/`)
+4. **Persistencia** (SQLite + stores JSON)
 
-## Proposal lifecycle
+El objetivo del runtime es sostener el ciclo:
 
-Canonical proposal status progression:
+`oportunidad → propuesta → plan → lanzamiento → estrategia`
 
-`draft → approved → building → ready_to_launch → ready_for_review → launched (active launch)`
+## 2) Punto de entrada y runtime flow
 
-Allowed transitions:
+- **Entry point:** `main.py`
+- `main.py` crea `TretaApp` y ejecuta `app.run()`.
+- `TretaApp` (`core/app.py`):
+  - inicializa `Storage` (SQLite) + migraciones,
+  - construye stores y engines,
+  - levanta servidor HTTP,
+  - arranca scheduler,
+  - procesa eventos del bus en loop.
 
-- `draft` → `approved`, `rejected`
-- `approved` → `building`, `archived`
-- `building` → `ready_to_launch`
-- `ready_to_launch` → `ready_for_review`
-- `ready_for_review` → `launched`, `executed`
-- `launched` → `archived`
-- `rejected` → `archived`
-- `archived` → _(terminal)_
+Flujo simplificado de runtime:
 
-## Launch lifecycle
+1. `main.py` inicia proceso.
+2. `TretaApp` inicializa dependencias y estado.
+3. `start_http_server()` expone endpoints + SPA.
+4. Scheduler/HTTP generan eventos.
+5. `Dispatcher` consume eventos y delega en `Control` / engines.
+6. Stores persisten resultados (SQLite/JSON).
 
-Canonical launch status progression:
+## 3) Módulos principales
 
-`draft → active → paused → archived`
+### Core / Orquestación
 
-Allowed transitions:
+- `core/app.py`: composición de dependencias del sistema.
+- `core/dispatcher.py`: despacho de eventos.
+- `core/control.py`: coordinación de acciones de dominio.
+- `core/state_machine.py`: estado global del runtime.
 
-- `draft` → `active`, `archived`
-- `active` → `paused`, `archived`
-- `paused` → `active`, `archived`
-- `archived` → _(terminal)_
+### Motores / Engines
 
-Relationship to proposals:
+- Oportunidad y producto: `core/opportunity_engine.py`, `core/product_engine.py`, `core/product_builder.py`.
+- Ejecución y estrategia: `core/execution_engine.py`, `core/strategy_engine.py`, `core/strategy_decision_engine.py`, `core/strategic_loop_engine.py`.
+- Riesgo/autonomía/políticas: `core/risk_evaluation_engine.py`, `core/autonomy_policy_engine.py`, `core/adaptive_policy_engine.py`.
+- Rendimiento: `core/performance_engine.py`, `core/launch_metrics.py`.
 
-- Launches are created from proposals.
-- Launch activation corresponds to a proposal reaching launched/active-launch state.
-- Draft or rejected proposals must not have an active launch.
+### Persistencia
 
-## Domain invariants
+- **SQLite**: conexión y estado runtime en `core/storage.py`, migraciones en `core/migrations/`.
+- **Stores JSON** (dominio): propuestas, planes, lanzamientos, oportunidades, métricas auxiliares (`core/*store*.py`).
 
-The v1 domain contracts include:
+### UI
 
-- **Single active proposal execution**: only one proposal execution may be active at a time.
-- **No invalid active launches**: draft/rejected proposals cannot have an active launch.
-- **Plan build precondition**: plans are buildable only from `PLAN_BUILDABLE_STATUSES`.
-- **Integrity failure contract**: `GET /system/integrity` returns `503` when store loading fails.
+- HTML/CSS/JS estático en `ui/`.
+- Servida por el servidor HTTP propio (`core/ipc_http.py`).
+- Interacción por endpoints REST + polling.
 
-## JSON corruption strategy
+### Docker / entorno
 
-On JSON decode/load corruption for store files:
+- `docker-compose.yml`: servicio `treta`, contenedor `treta-core`, puerto `7777:7777`.
+- `Dockerfile`: imagen Python slim y arranque por `python main.py`.
 
-1. Rename corrupt file to `*.corrupt`.
-2. Recover by using an empty in-memory store.
-3. Emit a diagnostic signal (warning/diagnostic flag) via logging and integrity diagnostics.
+## 4) Flujo de datos y eventos
 
-## Event bus semantics
+- Entrada por HTTP o scheduler.
+- Se publica/consume en `EventBus` (`core/bus.py`).
+- `Dispatcher` ejecuta transiciones/acciones.
+- `Control` y engines aplican reglas.
+- Persistencia en stores (SQLite/JSON).
+- UI consulta estado por endpoints y refresco periódico.
 
-The event bus contract for v1:
+## 5) Dónde tocar y dónde NO tocar
 
-- **Process-local only**: queue/history live within one process.
-- **No cross-process guarantees**: no durability or ordering guarantees across multiple processes.
-- **Tests must reset explicitly**: tests interacting with bus state should explicitly reset/avoid leaked history between cases.
+### Sí tocar (preferente)
+
+- Cambios puntuales en un engine/store específico.
+- Ajustes de endpoints en `core/ipc_http.py` sin alterar contratos existentes.
+- UI incremental en `ui/` manteniendo estructura actual.
+- Documentación y reglas IA.
+
+### Evitar tocar sin análisis fuerte
+
+- Inicialización global de `TretaApp` (`core/app.py`).
+- Contratos de eventos compartidos (`core/events.py`, `core/event_catalog.py`).
+- Migraciones SQLite ya aplicadas (`core/migrations/00x_*.py`).
+- Reglas de integridad de dominio (`core/domain/`).
+
+## 6) Guardrails de cambio
+
+Antes de editar, revisar impacto en:
+
+1. Backend/orquestación
+2. Eventos
+3. Persistencia (SQLite + JSON)
+4. UI/polling
+
+Si el cambio no requiere modificar una capa, **no tocarla**.

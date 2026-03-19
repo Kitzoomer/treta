@@ -1,16 +1,32 @@
 # TRETA
 
-## Internal Audit
+TRETA es un **sistema operativo de decisiones** (no un chatbot simple) con ciclo completo:
+**oportunidad → propuesta → plan → lanzamiento → estrategia**, con persistencia local, motores de decisión y automatización controlada.
 
-Run locally:
+## Stack y ejecución local
+
+- Backend: Python (servidor HTTP propio, sin framework pesado).
+- Arquitectura: event-driven in-process.
+- Persistencia: SQLite (`data/memory/treta.sqlite`) + stores JSON de dominio.
+- UI: SPA simple (`ui/index.html` + `ui/app.js`) con polling periódico.
+- Runtime local esperado: Windows host + WSL2 Ubuntu + Docker Compose.
+- Servicio principal: `treta` (contenedor `treta-core`).
+- URL local: <http://localhost:7777>
+
+## Arranque rápido
 
 ```bash
-make audit
-# or
-python scripts/audit.py
+docker compose up --build
 ```
 
-After merge:
+Checks mínimos:
+
+```bash
+curl http://localhost:7777/health
+curl http://localhost:7777/ready
+```
+
+## Flujo recomendado tras merge
 
 ```bash
 git pull
@@ -18,25 +34,15 @@ docker compose down
 docker compose up --build
 ```
 
-Manual verification:
+## Documentación clave
 
-```bash
-curl http://localhost:7777/health
-curl http://localhost:7777/ready
-```
+- Arquitectura y boundaries: `docs/ARCHITECTURE.md`
+- Workflow de desarrollo seguro: `docs/dev-workflow.md`
+- Catálogo de eventos: `docs/EVENT_CATALOG.md`
+- Reglas para asistentes IA: `.cursorrules` y `AGENTS.md`
 
-## Decision Logs (Autonomy Traceability)
+## Seguridad y configuración
 
-TRETA now writes persistent decision logs to SQLite (`decision_logs`) for autonomy and strategy decisions.
-This audit trail helps answer:
-- Why did TRETA run autonomously?
-- Which policy caused a denial?
-- What action/entity was affected?
-
-Query examples:
-
-```bash
-curl "http://localhost:7777/decision-logs?limit=50"
-curl "http://localhost:7777/decision-logs?limit=50&decision_type=autonomy"
-curl "http://localhost:7777/decision-logs/entity?entity_type=action&entity_id=action-000001&limit=20"
-```
+- Usa `.env` local (no versionado) basado en `.env.example`.
+- No hardcodear claves/API tokens.
+- Mantener compatibilidad con Docker/WSL2 y evitar sobreingeniería.
