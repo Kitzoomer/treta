@@ -40,3 +40,44 @@ curl "http://localhost:7777/decision-logs?limit=50"
 curl "http://localhost:7777/decision-logs?limit=50&decision_type=autonomy"
 curl "http://localhost:7777/decision-logs/entity?entity_type=action&entity_id=action-000001&limit=20"
 ```
+
+
+## HTTP Auth hardening
+
+Default behavior is now secure-by-default:
+- `TRETA_DEV_MODE=0` (default)
+- `TRETA_REQUIRE_TOKEN=1` (default)
+
+When token is required and `TRETA_API_TOKEN` is empty, server starts in **degraded** mode:
+- Mutating endpoints (`POST`/`PUT`/`DELETE`/`PATCH`) that are protected return `503 auth_degraded`.
+- Read-only health endpoints remain available (`/health`, `/health/live`).
+
+Development options:
+- Set `TRETA_DEV_MODE=1` to keep permissive behavior (no token required).
+- Or set `TRETA_REQUIRE_TOKEN=0` for explicit permissive mode.
+
+Recommended local run with token:
+
+```bash
+export TRETA_API_TOKEN=change-me
+export TRETA_DEV_MODE=0
+export TRETA_REQUIRE_TOKEN=1
+```
+
+Manual checks with curl:
+
+```bash
+# Should return 401 when token is required and missing/invalid.
+curl -i -X POST http://localhost:7777/opportunities/evaluate \
+  -H 'Content-Type: application/json' \
+  -d '{"id":"opp-1"}'
+
+# Should return 200 with valid bearer token.
+curl -i -X POST http://localhost:7777/opportunities/evaluate \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer ${TRETA_API_TOKEN}" \
+  -d '{"id":"opp-1"}'
+
+# Health should report auth status (ok/degraded).
+curl -s http://localhost:7777/health
+```

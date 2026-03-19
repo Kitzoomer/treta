@@ -9,6 +9,13 @@ ACTION_CIRCUIT_BREAKER_WINDOW_SECONDS = int(os.getenv("ACTION_CIRCUIT_BREAKER_WI
 OPENCLAW_BASE_URL = os.getenv("OPENCLAW_BASE_URL", "").strip()
 OPENCLAW_TIMEOUT_SECONDS = int(os.getenv("OPENCLAW_TIMEOUT_SECONDS", "5"))
 API_TOKEN = os.getenv("TRETA_API_TOKEN")
+TRETA_DEV_MODE = str(os.getenv("TRETA_DEV_MODE", "0")).strip() == "1"
+TRETA_REQUIRE_TOKEN = str(os.getenv("TRETA_REQUIRE_TOKEN", "0")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 STRATEGY_LOOP_ENABLED = str(os.getenv("STRATEGY_LOOP_ENABLED", "true")).strip().lower() in {
     "1",
     "true",

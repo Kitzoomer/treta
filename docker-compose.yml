@@ -3,6 +3,7 @@ services:
     build: .
     container_name: treta-core
     ports:
+      # Recommended for local-only exposure: "127.0.0.1:7777:7777"
       - "7777:7777"
 
     volumes:
@@ -17,6 +18,9 @@ services:
       - GUMROAD_ACCESS_TOKEN=${GUMROAD_ACCESS_TOKEN}
       - OPENCLAW_BASE_URL=${OPENCLAW_BASE_URL:-http://openclaw:8080}
       - OPENCLAW_TIMEOUT_SECONDS=${OPENCLAW_TIMEOUT_SECONDS:-5}
+      - TRETA_DEV_MODE=${TRETA_DEV_MODE:-0}
+      - TRETA_REQUIRE_TOKEN=${TRETA_REQUIRE_TOKEN:-1}
+      - TRETA_API_TOKEN=${TRETA_API_TOKEN:-}
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:7777/health"]

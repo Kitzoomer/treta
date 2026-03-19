@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 from urllib.request import urlopen
 
 
 def test_health_endpoint() -> None:
-    proc = subprocess.Popen(["python", "main.py"])
+    env = dict(os.environ)
+    env["TRETA_DEV_MODE"] = "1"
+    proc = subprocess.Popen(["python", "main.py"], env=env)
     try:
         deadline = time.time() + 10
         payload = None
