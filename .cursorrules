@@ -1,0 +1,27 @@
+# TRETA - Cursor/Claude guardrails
+
+## Objetivo
+Mantener TRETA estable mientras se itera rápido con cambios pequeños, trazables y reversibles.
+
+## Reglas obligatorias
+1. Implementar cambios mínimos por tarea; evitar refactorización masiva.
+2. No introducir frameworks grandes o nuevas dependencias sin justificación explícita.
+3. Respetar arquitectura modular y contratos existentes de eventos/endpoints.
+4. No tocar secretos, tokens, credenciales ni archivos `.env` reales.
+5. Mantener compatibilidad con Docker Compose + WSL2.
+6. Antes de editar, identificar impacto en backend, SQLite/JSON stores, UI y flujo de eventos.
+7. Proponer validación manual por cada cambio (comandos y pasos concretos).
+8. Si hay ambigüedad, elegir opción conservadora y documentar TODO mínimo.
+
+## Forma de respuesta recomendada
+- Primero: plan corto.
+- Luego: cambios por archivo.
+- Después: riesgos y validación manual.
+- Finalmente: rollback simple.
+
+## Prompting recomendado para Claude en Cursor
+- "Implementa cambios mínimos y explícame impacto por archivo."
+- "No hagas refactor global."
+- "Dame plan antes de editar."
+- "Incluye checklist de validación manual."
+- "Si dudas, deja TODOs mínimos y sigue con la opción conservadora."
