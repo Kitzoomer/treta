@@ -405,16 +405,31 @@ function saveChatModeState() {
 
 const api = {
   async fetchJson(url, options = {}) {
+    const method = options.method || "GET";
     const response = await fetch(url, {
       headers: { "Content-Type": "application/json", ...(options.headers || {}) },
       ...options,
     });
     const text = await response.text();
-    const data = text ? JSON.parse(text) : {};
-    if (!response.ok) {
-      throw new Error(data.error || `HTTP ${response.status}`);
+    let data = {};
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch (_error) {
+        throw new Error(`Invalid JSON response from ${method} ${url}`);
+      }
     }
-    return data;
+    if (!response.ok) {
+      const errorMessage = typeof data?.error === "string"
+        ? data.error
+        : (data?.error?.message || data?.error?.code || `HTTP ${response.status}`);
+      throw new Error(errorMessage);
+    }
+    const normalized = (data?.ok === true && data?.data !== undefined) ? data.data : data;
+    if (window?.console?.debug) {
+      window.console.debug("[TRETA API]", method, url, normalized);
+    }
+    return normalized;
   },
   getState() {
     return this.fetchJson("/state");
@@ -1722,6 +1737,7 @@ const views = {
 
     const selectedId = ensureSelected();
     const selectedIdea = ideaItems.find((item) => String(item.proposal?.id || "") === selectedId) || null;
+    const opportunitiesCount = Array.isArray(state.opportunities) ? state.opportunities.length : 0;
 
     const renderIdeaList = (items, emptyMessage) => {
       if (!items.length) return `<p class="empty">${helpers.escape(emptyMessage)}</p>`;
@@ -1818,11 +1834,14 @@ const views = {
       })();
 
       if (!selectedIdea) {
+        const emptyMessage = opportunitiesCount > 0
+          ? `No hay propuestas de producto todavía. Hay ${opportunitiesCount} oportunidades en backend, pero aún no se convirtieron en ideas.`
+          : "No hay ideas disponibles por ahora. Ejecuta un scan para generar nuevas propuestas.";
         return `
           ${recommendedCard}
           <article class="card">
             <h3>Ideas de infoproducto</h3>
-            <p class="empty">No hay ideas disponibles por ahora. Ejecuta un scan para generar nuevas propuestas.</p>
+            <p class="empty">${helpers.escape(emptyMessage)}</p>
           </article>
         `;
       }
@@ -2722,8 +2741,18 @@ async function submitUserMessage(rawText, { source = "text" } = {}) {
 
   setChatLoading(true);
   try {
+    if (window?.console?.debug) {
+      window.console.debug("[TRETA CHAT] sending", { source, text: input });
+    }
     const response = await api.sendConversationMessage(input, source);
-    handleAssistantResponse(helpers.t(response.reply_text, "No response from assistant."));
+    const replyText = helpers.t(
+      response?.reply_text,
+      "No se pudo generar respuesta en este momento. Revisa logs del backend."
+    );
+    if (window?.console?.debug) {
+      window.console.debug("[TRETA CHAT] received", response);
+    }
+    handleAssistantResponse(replyText);
   } catch (error) {
     handleAssistantResponse(`Error: ${error.message}`);
   } finally {
