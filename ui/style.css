@@ -1227,3 +1227,76 @@ body.focus-mode-active .telemetry-content {
     grid-column: span 1;
   }
 }
+
+.ideas-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(420px, 2fr) minmax(240px, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.ideas-column-left,
+.ideas-column-center,
+.ideas-column-right {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ideas-list {
+  display: grid;
+  gap: 8px;
+}
+
+.ideas-list-item {
+  text-align: left;
+  background: #0d1220;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.ideas-list-item.active {
+  border-color: rgba(217,31,51,.7);
+  box-shadow: inset 0 0 0 1px rgba(217,31,51,.35);
+}
+
+.ideas-list-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  color: var(--muted);
+  font-size: .78rem;
+}
+
+.ideas-main-card p {
+  margin: 8px 0;
+}
+
+.ideas-recommended-card {
+  border-color: rgba(245, 165, 36, 0.45);
+  background: linear-gradient(180deg, rgba(245, 165, 36, 0.08), rgba(18, 23, 34, 0.95));
+}
+
+.ideas-recommended-label {
+  margin: 0 0 6px;
+  font-size: .78rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: #ffd18e;
+}
+
+.ideas-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+@media (max-width: 1200px) {
+  .ideas-layout {
+    grid-template-columns: 1fr;
+  }
+}
