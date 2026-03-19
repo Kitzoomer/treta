@@ -1227,7 +1227,13 @@ class Handler(BaseHTTPRequestHandler):
                     source = str(data.get("source", "ui")).strip() or "ui"
                     if not text:
                         return self._send_error(400, ErrorType.CLIENT_ERROR, "missing_text", "missing_text")
-                    reply_text = self.conversation_core.reply(text, source=source)
+                    logger.info("request_id=%s conversation_message_received source=%s text=%s", self._ensure_request_id(), source, text[:200])
+                    try:
+                        reply_text = self.conversation_core.reply(text, source=source)
+                    except Exception as exc:
+                        logger.exception("request_id=%s conversation_message_failed", self._ensure_request_id(), exc_info=exc)
+                        return self._send_error(500, ErrorType.SERVER_ERROR, "conversation_failed", "conversation_failed")
+                    logger.info("request_id=%s conversation_message_replied reply=%s", self._ensure_request_id(), str(reply_text)[:200])
                     return self._send_success(200, {"reply_text": reply_text})
 
                 if self.path == "/autonomy/override":

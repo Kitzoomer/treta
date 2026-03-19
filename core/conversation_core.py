@@ -82,6 +82,7 @@ class ConversationCore:
 
     def _generate_response(self, user_message: str) -> str:
         if self.gpt_client is None or not hasattr(self.gpt_client, "chat"):
+            logger.warning("conversation_fallback reason=gpt_client_unavailable")
             return "Treta GPT connection error. Check configuration."
 
         memory_snapshot = self.memory_store.snapshot()
@@ -128,15 +129,20 @@ class ConversationCore:
         task_type = "chat"
         try:
             model_name = self.model_policy_engine.get_model(task_type)
+            logger.info("conversation_llm_attempt task_type=%s model=%s", task_type, model_name)
             return str(self.gpt_client.chat(messages, task_type=task_type, model=model_name))
         except TypeError:
             try:
+                logger.info("conversation_llm_retry reason=type_error task_type=%s", task_type)
                 return str(self.gpt_client.chat(messages, task_type=task_type))
             except TypeError:
+                logger.info("conversation_llm_retry reason=type_error_no_task_type")
                 return str(self.gpt_client.chat(messages))
             except Exception:
+                logger.exception("conversation_fallback reason=gpt_client_exception_during_retry")
                 return "Treta GPT connection error. Check configuration."
         except Exception:
+            logger.exception("conversation_fallback reason=gpt_client_exception")
             return "Treta GPT connection error. Check configuration."
 
     def reply(self, text: str, source: str = "ui") -> str:
@@ -144,22 +150,29 @@ class ConversationCore:
         if not normalized_text:
             return ""
 
-        logger.info("User message received", extra={"source": source, "text": normalized_text, "event_type": "conversation_user"})
-        self.memory_store.append_message("user", normalized_text, ts=datetime.now(timezone.utc).isoformat())
+        try:
+            logger.info("User message received", extra={"source": source, "text": normalized_text, "event_type": "conversation_user"})
+            self.memory_store.append_message("user", normalized_text, ts=datetime.now(timezone.utc).isoformat())
 
-        self.state_machine.transition(State.THINKING)
-        response_text = self._generate_response(normalized_text)
-        assistant_event = Event(
-            type="AssistantMessageGenerated",
-            payload={"text": response_text},
-            source="conversation_core",
-        )
-        self.bus.push(assistant_event)
-        logger.info("Assistant message emitted", extra={"text": response_text, "event_type": "conversation_assistant"})
-        self.memory_store.append_message("assistant", response_text, ts=assistant_event.timestamp)
-        self.state_machine.transition(State.SPEAKING)
-        self.state_machine.transition(State.IDLE)
-        return response_text
+            self.state_machine.transition(State.THINKING)
+            response_text = self._generate_response(normalized_text)
+            assistant_event = Event(
+                type="AssistantMessageGenerated",
+                payload={"text": response_text},
+                source="conversation_core",
+            )
+            self.bus.push(assistant_event)
+            logger.info("Assistant message emitted", extra={"text": response_text, "event_type": "conversation_assistant"})
+            self.memory_store.append_message("assistant", response_text, ts=assistant_event.timestamp)
+            self.state_machine.transition(State.SPEAKING)
+            self.state_machine.transition(State.IDLE)
+            return response_text
+        except Exception:
+            logger.exception("conversation_reply_failed source=%s", source)
+            self.state_machine.transition(State.IDLE)
+            fallback = "No pude procesar tu mensaje por un error interno. Intenta de nuevo en unos segundos."
+            self.memory_store.append_message("assistant", fallback, ts=datetime.now(timezone.utc).isoformat())
+            return fallback
 
     def consume(self, event: Event) -> None:
         if event.type != "UserMessageSubmitted":
