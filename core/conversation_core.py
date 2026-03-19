@@ -24,15 +24,25 @@ class ConversationCore:
         state_machine: StateMachine,
         memory_store: MemoryStore,
         gpt_client_optional: Any = None,
+        gpt_unavailable_reason: str | None = None,
         daily_loop_engine: DailyLoopEngine | None = None,
     ):
         self.bus = bus
         self.state_machine = state_machine
         self.memory_store = memory_store
         self.gpt_client = gpt_client_optional
+        self.gpt_unavailable_reason = str(gpt_unavailable_reason or "").strip()
         self.daily_loop_engine = daily_loop_engine
         self.context_controller = ContextController()
         self.model_policy_engine = ModelPolicyEngine()
+
+    def _gpt_unavailable_message(self) -> str:
+        reason = self.gpt_unavailable_reason.lower()
+        if "openai_api_key" in reason:
+            return "Treta GPT unavailable: falta OPENAI_API_KEY en el entorno."
+        if "package not installed" in reason:
+            return "Treta GPT unavailable: dependencia openai no instalada."
+        return "Treta GPT unavailable: cliente OpenAI no inicializado."
 
     def _system_prompt(self) -> str:
         return (
@@ -83,7 +93,7 @@ class ConversationCore:
     def _generate_response(self, user_message: str) -> str:
         if self.gpt_client is None or not hasattr(self.gpt_client, "chat"):
             logger.warning("conversation_fallback reason=gpt_client_unavailable")
-            return "Treta GPT connection error. Check configuration."
+            return self._gpt_unavailable_message()
 
         memory_snapshot = self.memory_store.snapshot()
         all_memory_messages = memory_snapshot.get("chat_history", []) if isinstance(memory_snapshot, dict) else []
@@ -138,12 +148,12 @@ class ConversationCore:
             except TypeError:
                 logger.info("conversation_llm_retry reason=type_error_no_task_type")
                 return str(self.gpt_client.chat(messages))
-            except Exception:
+            except Exception as error:
                 logger.exception("conversation_fallback reason=gpt_client_exception_during_retry")
-                return "Treta GPT connection error. Check configuration."
-        except Exception:
+                return f"Treta GPT connection error: OpenAI request failed ({type(error).__name__})."
+        except Exception as error:
             logger.exception("conversation_fallback reason=gpt_client_exception")
-            return "Treta GPT connection error. Check configuration."
+            return f"Treta GPT connection error: OpenAI request failed ({type(error).__name__})."
 
     def reply(self, text: str, source: str = "ui") -> str:
         normalized_text = str(text or "").strip()

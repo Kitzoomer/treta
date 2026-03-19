@@ -128,9 +128,15 @@ class TretaApp:
             bus=self.bus,
             decision_engine=self.decision_engine,
         )
+        self.gpt_unavailable_reason: str | None = None
         try:
             gpt_client = GPTClient(revenue_attribution_store=self.revenue_attribution_store)
-        except GPTClientConfigurationError:
+        except GPTClientConfigurationError as error:
+            self.gpt_unavailable_reason = str(error)
+            logging.getLogger("treta.gpt").warning(
+                "GPT client disabled due to configuration error",
+                extra={"reason": self.gpt_unavailable_reason, "code": getattr(error, "code", "unknown")},
+            )
             gpt_client = None
 
         self.conversation_core = ConversationCore(
@@ -138,6 +144,7 @@ class TretaApp:
             state_machine=self.state_machine,
             memory_store=self.memory_store,
             gpt_client_optional=gpt_client,
+            gpt_unavailable_reason=self.gpt_unavailable_reason,
             daily_loop_engine=self.daily_loop_engine,
         )
         self.dispatcher = Dispatcher(

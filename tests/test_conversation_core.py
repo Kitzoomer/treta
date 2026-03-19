@@ -162,6 +162,36 @@ class ConversationCoreTest(unittest.TestCase):
             )
             self.assertEqual(len(context_contents), len(set(context_contents)))
 
+    def test_reply_returns_explicit_message_when_api_key_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            memory_store = MemoryStore(path=Path(tmp_dir) / "memory_store.json")
+            conversation_core = ConversationCore(
+                bus=self.bus,
+                state_machine=StateMachine(),
+                memory_store=memory_store,
+                gpt_client_optional=None,
+                gpt_unavailable_reason="OPENAI_API_KEY is not set",
+            )
+
+            response = conversation_core.reply("hola treta")
+
+            self.assertEqual(response, "Treta GPT unavailable: falta OPENAI_API_KEY en el entorno.")
+
+    def test_reply_returns_explicit_message_when_openai_package_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            memory_store = MemoryStore(path=Path(tmp_dir) / "memory_store.json")
+            conversation_core = ConversationCore(
+                bus=self.bus,
+                state_machine=StateMachine(),
+                memory_store=memory_store,
+                gpt_client_optional=None,
+                gpt_unavailable_reason="openai package not installed",
+            )
+
+            response = conversation_core.reply("hola treta")
+
+            self.assertEqual(response, "Treta GPT unavailable: dependencia openai no instalada.")
+
 
 if __name__ == "__main__":
     unittest.main()
